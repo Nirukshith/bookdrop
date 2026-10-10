@@ -1,0 +1,17 @@
+# Dependencies
+/node_modules
+
+# Output
+/dist
+
+# Environment variables
+.env
+*.env.local
+
+# IDE & OS files
+.DS_Store
+.vscode/
+.idea/
+
+# Testing
+/coverage
