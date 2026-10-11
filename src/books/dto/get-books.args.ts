@@ -12,8 +12,8 @@ export class GetBooksArgs {
   authorId?: number;
 
   @Field(() => Int, { defaultValue: 10, nullable: true })
-  take: number = 10;
+  take?: number = 10;
 
   @Field(() => Int, { defaultValue: 0, nullable: true })
-  skip: number = 0;
+  skip?: number = 0;
 }

@@ -116,4 +116,50 @@ describe('Books (GraphQL E2E)', () => {
     expect(res.body.data.books.length).toBeGreaterThan(0);
     expect(res.body.data.books[0].title).toBe('1984');
   });
+
+  it('filters books by categoryId and authorId', async () => {
+    const query = `
+      query {
+        books(take: 10) {
+          id
+          authors { id }
+          categories { id }
+        }
+      }
+    `;
+
+    const res = await request(app.getHttpServer())
+      .post('/graphql')
+      .send({ query })
+      .expect(200);
+
+    const books = res.body.data.books;
+    if (
+      books.length > 0 &&
+      books[0].authors.length > 0 &&
+      books[0].categories.length > 0
+    ) {
+      const authorId = Number(books[0].authors[0].id);
+      const categoryId = Number(books[0].categories[0].id);
+
+      const filteredQuery = `
+        query {
+          books(authorId: ${authorId}, categoryId: ${categoryId}) {
+            id
+            title
+            authors { id }
+            categories { id }
+          }
+        }
+      `;
+
+      const filteredRes = await request(app.getHttpServer())
+        .post('/graphql')
+        .send({ query: filteredQuery })
+        .expect(200);
+
+      expect(filteredRes.body.errors).toBeUndefined();
+      expect(filteredRes.body.data.books.length).toBeGreaterThan(0);
+    }
+  });
 });
