@@ -15,3 +15,5 @@
 
 # Testing
 /coverage
+
+/generated/prisma
