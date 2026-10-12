@@ -48,3 +48,32 @@ model Copy {
   book   Book       @relation(fields: [bookId], references: [id])
   status CopyStatus @default(AVAILABLE)
 }
+
+enum Role {
+  MEMBER
+  LIBRARIAN
+  ADMIN
+}
+
+model User {
+  id            Int            @id @default(autoincrement())
+  name          String
+  email         String         @unique
+  passwordHash  String
+  role          Role           @default(MEMBER)
+  refreshTokens RefreshToken[]
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+}
+
+model RefreshToken {
+  id        Int       @id @default(autoincrement())
+  userId    Int
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+}
