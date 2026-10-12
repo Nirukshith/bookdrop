@@ -1,0 +1,56 @@
+import { Injectable } from '@nestjs/common';
+import { Role, User } from '@prisma/client';
+import * as argon2 from 'argon2';
+import { PrismaService } from '../prisma/prisma.service';
+
+export interface CreateUserInput {
+  name: string;
+  email: string;
+  password: string;
+  role?: Role;
+}
+
+@Injectable()
+export class UsersService {
+  constructor(private readonly prisma: PrismaService) {}
+
+  async findByEmail(email: string): Promise<User | null> {
+    const normalizedEmail = email.trim().toLowerCase();
+    return this.prisma.user.findUnique({
+      where: { email: normalizedEmail },
+    });
+  }
+
+  async findById(id: number): Promise<User | null> {
+    return this.prisma.user.findUnique({
+      where: { id },
+    });
+  }
+
+  async create(data: CreateUserInput): Promise<User> {
+    const normalizedEmail = data.email.trim().toLowerCase();
+    const passwordHash = await argon2.hash(data.password);
+
+    return this.prisma.user.create({
+      data: {
+        name: data.name.trim(),
+        email: normalizedEmail,
+        passwordHash,
+        role: data.role ?? Role.MEMBER,
+      },
+    });
+  }
+
+  async list(): Promise<User[]> {
+    return this.prisma.user.findMany({
+      orderBy: { id: 'asc' },
+    });
+  }
+
+  async updateRole(id: number, role: Role): Promise<User> {
+    return this.prisma.user.update({
+      where: { id },
+      data: { role },
+    });
+  }
+}
