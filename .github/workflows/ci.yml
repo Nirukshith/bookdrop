@@ -20,6 +20,7 @@ jobs:
           --health-interval 5s --health-timeout 5s --health-retries 10
     env:
       DATABASE_URL: postgresql://bookdrop:bookdrop@localhost:5432/bookdrop
+      JWT_ACCESS_SECRET: ci-test-jwt-access-secret-must-be-at-least-32-chars-long
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
