@@ -152,3 +152,67 @@ Core library constraints (holds, loan duration, fine amounts) are managed centra
 * `MISSED_PICKUPS_BEFORE_FINE = 3`
 * `MISSED_PICKUP_FINE_RS = 100`
 * `LATE_FEE_PER_DAY_RS = 10`
+
+---
+
+## Authentication & Tokens
+
+### GraphQL Auth Mutations
+
+```graphql
+# Register a new member
+mutation Register {
+  register(input: {
+    name: "Ada Lovelace"
+    email: "ada@example.com"
+    password: "securePassword123"
+  }) {
+    accessToken
+    refreshToken
+    user {
+      id
+      name
+      email
+      role
+    }
+  }
+}
+
+# Login
+mutation Login {
+  login(input: {
+    email: "ada@example.com"
+    password: "securePassword123"
+  }) {
+    accessToken
+    refreshToken
+    user {
+      id
+      role
+    }
+  }
+}
+
+# Rotate refresh token
+mutation Refresh {
+  refreshTokens(refreshToken: "raw_refresh_token_string") {
+    accessToken
+    refreshToken
+  }
+}
+
+# Logout (revokes active refresh token)
+mutation Logout {
+  logout(refreshToken: "raw_refresh_token_string")
+}
+```
+
+### Token Delivery Trade-offs Note
+
+Currently, `accessToken` and `refreshToken` are returned directly in the GraphQL response body:
+* **Response Body Delivery (Current)**:
+  - *Pros*: Simple, framework-agnostic, and works seamlessly with native mobile clients, CLI tools, and automated API testing without cookie-handling overhead.
+  - *Cons*: If frontend clients store tokens in browser `localStorage` or `sessionStorage`, they become vulnerable to extraction via Cross-Site Scripting (XSS).
+* **`httpOnly` Cookie Delivery (Recommended for Browser Frontends)**:
+  - *Pros*: Shields the refresh token from client-side JavaScript, neutralizing XSS token theft.
+  - *Cons*: Requires Cross-Origin Resource Sharing (CORS) credentials configuration and Cross-Site Request Forgery (CSRF) protections (e.g., SameSite attributes or anti-CSRF tokens). Browser cookie delivery can be revisited during frontend integration.
