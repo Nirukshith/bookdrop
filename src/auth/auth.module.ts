@@ -4,12 +4,15 @@ import { JwtModule } from '@nestjs/jwt';
 import { UsersModule } from '../users/users.module';
 import { AuthResolver } from './auth.resolver';
 import { AuthService } from './auth.service';
+import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { RolesGuard } from './guards/roles.guard';
 
 @Module({
   imports: [
     UsersModule,
     ConfigModule,
     JwtModule.registerAsync({
+      global: true,
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => ({
@@ -20,7 +23,7 @@ import { AuthService } from './auth.service';
       }),
     }),
   ],
-  providers: [AuthService, AuthResolver], // NestJS instantiates and manages AuthService and AuthResolver here
-  exports: [AuthService, JwtModule], // Makes AuthService and JwtModule available to other modules that import this one
+  providers: [AuthService, AuthResolver, JwtAuthGuard, RolesGuard],
+  exports: [AuthService, JwtAuthGuard, RolesGuard],
 })
-export class AuthModule { }
+export class AuthModule {}

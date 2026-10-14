@@ -1,4 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { Role, User } from '@prisma/client';
 import * as argon2 from 'argon2';
 import { PrismaService } from '../prisma/prisma.service';
@@ -47,9 +51,27 @@ export class UsersService {
     });
   }
 
-  async updateRole(id: number, role: Role): Promise<User> {
+  async updateRole(
+    actorId: number,
+    targetUserId: number,
+    role: Role,
+  ): Promise<User> {
+    if (actorId === targetUserId && role !== Role.ADMIN) {
+      throw new BadRequestException(
+        'Admins cannot remove their own admin role',
+      );
+    }
+
+    const existingUser = await this.prisma.user.findUnique({
+      where: { id: targetUserId },
+    });
+
+    if (!existingUser) {
+      throw new NotFoundException(`User with ID ${targetUserId} not found`);
+    }
+
     return this.prisma.user.update({
-      where: { id },
+      where: { id: targetUserId },
       data: { role },
     });
   }

@@ -45,11 +45,14 @@ type Mutation {
   logout(refreshToken: String!): Boolean!
   refreshTokens(refreshToken: String!): AuthPayload!
   register(input: RegisterInput!): AuthPayload!
+  updateUserRole(role: Role!, userId: Int!): User!
 }
 
 type Query {
   book(id: Int!): Book
   books(authorId: Int, categoryId: Int, search: String, skip: Int = 0, take: Int = 10): [Book!]!
+  me: User!
+  users: [User!]!
 }
 
 input RegisterInput {

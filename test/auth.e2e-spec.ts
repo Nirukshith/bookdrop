@@ -3,10 +3,13 @@ import { Test, TestingModule } from '@nestjs/testing';
 import * as request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { UsersService } from '../src/users/users.service';
+import { Role } from '@prisma/client';
 
-describe('Auth (GraphQL E2E)', () => {
+describe('Auth & Users (GraphQL E2E)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
+  let usersService: UsersService;
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -23,6 +26,8 @@ describe('Auth (GraphQL E2E)', () => {
     await app.init();
 
     prisma = app.get<PrismaService>(PrismaService);
+    usersService = app.get<UsersService>(UsersService);
+
     // Clean up test users and refresh tokens before running auth E2E tests
     await prisma.refreshToken.deleteMany({
       where: { user: { email: { contains: 'authtest' } } },
@@ -42,15 +47,20 @@ describe('Auth (GraphQL E2E)', () => {
     await app.close();
   });
 
-  const testEmail = `authtest_${Date.now()}@example.com`;
+  const memberEmail = `authtest_member_${Date.now()}@example.com`;
+  const adminEmail = `authtest_admin_${Date.now()}@example.com`;
+  let memberAccessToken = '';
+  let adminAccessToken = '';
   let activeRefreshToken = '';
+  let memberUserId = 0;
+  let adminUserId = 0;
 
   it('registers a new user as MEMBER and returns tokens and user profile', async () => {
     const mutation = `
       mutation {
         register(input: {
           name: "Test Member"
-          email: "${testEmail}"
+          email: "${memberEmail}"
           password: "securePassword123"
         }) {
           accessToken
@@ -74,8 +84,10 @@ describe('Auth (GraphQL E2E)', () => {
     const data = res.body.data.register;
     expect(data.accessToken).toBeDefined();
     expect(data.refreshToken).toBeDefined();
-    expect(data.user.email).toBe(testEmail.toLowerCase());
+    expect(data.user.email).toBe(memberEmail.toLowerCase());
     expect(data.user.role).toBe('MEMBER');
+    memberAccessToken = data.accessToken;
+    memberUserId = Number(data.user.id);
   });
 
   it('rejects duplicate email registration with a conflict error', async () => {
@@ -83,7 +95,7 @@ describe('Auth (GraphQL E2E)', () => {
       mutation {
         register(input: {
           name: "Duplicate User"
-          email: "${testEmail}"
+          email: "${memberEmail}"
           password: "anotherPassword123"
         }) {
           accessToken
@@ -104,7 +116,7 @@ describe('Auth (GraphQL E2E)', () => {
     const mutation = `
       mutation {
         login(input: {
-          email: "${testEmail}"
+          email: "${memberEmail}"
           password: "securePassword123"
         }) {
           accessToken
@@ -133,7 +145,7 @@ describe('Auth (GraphQL E2E)', () => {
     const mutation = `
       mutation {
         login(input: {
-          email: "${testEmail}"
+          email: "${memberEmail}"
           password: "wrongPassword999"
         }) {
           accessToken
@@ -239,14 +251,13 @@ describe('Auth (GraphQL E2E)', () => {
   });
 
   it('revokes refresh token upon logout', async () => {
-    // First, login fresh to obtain a valid token
     const loginRes = await request(app.getHttpServer())
       .post('/graphql')
       .send({
         query: `
           mutation {
             login(input: {
-              email: "${testEmail}"
+              email: "${memberEmail}"
               password: "securePassword123"
             }) {
               refreshToken
@@ -258,7 +269,6 @@ describe('Auth (GraphQL E2E)', () => {
 
     const tokenToRevoke = loginRes.body.data.login.refreshToken;
 
-    // Logout
     const logoutRes = await request(app.getHttpServer())
       .post('/graphql')
       .send({
@@ -273,7 +283,6 @@ describe('Auth (GraphQL E2E)', () => {
     expect(logoutRes.body.errors).toBeUndefined();
     expect(logoutRes.body.data.logout).toBe(true);
 
-    // Attempting to refresh with the logged-out token should fail
     const refreshRes = await request(app.getHttpServer())
       .post('/graphql')
       .send({
@@ -288,5 +297,187 @@ describe('Auth (GraphQL E2E)', () => {
       .expect(200);
 
     expect(refreshRes.body.errors).toBeDefined();
+  });
+
+  describe('me query', () => {
+    it('returns current user profile when authenticated', async () => {
+      // Re-login to get a fresh valid access token
+      const loginRes = await request(app.getHttpServer())
+        .post('/graphql')
+        .send({
+          query: `
+            mutation {
+              login(input: {
+                email: "${memberEmail}"
+                password: "securePassword123"
+              }) {
+                accessToken
+              }
+            }
+          `,
+        })
+        .expect(200);
+
+      const token = loginRes.body.data.login.accessToken;
+
+      const res = await request(app.getHttpServer())
+        .post('/graphql')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          query: `
+            query {
+              me {
+                id
+                email
+                role
+              }
+            }
+          `,
+        })
+        .expect(200);
+
+      expect(res.body.errors).toBeUndefined();
+      expect(res.body.data.me.email).toBe(memberEmail.toLowerCase());
+      expect(res.body.data.me.role).toBe('MEMBER');
+    });
+
+    it('rejects unauthenticated me query with UnauthorizedException', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/graphql')
+        .send({
+          query: `
+            query {
+              me {
+                id
+                email
+              }
+            }
+          `,
+        })
+        .expect(200);
+
+      expect(res.body.errors).toBeDefined();
+      expect(res.body.errors[0].message).toContain(
+        'Authentication token missing',
+      );
+    });
+  });
+
+  describe('users and updateUserRole (RBAC)', () => {
+    beforeAll(async () => {
+      // Create an admin user for RBAC testing
+      const adminUser = await usersService.create({
+        name: 'System Admin',
+        email: adminEmail,
+        password: 'adminPassword123',
+        role: Role.ADMIN,
+      });
+      adminUserId = adminUser.id;
+
+      // Login as admin
+      const loginRes = await request(app.getHttpServer())
+        .post('/graphql')
+        .send({
+          query: `
+            mutation {
+              login(input: {
+                email: "${adminEmail}"
+                password: "adminPassword123"
+              }) {
+                accessToken
+              }
+            }
+          `,
+        })
+        .expect(200);
+
+      adminAccessToken = loginRes.body.data.login.accessToken;
+    });
+
+    it('denies access to users query for MEMBER role with 403 Forbidden', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/graphql')
+        .set('Authorization', `Bearer ${memberAccessToken}`)
+        .send({
+          query: `
+            query {
+              users {
+                id
+                email
+              }
+            }
+          `,
+        })
+        .expect(200);
+
+      expect(res.body.errors).toBeDefined();
+      expect(res.body.errors[0].message).toContain(
+        'Access denied: insufficient permissions',
+      );
+    });
+
+    it('allows ADMIN role to query all users', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/graphql')
+        .set('Authorization', `Bearer ${adminAccessToken}`)
+        .send({
+          query: `
+            query {
+              users {
+                id
+                email
+                role
+              }
+            }
+          `,
+        })
+        .expect(200);
+
+      expect(res.body.errors).toBeUndefined();
+      expect(res.body.data.users).toBeInstanceOf(Array);
+      expect(res.body.data.users.length).toBeGreaterThan(0);
+    });
+
+    it('allows ADMIN to update another user role to LIBRARIAN', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/graphql')
+        .set('Authorization', `Bearer ${adminAccessToken}`)
+        .send({
+          query: `
+            mutation {
+              updateUserRole(userId: ${memberUserId}, role: LIBRARIAN) {
+                id
+                role
+              }
+            }
+          `,
+        })
+        .expect(200);
+
+      expect(res.body.errors).toBeUndefined();
+      expect(res.body.data.updateUserRole.role).toBe('LIBRARIAN');
+    });
+
+    it('prevents an ADMIN from removing their own admin role', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/graphql')
+        .set('Authorization', `Bearer ${adminAccessToken}`)
+        .send({
+          query: `
+            mutation {
+              updateUserRole(userId: ${adminUserId}, role: MEMBER) {
+                id
+                role
+              }
+            }
+          `,
+        })
+        .expect(200);
+
+      expect(res.body.errors).toBeDefined();
+      expect(res.body.errors[0].message).toContain(
+        'Admins cannot remove their own admin role',
+      );
+    });
   });
 });

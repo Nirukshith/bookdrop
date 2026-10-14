@@ -26,6 +26,7 @@ import { envValidationSchema } from './config/env.validation';
       autoSchemaFile: join(process.cwd(), 'src/schema.gql'),
       sortSchema: true,
       playground: true,
+      context: ({ req, res }: { req: unknown; res: unknown }) => ({ req, res }),
     }),
     PrismaModule,
     BooksModule,

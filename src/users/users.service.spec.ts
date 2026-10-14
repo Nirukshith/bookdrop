@@ -1,8 +1,9 @@
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { Role } from '@prisma/client';
 import * as argon2 from 'argon2';
-import { UsersService } from './users.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { UsersService } from './users.service';
 
 describe('UsersService', () => {
   let service: UsersService;
@@ -65,7 +66,6 @@ describe('UsersService', () => {
       expect(callData.role).toBe(Role.MEMBER);
       expect(callData.passwordHash).not.toBe('plainSecretPassword123');
 
-      // Verify that argon2 can verify the generated hash against the plain password
       const isPasswordValid = await argon2.verify(
         callData.passwordHash,
         'plainSecretPassword123',
@@ -148,20 +148,59 @@ describe('UsersService', () => {
   });
 
   describe('updateRole', () => {
-    it('updates user role to ADMIN', async () => {
+    it('updates another user role successfully', async () => {
+      prismaMock.user.findUnique.mockResolvedValue({
+        id: 2,
+        name: 'Bob',
+        role: Role.MEMBER,
+      });
+      prismaMock.user.update.mockResolvedValue({
+        id: 2,
+        name: 'Bob',
+        role: Role.LIBRARIAN,
+      });
+
+      const updated = await service.updateRole(1, 2, Role.LIBRARIAN);
+
+      expect(prismaMock.user.update).toHaveBeenCalledWith({
+        where: { id: 2 },
+        data: { role: Role.LIBRARIAN },
+      });
+      expect(updated.role).toBe(Role.LIBRARIAN);
+    });
+
+    it('prevents an admin from demoting themselves from ADMIN role', async () => {
+      await expect(service.updateRole(1, 1, Role.MEMBER)).rejects.toThrow(
+        new BadRequestException('Admins cannot remove their own admin role'),
+      );
+
+      await expect(service.updateRole(1, 1, Role.LIBRARIAN)).rejects.toThrow(
+        new BadRequestException('Admins cannot remove their own admin role'),
+      );
+    });
+
+    it('allows an admin to re-apply ADMIN role to themselves', async () => {
+      prismaMock.user.findUnique.mockResolvedValue({
+        id: 1,
+        name: 'Admin Alice',
+        role: Role.ADMIN,
+      });
       prismaMock.user.update.mockResolvedValue({
         id: 1,
-        name: 'Alice',
+        name: 'Admin Alice',
         role: Role.ADMIN,
       });
 
-      const updated = await service.updateRole(1, Role.ADMIN);
-
-      expect(prismaMock.user.update).toHaveBeenCalledWith({
-        where: { id: 1 },
-        data: { role: Role.ADMIN },
-      });
+      const updated = await service.updateRole(1, 1, Role.ADMIN);
       expect(updated.role).toBe(Role.ADMIN);
+    });
+
+    it('throws NotFoundException if target user does not exist', async () => {
+      prismaMock.user.findUnique.mockResolvedValue(null);
+
+      await expect(service.updateRole(1, 999, Role.LIBRARIAN)).rejects.toThrow(
+        NotFoundException,
+      );
     });
   });
 });
