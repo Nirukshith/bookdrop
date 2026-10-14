@@ -1,4 +1,4 @@
-import { NotFoundException, UseGuards } from '@nestjs/common';
+import { NotFoundException } from '@nestjs/common';
 import { Args, Mutation, Query, Resolver } from '@nestjs/graphql';
 import { Role } from '@prisma/client';
 import {
@@ -6,8 +6,6 @@ import {
   CurrentUser,
 } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { RolesGuard } from '../auth/guards/roles.guard';
 import { UpdateUserRoleArgs } from './dto/update-user-role.args';
 import { UserModel } from './models/user.model';
 import { UsersService } from './users.service';
@@ -17,7 +15,6 @@ export class UsersResolver {
   constructor(private readonly usersService: UsersService) {}
 
   @Query(() => UserModel, { name: 'me' })
-  @UseGuards(JwtAuthGuard)
   async me(@CurrentUser() user: AuthenticatedUser): Promise<UserModel> {
     const foundUser = await this.usersService.findById(user.sub);
     if (!foundUser) {
@@ -27,14 +24,12 @@ export class UsersResolver {
   }
 
   @Query(() => [UserModel], { name: 'users' })
-  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.ADMIN)
   async users(): Promise<UserModel[]> {
     return this.usersService.list();
   }
 
   @Mutation(() => UserModel, { name: 'updateUserRole' })
-  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.ADMIN)
   async updateUserRole(
     @Args() args: UpdateUserRoleArgs,

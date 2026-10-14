@@ -394,6 +394,27 @@ describe('Auth & Users (GraphQL E2E)', () => {
       adminAccessToken = loginRes.body.data.login.accessToken;
     });
 
+    it('denies unauthenticated access to users query with 401 Unauthorized', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/graphql')
+        .send({
+          query: `
+            query {
+              users {
+                id
+                email
+              }
+            }
+          `,
+        })
+        .expect(200);
+
+      expect(res.body.errors).toBeDefined();
+      expect(res.body.errors[0].message).toContain(
+        'Authentication token missing',
+      );
+    });
+
     it('denies access to users query for MEMBER role with 403 Forbidden', async () => {
       const res = await request(app.getHttpServer())
         .post('/graphql')

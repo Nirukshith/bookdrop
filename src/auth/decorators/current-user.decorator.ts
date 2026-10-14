@@ -9,7 +9,13 @@ export interface AuthenticatedUser {
 
 export const CurrentUser = createParamDecorator(
   (data: unknown, context: ExecutionContext): AuthenticatedUser => {
-    const ctx = GqlExecutionContext.create(context);
-    return ctx.getContext().req?.user;
+    let req: any;
+    if (context.getType<string>() === 'graphql') {
+      const ctx = GqlExecutionContext.create(context);
+      req = ctx.getContext()?.req;
+    } else {
+      req = context.switchToHttp().getRequest();
+    }
+    return req?.user;
   },
 );
