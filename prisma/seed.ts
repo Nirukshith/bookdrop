@@ -1,4 +1,6 @@
-import { PrismaClient, CopyStatus } from '@prisma/client';
+import 'dotenv/config';
+import * as argon2 from 'argon2';
+import { PrismaClient, CopyStatus, Role } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
@@ -356,6 +358,63 @@ async function main() {
   }
 
   console.log(`✅ Successfully seeded ${booksData.length} books and ${totalCopies} copies.`);
+  
+  // 4. Seed Demo Users (ADMIN, LIBRARIAN, MEMBER)
+  if (process.env.NODE_ENV !== 'production') {
+    console.log('👤 Seeding demo users...');
+
+    const adminEmail = (process.env.SEED_ADMIN_EMAIL || 'admin@bookdrop.local').trim().toLowerCase();
+    const librarianEmail = (process.env.SEED_LIBRARIAN_EMAIL || 'librarian@bookdrop.local').trim().toLowerCase();
+    const memberEmail = (process.env.SEED_MEMBER_EMAIL || 'member@bookdrop.local').trim().toLowerCase();
+
+    const adminPassword = process.env.SEED_ADMIN_PASSWORD || 'AdminPassword123!';
+    const librarianPassword = process.env.SEED_LIBRARIAN_PASSWORD || 'LibrarianPassword123!';
+    const memberPassword = process.env.SEED_MEMBER_PASSWORD || 'MemberPassword123!';
+
+    const [adminHash, librarianHash, memberHash] = await Promise.all([
+      argon2.hash(adminPassword),
+      argon2.hash(librarianPassword),
+      argon2.hash(memberPassword),
+    ]);
+
+    const demoUsers = [
+      {
+        email: adminEmail,
+        name: 'Demo Admin',
+        role: Role.ADMIN,
+        passwordHash: adminHash,
+      },
+      {
+        email: librarianEmail,
+        name: 'Demo Librarian',
+        role: Role.LIBRARIAN,
+        passwordHash: librarianHash,
+      },
+      {
+        email: memberEmail,
+        name: 'Demo Member',
+        role: Role.MEMBER,
+        passwordHash: memberHash,
+      },
+    ];
+
+    for (const user of demoUsers) {
+      await prisma.user.upsert({
+        where: { email: user.email },
+        update: {
+          name: user.name,
+          role: user.role,
+          passwordHash: user.passwordHash,
+        },
+        create: user,
+      });
+    }
+
+    console.log(`✅ Seeded ${demoUsers.length} demo users (ADMIN, LIBRARIAN, MEMBER).`);
+  } else {
+    console.log('🔒 Production mode detected: Skipping demo users seed.');
+  }
+
   console.log('✨ Seed complete!');
 }
 

@@ -14,4 +14,7 @@ export const envValidationSchema = Joi.object({
   }),
   JWT_ACCESS_TTL: Joi.string().default('15m'),
   REFRESH_TOKEN_TTL_DAYS: Joi.number().integer().positive().default(7),
+  SEED_ADMIN_PASSWORD: Joi.string().optional(),
+  SEED_LIBRARIAN_PASSWORD: Joi.string().optional(),
+  SEED_MEMBER_PASSWORD: Joi.string().optional(),
 });
