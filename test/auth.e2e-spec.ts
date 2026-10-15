@@ -459,6 +459,28 @@ describe('Auth & Users (GraphQL E2E)', () => {
       expect(res.body.data.users.length).toBeGreaterThan(0);
     });
 
+    it('denies access to updateUserRole for MEMBER role with 403 Forbidden', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/graphql')
+        .set('Authorization', `Bearer ${memberAccessToken}`)
+        .send({
+          query: `
+            mutation {
+              updateUserRole(userId: ${memberUserId}, role: LIBRARIAN) {
+                id
+                role
+              }
+            }
+          `,
+        })
+        .expect(200);
+
+      expect(res.body.errors).toBeDefined();
+      expect(res.body.errors[0].message).toContain(
+        'Access denied: insufficient permissions',
+      );
+    });
+
     it('allows ADMIN to update another user role to LIBRARIAN', async () => {
       const res = await request(app.getHttpServer())
         .post('/graphql')

@@ -19,8 +19,15 @@ jobs:
           --health-cmd "pg_isready -U bookdrop"
           --health-interval 5s --health-timeout 5s --health-retries 10
     env:
+      NODE_ENV: test
+      PORT: 3000
       DATABASE_URL: postgresql://bookdrop:bookdrop@localhost:5432/bookdrop
-      JWT_ACCESS_SECRET: ci-test-jwt-access-secret-must-be-at-least-32-chars-long
+      JWT_ACCESS_SECRET: ci-dummy-test-jwt-access-secret-minimum-32-characters
+      JWT_ACCESS_TTL: 15m
+      REFRESH_TOKEN_TTL_DAYS: 7
+      SEED_ADMIN_PASSWORD: DummyAdminPassword123!
+      SEED_LIBRARIAN_PASSWORD: DummyLibrarianPassword123!
+      SEED_MEMBER_PASSWORD: DummyMemberPassword123!
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
