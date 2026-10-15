@@ -81,6 +81,9 @@ export class BooksService {
     return this.mapToModel(book);
   }
 
+  // check if the authorids and category ids passed are valid, otherwise throw a bad request exception
+  // then check if the book with the same isbn already exists, otherwise throw a conflict exception
+  // then create the book
   async create(input: CreateBookInput): Promise<BookModel> {
     if (input.authorIds?.length) {
       const authorsCount = await this.prisma.author.count({
@@ -99,7 +102,7 @@ export class BooksService {
         throw new BadRequestException('One or more category IDs are invalid');
       }
     }
-
+    // check if the book with the same isbn already exists
     const existingIsbn = await this.prisma.book.findUnique({
       where: { isbn: input.isbn.trim() },
     });
@@ -141,7 +144,8 @@ export class BooksService {
       throw error;
     }
   }
-
+  // update a book by id, if no value is passed, it will not be updated
+  // if the new isbn we input matches with another book, it will throw a conflict exception
   async update(id: number, input: UpdateBookInput): Promise<BookModel> {
     const existingBook = await this.prisma.book.findUnique({
       where: { id },
