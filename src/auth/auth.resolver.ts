@@ -9,7 +9,7 @@ import { AuthPayloadModel } from './models/auth-payload.model';
 export class AuthResolver {
   constructor(private readonly authService: AuthService) {}
 
-  @Public()
+  @Public() // unauthenticated users can register
   @Mutation(() => AuthPayloadModel, { name: 'register' })
   async register(
     @Args('input') input: RegisterInput,
@@ -17,13 +17,13 @@ export class AuthResolver {
     return this.authService.register(input);
   }
 
-  @Public()
+  @Public() // unauthenticated users can login
   @Mutation(() => AuthPayloadModel, { name: 'login' })
   async login(@Args('input') input: LoginInput): Promise<AuthPayloadModel> {
     return this.authService.login(input);
   }
 
-  @Public()
+  @Public() // unauthenticated users can refresh tokens
   @Mutation(() => AuthPayloadModel, { name: 'refreshTokens' })
   async refreshTokens(
     @Args('refreshToken') refreshToken: string,
@@ -31,7 +31,7 @@ export class AuthResolver {
     return this.authService.refreshTokens(refreshToken);
   }
 
-  @Public()
+  @Public() // this is not a secured endpoint, anyone can logout
   @Mutation(() => Boolean, { name: 'logout' })
   async logout(@Args('refreshToken') refreshToken: string): Promise<boolean> {
     return this.authService.logout(refreshToken);

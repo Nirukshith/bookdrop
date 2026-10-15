@@ -30,6 +30,15 @@ type Category {
   name: String!
 }
 
+input CreateBookInput {
+  authorIds: [Int!]!
+  categoryIds: [Int!]!
+  description: String
+  isbn: String!
+  publishedYear: Int
+  title: String!
+}
+
 """
 A date-time string at UTC, such as 2019-12-03T09:54:33Z, compliant with the date-time format.
 """
@@ -41,10 +50,12 @@ input LoginInput {
 }
 
 type Mutation {
+  createBook(input: CreateBookInput!): Book!
   login(input: LoginInput!): AuthPayload!
   logout(refreshToken: String!): Boolean!
   refreshTokens(refreshToken: String!): AuthPayload!
   register(input: RegisterInput!): AuthPayload!
+  updateBook(id: Int!, input: UpdateBookInput!): Book!
   updateUserRole(role: Role!, userId: Int!): User!
 }
 
@@ -66,6 +77,15 @@ enum Role {
   ADMIN
   LIBRARIAN
   MEMBER
+}
+
+input UpdateBookInput {
+  authorIds: [Int!]
+  categoryIds: [Int!]
+  description: String
+  isbn: String
+  publishedYear: Int
+  title: String
 }
 
 type User {
