@@ -123,6 +123,31 @@ The database seed provides 3 preconfigured demo accounts for testing RBAC:
 
 ---
 
+## First Admin Account Bootstrap (Production)
+
+In production environments where demo seed accounts are disabled, you can securely bootstrap the initial administrator account (or promote an existing registered user) out-of-band using environment variables:
+
+```bash
+ADMIN_EMAIL="admin@bookdrop.io" \
+ADMIN_NAME="Primary Administrator" \
+ADMIN_PASSWORD="SecureProductionPassword123!" \
+npm run create-admin
+```
+
+Inside a running production Docker container, this script can be executed as a one-off task:
+```bash
+docker exec -e ADMIN_EMAIL="admin@bookdrop.io" -e ADMIN_NAME="Primary Administrator" -e ADMIN_PASSWORD="SecureProductionPassword123!" <container_id> npm run create-admin
+```
+
+### Bootstrap Script Features
+* **Creation & Promotion**: If the user does not exist, a new account with `Role.ADMIN` is created. If the user already exists, their role is promoted to `ADMIN` and their password is updated.
+* **Session Invalidation**: When promoting or updating an existing user, all active refresh tokens for that account are revoked automatically.
+* **Password Validation**: Enforces the same validation as public registration (minimum 8 characters, Argon2id encryption).
+* **Zero Leakage**: Never prints passwords or dumps environment variables to console output.
+* **Docker Container Compatible**: Automatically runs via `ts-node` in development and via compiled JavaScript (`node dist/scripts/create-admin.js`) in production images.
+
+---
+
 ## Authentication & Token Architecture
 
 Bookdrop implements a defense-in-depth token security model:
