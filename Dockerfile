@@ -34,8 +34,9 @@ FROM node:22-slim AS runner
 
 WORKDIR /app
 
-# Install runtime dependencies: OpenSSL (for Prisma) and curl (for health checks)
-RUN apt-get update -y && apt-get install -y --no-install-recommends openssl ca-certificates curl && rm -rf /var/lib/apt/lists/*
+# Install runtime dependencies and security updates: OpenSSL (for Prisma), curl (for health checks)
+RUN apt-get update -y && apt-get upgrade -y --no-install-recommends && apt-get install -y --no-install-recommends openssl ca-certificates curl && rm -rf /var/lib/apt/lists/*
+
 
 ENV NODE_ENV=production
 ENV PORT=3000

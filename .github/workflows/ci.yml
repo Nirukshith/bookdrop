@@ -28,6 +28,8 @@ jobs:
       SEED_ADMIN_PASSWORD: DummyAdminPassword123!
       SEED_LIBRARIAN_PASSWORD: DummyLibrarianPassword123!
       SEED_MEMBER_PASSWORD: DummyMemberPassword123!
+      TRUST_PROXY: "false"
+      ALLOWED_ORIGINS: ""
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -42,3 +44,42 @@ jobs:
       - run: npm test
       - run: npm run test:e2e
       - run: npm run build
+
+  docker-build:
+    name: Docker Build & Vulnerability Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image with layer caching
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: bookdrop-api:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Scan image for HIGH vulnerabilities (report only)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: 'bookdrop-api:test'
+          format: 'table'
+          severity: 'HIGH'
+          exit-code: '0'
+          trivyignores: '.trivyignore'
+
+      - name: Scan image for CRITICAL vulnerabilities (fail on findings)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: 'bookdrop-api:test'
+          format: 'table'
+          severity: 'CRITICAL'
+          exit-code: '1'
+          trivyignores: '.trivyignore'
+

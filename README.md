@@ -35,21 +35,114 @@ Bookdrop enforces declarative Role-Based Access Control (RBAC) via global guards
 
 All environment variables are validated at application boot-time using Joi schemas ([`src/config/env.validation.ts`](src/config/env.validation.ts)). If any required variable is missing or fails constraints (e.g. secret key length), the application crashes immediately with clear diagnostic logs.
 
-| Variable | Description | Required | Default / Example |
-| :--- | :--- | :---: | :--- |
-| `NODE_ENV` | Application environment (`development`, `production`, `test`) | No | `development` |
-| `PORT` | HTTP server port | No | `3000` |
-| `DATABASE_URL` | PostgreSQL connection string | **Yes** | `postgresql://bookdrop:bookdrop@localhost:5433/bookdrop?schema=public` |
-| `JWT_ACCESS_SECRET` | Secret key used to sign access JWTs (**minimum 32 characters**) | **Yes** | `your-super-secret-jwt-access-key-min-32-chars-long` |
-| `JWT_ACCESS_TTL` | Lifespan of access tokens | No | `15m` |
-| `REFRESH_TOKEN_TTL_DAYS` | Lifespan of refresh tokens in days | No | `7` |
-| `SEED_ADMIN_PASSWORD` | Password for seeded demo Admin (dev only) | No | `AdminPassword123!` |
-| `SEED_LIBRARIAN_PASSWORD` | Password for seeded demo Librarian (dev only) | No | `LibrarianPassword123!` |
-| `SEED_MEMBER_PASSWORD` | Password for seeded demo Member (dev only) | No | `MemberPassword123!` |
+| Variable | Purpose | Example Placeholder | Required or Optional |
+| :--- | :--- | :--- | :---: |
+| `DATABASE_URL` | PostgreSQL connection string for Prisma ORM | `postgresql://bookdrop:bookdrop@localhost:5432/bookdrop?schema=public` | **Required** |
+| `JWT_ACCESS_SECRET` | Secret key used to sign stateless JWT access tokens (**minimum 32 characters**) | `your-super-secret-jwt-access-key-min-32-chars-long` | **Required** |
+| `NODE_ENV` | Application runtime environment (`development`, `production`, `test`, `provision`) | `production` | Optional (default: `development`) |
+| `PORT` | HTTP server port (the application binds to `0.0.0.0`) | `3000` | Optional (default: `3000`) |
+| `JWT_ACCESS_TTL` | Lifespan and validity duration for JWT access tokens | `15m` | Optional (default: `15m`) |
+| `REFRESH_TOKEN_TTL_DAYS` | Lifespan in days for opaque hashed refresh tokens | `7` | Optional (default: `7`) |
+| `TRUST_PROXY` | Configures Express to trust `X-Forwarded-*` headers from upstream reverse proxies / load balancers for client IP resolution and rate limiting | `false` | Optional (default: `false`) |
+| `ALLOWED_ORIGINS` | Comma-separated list of allowed CORS origins for browser applications (empty by default, disallowing cross-origin browser requests) | `https://app.bookdrop.io,https://admin.bookdrop.io` | Optional (default: `""`) |
+| `SEED_ADMIN_PASSWORD` | Password for seeded demo Admin (development only) | `AdminPassword123!` | Optional |
+| `SEED_LIBRARIAN_PASSWORD` | Password for seeded demo Librarian (development only) | `LibrarianPassword123!` | Optional |
+| `SEED_MEMBER_PASSWORD` | Password for seeded demo Member (development only) | `MemberPassword123!` | Optional |
+| `ALLOW_PROD_SEED` | Safety override flag allowing non-destructive seeding in production without wiping tables | `false` | Optional (default: `false`) |
+| `ADMIN_EMAIL` | Target email address when running the `npm run create-admin` bootstrap script | `admin@bookdrop.io` | Required for `create-admin` |
+| `ADMIN_NAME` | Full name when running the `npm run create-admin` bootstrap script | `Primary Administrator` | Required for `create-admin` |
+| `ADMIN_PASSWORD` | Plaintext password (min. 8 characters) when running `npm run create-admin` | `SecureProductionPassword123!` | Required for `create-admin` |
+
+> [!WARNING]
+> **TRUST_PROXY Security Warning**:
+> Set `TRUST_PROXY=true` **ONLY** when running behind a trusted reverse proxy or load balancer (e.g., AWS Application Load Balancer, NGINX, Cloudflare).
+>
+> When enabled, Express trusts the `X-Forwarded-For` header to determine client IP addresses for request logging and rate limiting. If `TRUST_PROXY` is enabled without a reverse proxy in front of the application, clients can spoof `X-Forwarded-For` headers with arbitrary IPs to bypass rate limits and IP-based security controls.
 
 ---
 
-## Getting Started
+## Production Docker Deployment & Local Workflow
+
+> [!IMPORTANT]
+> **Database Migrations Note**:
+> Migrations are run as a separate command from the image, never automatically on app start.
+>
+> Running migrations automatically on container boot introduces race conditions and database locking issues when multiple application container replicas scale up simultaneously (e.g., in AWS ECS or Kubernetes). Instead, execute migrations as a separate one-off task prior to launching new application containers.
+
+### 1. Build the Production Image Locally
+The `Dockerfile` is a multi-stage, non-root, Debian slim container explicitly built for `linux/amd64`:
+```bash
+docker build --platform linux/amd64 -t bookdrop-api:latest .
+```
+
+### 2. Start PostgreSQL Database
+Start only the PostgreSQL database container (the default `docker compose up` starts only the database):
+```bash
+docker compose up -d
+```
+
+### 3. Run Database Migrations from the Image
+Apply pending migrations using the production image with a command override:
+```bash
+docker compose run --rm app npx prisma migrate deploy
+```
+
+### 4. Start the Application Container
+Launch the production application container using the `app` Compose profile:
+```bash
+docker compose --profile app up -d app
+```
+
+### 5. Verify Health Checks
+Health check endpoints are public, exempt from rate limits, and reveal no internal system details:
+* **Liveness (`/health/live`)**: Confirms the process is responsive without querying external dependencies (avoids container reboot loops during database outages).
+  ```bash
+  curl -i http://localhost:3000/health/live
+  ```
+  Expected: HTTP 200 `{"status":"ok","info":{"server":{"status":"up"}},"error":{},"details":{"server":{"status":"up"}}}`
+
+* **Readiness (`/health/ready`)**: Verifies database connectivity (`SELECT 1`) to ensure the container is ready to accept incoming traffic from load balancers.
+  ```bash
+  curl -i http://localhost:3000/health/ready
+  ```
+  Expected: HTTP 200 `{"status":"ok","info":{"database":{"status":"up"}},"error":{},"details":{"database":{"status":"up"}}}`
+
+### 6. Bootstrap Initial Production Admin
+Execute `create-admin` inside a one-off container instance to provision the initial administrator:
+```bash
+docker compose run --rm \
+  -e ADMIN_EMAIL="admin@bookdrop.io" \
+  -e ADMIN_NAME="Primary Administrator" \
+  -e ADMIN_PASSWORD="SecureProductionPassword123!" \
+  app npm run create-admin
+```
+
+Verify authentication and role assignment via GraphQL:
+```bash
+curl -s -X POST http://localhost:3000/graphql \
+  -H "Content-Type: application/json" \
+  -d '{"query":"mutation { login(input: { email: \"admin@bookdrop.io\", password: \"SecureProductionPassword123!\" }) { accessToken user { id email role } } }"}'
+```
+
+### 7. Verify GraphQL Playground and Introspection are Disabled
+In production (`NODE_ENV=production`), GraphQL introspection queries return a forbidden schema error, and the interactive playground is turned off:
+```bash
+curl -s -X POST http://localhost:3000/graphql \
+  -H "Content-Type: application/json" \
+  -d '{"query":"{ __schema { types { name } } }"}'
+```
+Expected: `{"errors":[{"message":"GraphQL introspection is not allowed by Apollo Server, but the query contained __schema or __type.","extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}}],"data":null}`
+
+### 8. Graceful SIGTERM Shutdown
+When stopping the container, NestJS shutdown hooks trigger clean closure of PostgreSQL connections and completion of in-flight requests:
+```bash
+docker compose --profile app stop app
+docker compose --profile app logs app
+```
+
+---
+
+## Local Development Setup
 
 ### 1. Prerequisites
 * **Node.js**: v20 or v22 LTS
@@ -123,7 +216,7 @@ The database seed provides 3 preconfigured demo accounts for testing RBAC:
 
 ---
 
-## First Admin Account Bootstrap (Production)
+## First Admin Account Bootstrap (Out-of-Band Script)
 
 In production environments where demo seed accounts are disabled, you can securely bootstrap the initial administrator account (or promote an existing registered user) out-of-band using environment variables:
 
@@ -134,9 +227,13 @@ ADMIN_PASSWORD="SecureProductionPassword123!" \
 npm run create-admin
 ```
 
-Inside a running production Docker container, this script can be executed as a one-off task:
+Inside Docker:
 ```bash
-docker exec -e ADMIN_EMAIL="admin@bookdrop.io" -e ADMIN_NAME="Primary Administrator" -e ADMIN_PASSWORD="SecureProductionPassword123!" <container_id> npm run create-admin
+docker compose run --rm \
+  -e ADMIN_EMAIL="admin@bookdrop.io" \
+  -e ADMIN_NAME="Primary Administrator" \
+  -e ADMIN_PASSWORD="SecureProductionPassword123!" \
+  app npm run create-admin
 ```
 
 ### Bootstrap Script Features

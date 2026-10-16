@@ -1,0 +1,6 @@
+# Trivy Vulnerability Suppressions for Bookdrop Production Image
+
+# CVE-2023-45853: Integer overflow in MiniZip (contrib/minizip) in zlib through 1.3.
+# Upstream Debian 12 security status is 'will_not_fix'. Debian's zlib1g package is built without the contrib MiniZip library,
+# meaning the vulnerable MiniZip code is not compiled into the binary or exposed to the application.
+CVE-2023-45853
