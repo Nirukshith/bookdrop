@@ -44,7 +44,7 @@ import { envValidationSchema } from './config/env.validation';
           process.env.NODE_ENV === 'production' ||
           configService.get<string>('NODE_ENV') === 'production';
         return {
-          autoSchemaFile: join(process.cwd(), 'src/schema.gql'),
+          autoSchemaFile: isProd ? true : join(process.cwd(), 'src/schema.gql'),
           sortSchema: true,
           playground: !isProd,
           introspection: !isProd,
