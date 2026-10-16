@@ -1,0 +1,28 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: bookdrop-migration-seed
+  namespace: bookdrop
+spec:
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: migration
+          image: bookdrop-api:k8s-local
+          imagePullPolicy: Never
+          command:
+            - /bin/sh
+            - -c
+            - "npx prisma migrate deploy && npx prisma db seed -- --allow-prod-seed"
+          env:
+            - name: NODE_ENV
+              value: "production"
+            - name: ALLOW_PROD_SEED
+              value: "true"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: bookdrop-secrets
+                  key: DATABASE_URL
