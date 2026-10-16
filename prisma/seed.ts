@@ -5,15 +5,34 @@ import { PrismaClient, CopyStatus, Role } from '@prisma/client';
 const prisma = new PrismaClient();
 
 async function main() {
+  const isProduction = process.env.NODE_ENV === 'production';
+  const allowProdSeed =
+    process.argv.includes('--allow-prod-seed') ||
+    process.env.ALLOW_PROD_SEED === 'true';
+
+  if (isProduction && !allowProdSeed) {
+    console.error(
+      '🚨 ABORTED: Seeding in production is blocked by default to prevent data corruption or loss.\n' +
+        'To seed missing catalog data in production, you must explicitly pass --allow-prod-seed (or set ALLOW_PROD_SEED=true).\n' +
+        'Even with this flag, existing records will NEVER be deleted.',
+    );
+    process.exit(1);
+  }
+
   console.log('🌱 Starting database seed...');
 
-  // Clear existing records in reverse dependency order for repeatability
-  await prisma.copy.deleteMany();
-  await prisma.book.deleteMany();
-  await prisma.author.deleteMany();
-  await prisma.category.deleteMany();
-
-  console.log('🧹 Existing data cleared.');
+  if (!isProduction) {
+    // Clear existing records in reverse dependency order for repeatability in development/test
+    await prisma.copy.deleteMany();
+    await prisma.book.deleteMany();
+    await prisma.author.deleteMany();
+    await prisma.category.deleteMany();
+    console.log('🧹 Existing data cleared.');
+  } else {
+    console.log(
+      '🔒 Production mode detected: Skipping data wipe. Inserting missing records only (non-destructive).',
+    );
+  }
 
   // 1. Seed Authors (10 authors)
   const authorsData = [
@@ -31,10 +50,15 @@ async function main() {
 
   const authorsMap: Record<string, { id: number }> = {};
   for (const author of authorsData) {
-    const created = await prisma.author.create({ data: author });
-    authorsMap[author.name] = created;
+    let authorRecord = await prisma.author.findFirst({
+      where: { name: author.name },
+    });
+    if (!authorRecord) {
+      authorRecord = await prisma.author.create({ data: author });
+    }
+    authorsMap[author.name] = authorRecord;
   }
-  console.log(`✅ Created ${Object.keys(authorsMap).length} authors.`);
+  console.log(`✅ Seeded ${Object.keys(authorsMap).length} authors.`);
 
   // 2. Seed Categories (8 categories)
   const categoriesData = [
@@ -50,10 +74,14 @@ async function main() {
 
   const categoriesMap: Record<string, { id: number }> = {};
   for (const category of categoriesData) {
-    const created = await prisma.category.create({ data: category });
-    categoriesMap[category.name] = created;
+    const record = await prisma.category.upsert({
+      where: { name: category.name },
+      update: {},
+      create: category,
+    });
+    categoriesMap[category.name] = record;
   }
-  console.log(`✅ Created ${Object.keys(categoriesMap).length} categories.`);
+  console.log(`✅ Seeded ${Object.keys(categoriesMap).length} categories.`);
 
   // 3. Seed Books (30 books with 1-4 copies each)
   const booksData = [
@@ -331,30 +359,49 @@ async function main() {
 
   let totalCopies = 0;
   for (const book of booksData) {
-    const createdBook = await prisma.book.create({
-      data: {
-        title: book.title,
-        isbn: book.isbn,
-        description: book.description,
-        publishedYear: book.publishedYear,
-        authors: {
-          connect: book.authorNames.map((name) => ({ id: authorsMap[name].id })),
-        },
-        categories: {
-          connect: book.categoryNames.map((name) => ({ id: categoriesMap[name].id })),
-        },
-        copies: {
-          create: Array.from({ length: book.copiesCount }, () => ({
-            status: CopyStatus.AVAILABLE,
-          })),
-        },
-      },
-      include: {
-        copies: true,
-      },
+    let targetBook = await prisma.book.findUnique({
+      where: { isbn: book.isbn },
+      include: { copies: true },
     });
 
-    totalCopies += createdBook.copies.length;
+    if (!targetBook) {
+      targetBook = await prisma.book.create({
+        data: {
+          title: book.title,
+          isbn: book.isbn,
+          description: book.description,
+          publishedYear: book.publishedYear,
+          authors: {
+            connect: book.authorNames.map((name) => ({ id: authorsMap[name].id })),
+          },
+          categories: {
+            connect: book.categoryNames.map((name) => ({ id: categoriesMap[name].id })),
+          },
+          copies: {
+            create: Array.from({ length: book.copiesCount }, () => ({
+              status: CopyStatus.AVAILABLE,
+            })),
+          },
+        },
+        include: {
+          copies: true,
+        },
+      });
+      totalCopies += targetBook.copies.length;
+    } else {
+      // Book already exists (e.g. in production): insert any missing copies
+      const existingCopiesCount = targetBook.copies.length;
+      const missingCopies = Math.max(0, book.copiesCount - existingCopiesCount);
+      for (let i = 0; i < missingCopies; i++) {
+        await prisma.copy.create({
+          data: {
+            bookId: targetBook.id,
+            status: CopyStatus.AVAILABLE,
+          },
+        });
+      }
+      totalCopies += existingCopiesCount + missingCopies;
+    }
   }
 
   console.log(`✅ Successfully seeded ${booksData.length} books and ${totalCopies} copies.`);

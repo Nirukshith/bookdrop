@@ -91,7 +91,16 @@ Seed catalog data (30 books, 10 authors, 8 categories, 79 copies) and demo users
 ```bash
 npx prisma db seed
 ```
-*(The seed script is idempotent and safe to run multiple times. Demo accounts are only seeded when `NODE_ENV !== 'production'`)*.
+*(The seed script is idempotent and safe to run multiple times in development. Demo accounts are only seeded when `NODE_ENV !== 'production'`)*.
+
+> [!CAUTION]
+> **Production Seeding Safeguard**:
+> In production (`NODE_ENV=production`), database seeding is **blocked by default** (aborts with an error) to protect live data.
+> To safely seed missing records in production without wiping existing data, you must explicitly pass `--allow-prod-seed` (or set `ALLOW_PROD_SEED=true`):
+> ```bash
+> NODE_ENV=production npx ts-node prisma/seed.ts --allow-prod-seed
+> ```
+> In production mode, the script **NEVER** deletes existing records (skips table wipes) and only non-destructively inserts missing records. Demo accounts are never created in production.
 
 ### 7. Run the Application
 Start the NestJS server in development mode:
