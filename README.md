@@ -61,7 +61,58 @@ All environment variables are validated at application boot-time using Joi schem
 
 ---
 
+## ☁️ Cloud Architecture & AWS Live Deployment
+
+Bookdrop is deployed live to **AWS** under the **12-Month Free Tier** ($0/month) utilizing a decoupled, production-hardened microservices architecture:
+
+```
+[ Internet Traffic ]
+        │
+        ▼ (Port 80)
+┌────────────────────────────────────────────────────────┐
+│  AWS Application Load Balancer (ALB)                  │
+│  - Endpoint: http://bookdrop-alb-1343440666.ap-south-1.elb.amazonaws.com
+│  - Health Check: Target Group -> /health/live          │
+└───────────────────────┬────────────────────────────────┘
+                        │ (Forward to Port 3000)
+                        ▼
+┌────────────────────────────────────────────────────────┐
+│  Amazon ECS Cluster (bookdrop-cluster)                 │
+│  - Host: 1x EC2 t3.micro (Amazon Linux 2023 ECS AMI)   │
+│  - Service: bookdrop-api-service                       │
+│  - Task: bookdrop-api-task:1 (Non-root user: node)     │
+│  - Config: TRUST_PROXY=true, PORT=3000                 │
+│  - Secrets: AWS SSM Parameter Store                    │
+│  - Logs: CloudWatch (/ecs/bookdrop-api)                │
+└───────────────────────┬────────────────────────────────┘
+                        │ (Private TLS Port 5432)
+                        ▼
+┌────────────────────────────────────────────────────────┐
+│  Amazon RDS PostgreSQL (bookdrop-db)                  │
+│  - Engine: PostgreSQL 16.9 (db.t3.micro)               │
+│  - Storage: 20 GB gp3 (Single-AZ, No Public IP)        │
+└────────────────────────────────────────────────────────┘
+```
+
+### Live Public Endpoints
+
+| Service | Live URL | Status | Sample Response |
+| :--- | :--- | :--- | :--- |
+| **Liveness Probe** | [http://bookdrop-alb-1343440666.ap-south-1.elb.amazonaws.com/health/live](http://bookdrop-alb-1343440666.ap-south-1.elb.amazonaws.com/health/live) | `200 OK` | `{"status":"ok","info":{"app":{"status":"up"}}}` |
+| **Readiness Probe (DB)** | [http://bookdrop-alb-1343440666.ap-south-1.elb.amazonaws.com/health/ready](http://bookdrop-alb-1343440666.ap-south-1.elb.amazonaws.com/health/ready) | `200 OK` | `{"status":"ok","info":{"database":{"status":"up"}}}` |
+| **GraphQL API** | [http://bookdrop-alb-1343440666.ap-south-1.elb.amazonaws.com/graphql](http://bookdrop-alb-1343440666.ap-south-1.elb.amazonaws.com/graphql) | `200 OK` | Accepts POST requests with JSON queries |
+
+### Free-Tier Compliance & DevOps Hardening
+
+* **Cost Optimization ($0/mo):** Uses **ECS with EC2 Launch Type** on a free `t3.micro` instance instead of Fargate, paired with a Single-AZ `db.t3.micro` RDS instance and 1 ALB.
+* **Storage Guardrails:** ECR repository enforces an automated lifecycle policy retaining at most **2 container images** to strictly remain within the 500 MB free registry allowance.
+* **Decoupled One-Off Migrations:** Database migrations (`npx prisma migrate deploy`) and seeding (`npx prisma db seed`) run via isolated ECS one-off tasks prior to application rollouts, preventing race conditions or concurrency deadlocks.
+* **Automated CI/CD Pipeline:** Configured in [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) to automatically build, push to ECR, run database migrations, and perform a rolling deployment to ECS on every push to `main`.
+
+---
+
 ## Production Docker Deployment & Local Workflow
+
 
 > [!IMPORTANT]
 > **Database Migrations Note**:
