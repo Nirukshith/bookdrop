@@ -9,5 +9,32 @@ services:
       - "5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bookdrop -d bookdrop"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  app:
+    profiles: ["app"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: bookdrop-api:latest
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: "postgresql://bookdrop:bookdrop@db:5432/bookdrop?schema=public"
+      JWT_ACCESS_SECRET: "${JWT_ACCESS_SECRET:-default-super-secret-jwt-access-key-min-32-chars-long}"
+      JWT_ACCESS_TTL: "15m"
+      REFRESH_TOKEN_TTL_DAYS: 7
+      TRUST_PROXY: "false"
+      ALLOWED_ORIGINS: ""
+    ports:
+      - "3000:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+
 volumes:
   pgdata:

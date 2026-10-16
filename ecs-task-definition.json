@@ -1,0 +1,54 @@
+{
+  "family": "bookdrop-api-task",
+  "networkMode": "bridge",
+  "requiresCompatibilities": ["EC2"],
+  "executionRoleArn": "arn:aws:iam::060668531381:role/ecsTaskExecutionRole",
+  "containerDefinitions": [
+    {
+      "name": "bookdrop-api",
+      "image": "060668531381.dkr.ecr.ap-south-1.amazonaws.com/bookdrop-api:latest",
+      "essential": true,
+      "memoryReservation": 350,
+      "portMappings": [
+        {
+          "hostPort": 3000,
+          "containerPort": 3000,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        { "name": "NODE_ENV", "value": "production" },
+        { "name": "PORT", "value": "3000" },
+        { "name": "TRUST_PROXY", "value": "true" },
+        { "name": "JWT_ACCESS_TTL", "value": "15m" },
+        { "name": "REFRESH_TOKEN_TTL_DAYS", "value": "7" },
+        { "name": "ALLOWED_ORIGINS", "value": "*" }
+      ],
+      "secrets": [
+        {
+          "name": "DATABASE_URL",
+          "valueFrom": "arn:aws:ssm:ap-south-1:060668531381:parameter/bookdrop/production/DATABASE_URL"
+        },
+        {
+          "name": "JWT_ACCESS_SECRET",
+          "valueFrom": "arn:aws:ssm:ap-south-1:060668531381:parameter/bookdrop/production/JWT_ACCESS_SECRET"
+        }
+      ],
+      "healthCheck": {
+        "command": ["CMD-SHELL", "curl -f http://localhost:3000/health/live || exit 1"],
+        "interval": 30,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 15
+      },
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/bookdrop-api",
+          "awslogs-region": "ap-south-1",
+          "awslogs-stream-prefix": "api"
+        }
+      }
+    }
+  ]
+}

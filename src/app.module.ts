@@ -12,6 +12,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { BooksModule } from './books/books.module';
 import { UsersModule } from './users/users.module';
 import { AuthModule } from './auth/auth.module';
+import { HealthModule } from './health/health.module';
 import { GqlThrottlerGuard } from './auth/guards/gql-throttler.guard';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { RolesGuard } from './auth/guards/roles.guard';
@@ -43,7 +44,7 @@ import { envValidationSchema } from './config/env.validation';
           process.env.NODE_ENV === 'production' ||
           configService.get<string>('NODE_ENV') === 'production';
         return {
-          autoSchemaFile: join(process.cwd(), 'src/schema.gql'),
+          autoSchemaFile: isProd ? true : join(process.cwd(), 'src/schema.gql'),
           sortSchema: true,
           playground: !isProd,
           introspection: !isProd,
@@ -59,6 +60,7 @@ import { envValidationSchema } from './config/env.validation';
     BooksModule,
     UsersModule,
     AuthModule,
+    HealthModule,
   ],
   controllers: [AppController],
   providers: [

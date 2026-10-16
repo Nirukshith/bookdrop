@@ -171,4 +171,63 @@ describe('Security Hardening (E2E)', () => {
       );
     });
   });
+
+  describe('CORS and Trust Proxy Configuration', () => {
+    let corsApp: INestApplication;
+
+    beforeAll(async () => {
+      const fixture: TestingModule = await Test.createTestingModule({
+        imports: [AppModule],
+      }).compile();
+
+      corsApp = fixture.createNestApplication();
+
+      const allowedOriginsRaw =
+        'https://app.bookdrop.io,https://admin.bookdrop.io';
+      const allowedOrigins = allowedOriginsRaw
+        .split(',')
+        .map((origin) => origin.trim())
+        .filter(Boolean);
+
+      corsApp.enableCors({
+        origin: allowedOrigins.length > 0 ? allowedOrigins : false,
+        credentials: true,
+      });
+
+      const expressApp = corsApp.getHttpAdapter().getInstance();
+      expressApp.set('trust proxy', 1);
+
+      await corsApp.init();
+    });
+
+    afterAll(async () => {
+      await corsApp.close();
+    });
+
+    it('allows CORS requests from configured origins in ALLOWED_ORIGINS', async () => {
+      const res = await request(corsApp.getHttpServer())
+        .get('/')
+        .set('Origin', 'https://app.bookdrop.io')
+        .expect(200);
+
+      expect(res.headers['access-control-allow-origin']).toBe(
+        'https://app.bookdrop.io',
+      );
+      expect(res.headers['access-control-allow-credentials']).toBe('true');
+    });
+
+    it('rejects CORS headers for origins not included in ALLOWED_ORIGINS', async () => {
+      const res = await request(corsApp.getHttpServer())
+        .get('/')
+        .set('Origin', 'https://unauthorized-domain.com')
+        .expect(200);
+
+      expect(res.headers['access-control-allow-origin']).toBeUndefined();
+    });
+
+    it('enables trust proxy setting on the underlying express instance', () => {
+      const expressApp = corsApp.getHttpAdapter().getInstance();
+      expect(expressApp.get('trust proxy')).toBe(1);
+    });
+  });
 });

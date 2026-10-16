@@ -17,7 +17,8 @@
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
-    "test:e2e": "jest --config ./test/jest-e2e.json"
+    "test:e2e": "jest --config ./test/jest-e2e.json",
+    "create-admin": "if [ \"$NODE_ENV\" = \"production\" ] || [ -f dist/scripts/create-admin.js ]; then node dist/scripts/create-admin.js; else ts-node src/scripts/create-admin.ts; fi"
   },
   "dependencies": {
     "@apollo/server": "^4.13.0",
@@ -28,6 +29,7 @@
     "@nestjs/graphql": "^12.2.2",
     "@nestjs/jwt": "^10.2.0",
     "@nestjs/platform-express": "^10.0.0",
+    "@nestjs/terminus": "^10.3.0",
     "@nestjs/throttler": "^6.7.1",
     "@prisma/client": "^6.19.3",
     "argon2": "^0.45.1",
