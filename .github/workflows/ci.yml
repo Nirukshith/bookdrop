@@ -66,7 +66,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Scan image for HIGH vulnerabilities (report only)
-        uses: aquasecurity/trivy-action@v0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: 'bookdrop-api:test'
           format: 'table'
@@ -75,7 +75,7 @@ jobs:
           trivyignores: '.trivyignore'
 
       - name: Scan image for CRITICAL vulnerabilities (fail on findings)
-        uses: aquasecurity/trivy-action@v0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: 'bookdrop-api:test'
           format: 'table'
