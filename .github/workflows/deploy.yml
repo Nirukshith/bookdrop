@@ -1,0 +1,77 @@
+name: Deploy to AWS ECS
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    name: Build, Migrate & Deploy
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ap-south-1
+
+      - name: Log in to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, tag, and push image to Amazon ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: bookdrop-api
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build --platform linux/amd64 -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -t $ECR_REGISTRY/$ECR_REPOSITORY:latest .
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+
+      - name: Run Prisma Database Migrations Task
+        run: |
+          TASK_ARN=$(aws ecs run-task \
+            --cluster bookdrop-cluster \
+            --task-definition bookdrop-migration-task:1 \
+            --launch-type EC2 \
+            --query "tasks[0].taskArn" \
+            --output text)
+          
+          echo "Migration task launched: $TASK_ARN"
+          aws ecs wait tasks-stopped --cluster bookdrop-cluster --tasks $TASK_ARN
+          
+          EXIT_CODE=$(aws ecs describe-tasks \
+            --cluster bookdrop-cluster \
+            --tasks $TASK_ARN \
+            --query "tasks[0].containers[0].exitCode" \
+            --output text)
+          
+          if [ "$EXIT_CODE" != "0" ]; then
+            echo "Migration task failed with exit code $EXIT_CODE"
+            exit 1
+          fi
+          echo "Migrations completed successfully!"
+
+      - name: Deploy to Amazon ECS
+        run: |
+          aws ecs update-service \
+            --cluster bookdrop-cluster \
+            --service bookdrop-api-service \
+            --force-new-deployment
+          
+          aws ecs wait services-stable \
+            --cluster bookdrop-cluster \
+            --services bookdrop-api-service
+          
+          echo "Deployment completed successfully!"
