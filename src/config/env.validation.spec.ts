@@ -14,6 +14,21 @@ describe('envValidationSchema', () => {
     expect(value.REFRESH_TOKEN_TTL_DAYS).toBe(7);
     expect(value.PORT).toBe(3000);
     expect(value.NODE_ENV).toBe('development');
+    expect(value.TRUST_PROXY).toBe(false);
+    expect(value.ALLOWED_ORIGINS).toBe('');
+  });
+
+  it('parses custom TRUST_PROXY and ALLOWED_ORIGINS correctly', () => {
+    const { error, value } = envValidationSchema.validate({
+      ...validConfig,
+      TRUST_PROXY: true,
+      ALLOWED_ORIGINS: 'https://example.com,https://app.bookdrop.io',
+    });
+    expect(error).toBeUndefined();
+    expect(value.TRUST_PROXY).toBe(true);
+    expect(value.ALLOWED_ORIGINS).toBe(
+      'https://example.com,https://app.bookdrop.io',
+    );
   });
 
   it('fails validation when JWT_ACCESS_SECRET is missing', () => {

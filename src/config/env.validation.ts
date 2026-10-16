@@ -17,4 +17,6 @@ export const envValidationSchema = Joi.object({
   SEED_ADMIN_PASSWORD: Joi.string().optional(),
   SEED_LIBRARIAN_PASSWORD: Joi.string().optional(),
   SEED_MEMBER_PASSWORD: Joi.string().optional(),
+  TRUST_PROXY: Joi.boolean().default(false),
+  ALLOWED_ORIGINS: Joi.string().allow('').default(''),
 });
