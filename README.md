@@ -104,10 +104,128 @@ Bookdrop is deployed live to **AWS** under the **12-Month Free Tier** ($0/month)
 
 ### Free-Tier Compliance & DevOps Hardening
 
-* **Cost Optimization ($0/mo):** Uses **ECS with EC2 Launch Type** on a free `t3.micro` instance instead of Fargate, paired with a Single-AZ `db.t3.micro` RDS instance and 1 ALB.
-* **Storage Guardrails:** ECR repository enforces an automated lifecycle policy retaining at most **2 container images** to strictly remain within the 500 MB free registry allowance.
+* **Cost Optimization ($0/mo during free tier):** Uses **ECS with EC2 Launch Type** on a free `t3.micro` instance instead of Fargate, paired with a Single-AZ `db.t3.micro` RDS instance and 1 ALB.
+* **Storage Guardrails:** ECR repository enforces an automated lifecycle policy managed in Terraform (`var.ecr_image_count = 10`) retaining the 10 most recent images.
+* **Log Retention Guardrails:** CloudWatch log group `/ecs/bookdrop-api` enforces an automated 14-day retention window (`var.log_retention_days = 14`), preventing unbounded logging costs.
 * **Decoupled One-Off Migrations:** Database migrations (`npx prisma migrate deploy`) and seeding (`npx prisma db seed`) run via isolated ECS one-off tasks prior to application rollouts, preventing race conditions or concurrency deadlocks.
-* **Automated CI/CD Pipeline:** Configured in [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) to automatically build, push to ECR, run database migrations, and perform a rolling deployment to ECS on every push to `main`.
+* **On-Demand Scaling & CI/CD Split:** CI workflow ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) tests code and validates container images on PRs/pushes without deploying. Deployments run on-demand via the manual workflow ([`.github/workflows/deploy.yml`](.github/workflows/deploy.yml)) after starting AWS resources.
+
+---
+
+## 🔄 Daily Workflow & On-Demand AWS Operations
+
+To minimize AWS cloud expenses while developing locally, Bookdrop operates on an **On-Demand Infrastructure** model: AWS compute and database instances remain stopped when not actively undergoing deployment, testing, or demonstrations.
+
+```
+Local Development ──(Push/PR)──► GitHub Actions CI (Lint, Test, Trivy Scan — No Deploy)
+                                         │
+When Deploying / Demoing:                ▼
+1. Run `./scripts/aws-up.sh`   ──► Starts RDS, EC2 host, scales ECS service to 1, polls health
+2. Trigger GitHub Actions      ──► Manual "Deploy to AWS ECS" (Preflight Check ➔ Build ➔ Migrate ➔ Deploy ➔ Smoke Test)
+3. Test & Demo                 ──► Verify live endpoints through ALB
+4. Run `./scripts/aws-down.sh` ──► Scales ECS to 0, stops EC2 host, stops RDS DB instance
+(Safety Net: Nightly EventBridge Scheduler automatically stops remaining compute at 11:00 PM)
+```
+
+### 1. Local Development (Default Daily State)
+* Work locally using Docker Compose (`docker compose up -d` for PostgreSQL, `npm run start:dev` for NestJS).
+* Pull Requests and pushes to `main` trigger [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
+* **CI runs automatically**: Linting, unit tests, e2e tests against a dynamic PostgreSQL service container, multi-stage production Docker build, and Trivy vulnerability scan.
+* **CI does NOT deploy to AWS**. Pushing or merging code never alters AWS state or incurs unexpected compute charges.
+
+### 2. Deploying & Testing On-Demand
+When ready to deploy a new release, verify live cloud integrations, or perform a demonstration:
+
+#### Step A: Bring Up AWS Resources
+Run the startup script from your terminal:
+```bash
+# Preview actions without making changes
+./scripts/aws-up.sh --dry-run
+
+# Start the AWS environment
+./scripts/aws-up.sh
+```
+The script runs idempotently in exact dependency order:
+1. **Starts RDS PostgreSQL** (skips if already available) and waits until available.
+2. **Starts the EC2 host instance** (`i-070c77c1d322f9550`) and polls until the container instance registers as `ACTIVE` with the ECS cluster (`bookdrop-cluster`).
+3. **Scales the ECS service** (`bookdrop-api-service`) desired count to `1` and waits until the service reaches a stable steady state.
+4. **Polls the public readiness URL** (`/health/ready`) on the ALB until HTTP 200 OK is returned.
+
+#### Step B: Trigger the GitHub Deploy Workflow
+1. Navigate to the **Actions** tab in GitHub and select **Deploy to AWS ECS**.
+2. Click **Run workflow**, choose your branch/ref (default: `main`), and run.
+3. The workflow executes:
+   * **Preflight Check**: Verifies that RDS is `available` and the ECS cluster has registered host capacity (`registeredContainerInstancesCount >= 1`). If the environment is stopped, it fails immediately with:
+     > `"AWS is stopped. Run scripts/aws-up.sh first."`
+   * **Build & Push**: Builds the image targeting `linux/amd64`, tags it with the commit SHA and `latest`, and pushes to Amazon ECR.
+   * **Prisma Migrations Task**: Launches an isolated one-off ECS task (`bookdrop-migration-task:1`) on the EC2 host and waits for exit code 0.
+   * **Service Deployment**: Invokes `aws ecs update-service --force-new-deployment` and waits for steady state.
+   * **Smoke Test**: Continuously polls `http://bookdrop-alb-1343440666.ap-south-1.elb.amazonaws.com/health/ready` until it confirms HTTP 200 OK. Fails the pipeline if unhealthy.
+
+#### Step C: Stop AWS Resources When Finished
+After completing testing or demos, shut down compute and database resources:
+```bash
+# Preview actions without making changes
+./scripts/aws-down.sh --dry-run
+
+# Stop the AWS environment
+./scripts/aws-down.sh
+```
+The script runs idempotently in reverse dependency order:
+1. **Scales ECS service** desired count to `0` and waits for running tasks to reach 0.
+2. **Stops the EC2 host instance** and waits until the instance is in the `stopped` state.
+3. **Stops the RDS DB instance** (`bookdrop-db`).
+
+---
+
+### 3. Idle Cost Breakdown: What Still Costs Money While Stopped
+
+When all compute and database instances are stopped, the majority of billing is paused, but certain fixed cloud resources continue to incur charges:
+
+| Resource | Scope / Quantity | Reason for Idle Billing | Estimated Monthly Cost |
+| :--- | :--- | :--- | :--- |
+| **Application Load Balancer (ALB)** | `bookdrop-alb` (1 ALB) | Base charge for maintaining load balancer provisioning, listeners, and static DNS endpoints. | **~$16.20 - $22.50 / month** ($0.0225/hr + LCU) |
+| **Public IPv4 Addresses (ALB)** | 2 Public IPs (across 2 AZs) | AWS charges $0.005/hr for all in-use public IPv4 addresses (policy effective Feb 1, 2024). | **~$7.20 / month** ($3.60/mo per IP) |
+| **RDS Storage (gp3)** | 20 GB gp3 (`bookdrop-db`) | Storage and automated snapshot data persist while the database instance is stopped. | **~$2.30 / month** (Covered if within 20 GB Free Tier) |
+| **EC2 EBS Root Storage (gp3)** | 30 GB gp3 (`vol-0524017353fc9ddaf`) | Root volume disk image persists while the EC2 host is in the `stopped` state. | **~$2.40 / month** (Covered if within 30 GB Free Tier) |
+| **ECR Container Registry** | Private Repository | Retains container images (10 most recent images kept by lifecycle policy). | **$0.00 / month** (Within 500 MB Free Tier) |
+| **CloudWatch Logs** | `/ecs/bookdrop-api` | Retains log streams (14-day retention policy). | **$0.00 / month** (Within 5 GB Free Tier) |
+| **Secrets / SSM Parameters** | 3 Standard Parameters | Standard parameters are free of charge. | **$0.00 / month** |
+
+> [!WARNING]
+> **RDS 7-Day Automatic Restart Policy**:
+> Amazon RDS automatically restarts stopped DB instances after **7 consecutive days** if not started manually. To prevent accidental charges if you are away, run `./scripts/aws-down.sh` or check the RDS console weekly, or rely on the automated nightly safety net.
+
+---
+
+### 4. Automated Cost Guards & Safety Nets
+
+Bookdrop includes 4 automated cost guards managed in Terraform:
+1. **CloudWatch Log Retention**: Set to `14 days` via Terraform variable `var.log_retention_days = 14`. Log events older than 14 days automatically expire.
+2. **ECR Lifecycle Cleanup**: Keeps only the `10 most recent container images` via Terraform variable `var.ecr_image_count = 10`. Older image digests are expired automatically.
+3. **AWS Budgets Alert**: Monitored by `bookdrop-monthly-budget` set at `$15.00/month` limit (`var.monthly_budget_amount`). Alerts are dispatched via email to `nirukshith2002@gmail.com` when actual spend crosses `50%`, `80%`, and `100%`.
+4. **Nightly Stop Safety Net (EventBridge Scheduler)**: An automated Amazon EventBridge Scheduler rule (`bookdrop-nightly-shutdown-schedule`) triggers an AWS Lambda function (`bookdrop-nightly-shutdown`) every night at **11:00 PM IST** (`cron(0 23 * * ? *)`, timezone: `Asia/Kolkata`). If you forget to run `./scripts/aws-down.sh` after an evening deploy, the safety net automatically shuts down ECS tasks, the EC2 host, and RDS.
+
+---
+
+### 5. Terraform Drift & `ignore_changes` Settings
+
+All Bookdrop infrastructure is managed via Terraform under the [`terraform/`](terraform/) directory.
+
+> [!IMPORTANT]
+> **Preventing Terraform Drift on Dynamic Scaling**:
+> In [`terraform/main.tf`](terraform/main.tf), `aws_ecs_service.bookdrop_api_service` is explicitly declared with:
+> ```hcl
+> lifecycle {
+>   ignore_changes = [
+>     desired_count,
+>     task_definition
+>   ]
+> }
+> ```
+> * **Why `desired_count` is ignored**: The scaling scripts (`aws-up.sh` and `aws-down.sh`) toggle `desired_count` dynamically between `0` and `1`. Without `ignore_changes`, running `terraform apply` while the app is stopped would detect drift and force the service back to `desired_count = 1`, unexpectedly starting tasks and incurring costs.
+> * **Why `task_definition` is ignored**: The GitHub Actions Deploy workflow dynamically registers new task definitions and updates the service with each deployment. `ignore_changes` ensures Terraform does not rollback the task definition revision to an older hardcoded value.
+> * **Auto Scaling Groups vs. Standalone Instances**: If an EC2 instance belongs to an Auto Scaling Group (ASG), you **must scale the ASG** (`min-size = 0, desired-capacity = 0`), never stop the EC2 instance directly. When an ASG instance is stopped directly, the ASG health check considers it unhealthy and immediately terminates and launches a new replacement instance. Bookdrop's app host is provisioned as a standalone EC2 host instance (`i-070c77c1d322f9550`), allowing safe direct stop and start operations.
 
 ---
 
