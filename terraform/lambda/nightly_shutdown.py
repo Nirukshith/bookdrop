@@ -6,7 +6,7 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 def handler(event, context):
-    region = os.environ.get("AWS_REGION", "ap-south-1")
+    region = os.environ.get("TARGET_REGION", os.environ.get("AWS_REGION", "ap-south-1"))
     cluster = os.environ.get("ECS_CLUSTER", "bookdrop-cluster")
     service = os.environ.get("ECS_SERVICE", "bookdrop-api-service")
     instance_id = os.environ.get("EC2_INSTANCE_ID", "i-070c77c1d322f9550")

@@ -99,7 +99,7 @@ resource "aws_lambda_function" "nightly_shutdown" {
 
   environment {
     variables = {
-      AWS_REGION       = var.aws_region
+      TARGET_REGION    = var.aws_region
       ECS_CLUSTER      = "bookdrop-cluster"
       ECS_SERVICE      = "bookdrop-api-service"
       EC2_INSTANCE_ID  = "i-070c77c1d322f9550"
