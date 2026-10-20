@@ -27,3 +27,21 @@ variable "budget_notification_emails" {
   type        = list(string)
   default     = ["nirukshith2002@gmail.com"]
 }
+
+variable "enable_nightly_stop_schedule" {
+  description = "Enable automated nightly stop sequence via EventBridge Scheduler"
+  type        = bool
+  default     = true
+}
+
+variable "nightly_stop_schedule" {
+  description = "Cron expression for nightly shutdown schedule"
+  type        = string
+  default     = "cron(0 23 * * ? *)" # 11:00 PM nightly
+}
+
+variable "nightly_stop_timezone" {
+  description = "Timezone for EventBridge Scheduler schedule"
+  type        = string
+  default     = "Asia/Kolkata"
+}
