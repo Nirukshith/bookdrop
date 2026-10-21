@@ -310,4 +310,29 @@ describe('BooksService', () => {
       ).rejects.toThrow(NotFoundException);
     });
   });
+
+  describe('findTitlesByIds', () => {
+    it('returns empty Map if given empty array', async () => {
+      const result = await service.findTitlesByIds([]);
+      expect(result.size).toBe(0);
+      expect(prismaMock.book.findMany).not.toHaveBeenCalled();
+    });
+
+    it('returns Map of id -> title with batched query using select', async () => {
+      prismaMock.book.findMany.mockResolvedValue([
+        { id: 1, title: '1984' },
+        { id: 2, title: 'Animal Farm' },
+      ]);
+
+      const result = await service.findTitlesByIds([1, 2, 1]); // duplicate id deduplicated
+      expect(result.size).toBe(2);
+      expect(result.get(1)).toBe('1984');
+      expect(result.get(2)).toBe('Animal Farm');
+
+      expect(prismaMock.book.findMany).toHaveBeenCalledWith({
+        where: { id: { in: [1, 2] } },
+        select: { id: true, title: true },
+      });
+    });
+  });
 });

@@ -99,7 +99,7 @@ describe('MemberEligibilityPolicy (Step 3)', () => {
       try {
         await policy.assertEligible(userId, bookId);
       } catch (err: any) {
-        expect(err.code).toBe(HoldErrorCode.MAX_ACTIVE_HOLDS_REACHED);
+        expect(err.code).toBe(HoldErrorCode.HOLD_LIMIT_REACHED);
         expect(err.getStatus()).toBe(400);
       }
 
@@ -130,7 +130,7 @@ describe('MemberEligibilityPolicy (Step 3)', () => {
       try {
         await policy.assertEligible(userId, bookId);
       } catch (err: any) {
-        expect(err.code).toBe(HoldErrorCode.MAX_ACTIVE_LOANS_REACHED);
+        expect(err.code).toBe(HoldErrorCode.LOAN_LIMIT_REACHED);
         expect(err.getStatus()).toBe(400);
       }
 
@@ -150,7 +150,7 @@ describe('MemberEligibilityPolicy (Step 3)', () => {
       try {
         await policy.assertEligible(userId, bookId);
       } catch (err: any) {
-        expect(err.code).toBe(HoldErrorCode.UNPAID_FINES_PRESENT);
+        expect(err.code).toBe(HoldErrorCode.UNPAID_FINES);
         expect(err.getStatus()).toBe(400);
       }
 
@@ -170,7 +170,7 @@ describe('MemberEligibilityPolicy (Step 3)', () => {
       try {
         await policy.assertEligible(userId, bookId);
       } catch (err: any) {
-        expect(err.code).toBe(HoldErrorCode.DUPLICATE_ACTIVE_HOLD);
+        expect(err.code).toBe(HoldErrorCode.ALREADY_HELD);
         expect(err.getStatus()).toBe(409);
       }
     });

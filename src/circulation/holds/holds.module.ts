@@ -12,10 +12,15 @@ import {
 } from './ports';
 import { HOLDS_PUBLIC_API } from './holds-public-api.interface';
 
+import { HoldsResolver } from './holds.resolver';
+import { HoldsDataLoader } from './holds.loader';
+
 @Module({
   imports: [PrismaModule, BooksModule, CopiesModule],
   providers: [
     HoldsService,
+    HoldsResolver,
+    HoldsDataLoader,
     MemberEligibilityPolicy,
     {
       provide: ACTIVE_LOAN_COUNT_PORT,
@@ -30,6 +35,11 @@ import { HOLDS_PUBLIC_API } from './holds-public-api.interface';
       useExisting: HoldsService,
     },
   ],
-  exports: [HoldsService, HOLDS_PUBLIC_API, MemberEligibilityPolicy],
+  exports: [
+    HoldsService,
+    HOLDS_PUBLIC_API,
+    MemberEligibilityPolicy,
+    HoldsDataLoader,
+  ],
 })
 export class HoldsModule {}

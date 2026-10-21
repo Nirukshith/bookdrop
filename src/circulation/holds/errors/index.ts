@@ -6,3 +6,5 @@ export * from './unpaid-fines.error';
 export * from './duplicate-active-hold.error';
 export * from './no-copies-available.error';
 export * from './hold-not-found.error';
+export * from './book-not-found.error';
+export * from './hold-not-active.error';

@@ -61,6 +61,42 @@ import { envValidationSchema } from './config/env.validation';
             req,
             res,
           }),
+          formatError: (formattedError, error: any) => {
+            const originalError =
+              error?.extensions?.originalError || error?.originalError;
+            const rawCode =
+              originalError?.code ||
+              error?.extensions?.code ||
+              (formattedError.extensions?.code as string);
+
+            let code = rawCode;
+            const status =
+              originalError?.statusCode || error?.extensions?.status;
+
+            if (status === 403 || rawCode === 'FORBIDDEN') {
+              code = 'FORBIDDEN';
+            } else if (status === 401 || rawCode === 'UNAUTHENTICATED') {
+              code = 'UNAUTHENTICATED';
+            } else if (formattedError.message?.includes('Too Many Requests')) {
+              code = 'TOO_MANY_REQUESTS';
+            }
+
+            const extensions: Record<string, any> = {
+              ...formattedError.extensions,
+              code: code || 'INTERNAL_SERVER_ERROR',
+            };
+
+            if (isProd) {
+              delete extensions.stacktrace;
+            }
+
+            return {
+              message: formattedError.message,
+              locations: formattedError.locations,
+              path: formattedError.path,
+              extensions,
+            };
+          },
         };
       },
     }),

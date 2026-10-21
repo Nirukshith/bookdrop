@@ -7,3 +7,7 @@ export * from './errors';
 export * from './events';
 export * from './ports';
 export * from './dto/hold-query.dto';
+export * from './dto/hold-filter.input';
+export * from './models/hold.model';
+export * from './holds.resolver';
+export * from './holds.loader';

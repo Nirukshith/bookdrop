@@ -3,7 +3,6 @@ import {
   ForbiddenException,
   Injectable,
   Logger,
-  NotFoundException,
 } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
@@ -27,7 +26,12 @@ import {
   HoldExpiredEvent,
   HoldFulfilledEvent,
 } from './events';
-import { HoldNotFoundError, NoCopiesAvailableError } from './errors';
+import {
+  HoldNotFoundError,
+  NoCopiesAvailableError,
+  BookNotFoundError,
+  HoldNotActiveError,
+} from './errors';
 
 export const HOLD_ADVISORY_NAMESPACE = 4201;
 
@@ -64,7 +68,7 @@ export class HoldsService implements HoldsPublicApi {
         // 2. Verify book exists in the Catalog public interface
         const bookExists = await this.booksService.exists(bookId);
         if (!bookExists) {
-          throw new NotFoundException(`Book #${bookId} not found in catalog.`);
+          throw new BookNotFoundError(bookId);
         }
 
         // 3. Run eligibility policy inside the transaction
@@ -164,9 +168,7 @@ export class HoldsService implements HoldsPublicApi {
     }
 
     if (existing.status !== HoldStatus.ACTIVE) {
-      throw new ConflictException(
-        `Cannot cancel hold #${holdId}: current status is '${existing.status}', expected 'ACTIVE'.`,
-      );
+      throw new HoldNotActiveError(holdId, existing.status);
     }
 
     const cancellationNote =
@@ -438,9 +440,7 @@ export class HoldsService implements HoldsPublicApi {
     }
 
     if (existing.status !== HoldStatus.ACTIVE) {
-      throw new ConflictException(
-        `Cannot fulfill hold #${holdId}: current status is '${existing.status}', expected 'ACTIVE'.`,
-      );
+      throw new HoldNotActiveError(holdId, existing.status);
     }
 
     if (existing.expiresAt < now) {
