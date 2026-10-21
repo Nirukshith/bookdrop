@@ -13,6 +13,7 @@ import { BooksModule } from './books/books.module';
 import { UsersModule } from './users/users.module';
 import { AuthModule } from './auth/auth.module';
 import { HealthModule } from './health/health.module';
+import { CopiesModule } from './circulation/copies/copies.module';
 import { GqlThrottlerGuard } from './auth/guards/gql-throttler.guard';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { RolesGuard } from './auth/guards/roles.guard';
@@ -61,6 +62,7 @@ import { envValidationSchema } from './config/env.validation';
     UsersModule,
     AuthModule,
     HealthModule,
+    CopiesModule,
   ],
   controllers: [AppController],
   providers: [

@@ -81,6 +81,13 @@ export class BooksService {
     return this.mapToModel(book);
   }
 
+  async exists(id: number): Promise<boolean> {
+    const count = await this.prisma.book.count({
+      where: { id },
+    });
+    return count > 0;
+  }
+
   // check if the authorids and category ids passed are valid, otherwise throw a bad request exception
   // then check if the book with the same isbn already exists, otherwise throw a conflict exception
   // then create the book

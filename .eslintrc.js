@@ -31,17 +31,17 @@ module.exports = {
           {
             patterns: [
               {
-                group: ['*books*'],
+                group: ['**/books/*', '!**/books', '!**/books/index'],
                 message:
                   'Circulation must not import Catalog (books) internals. Use public interface or plain IDs.',
               },
               {
-                group: ['*users*'],
+                group: ['**/users/*', '!**/users', '!**/users/index'],
                 message:
                   'Circulation must not import Identity (users) internals. Use public interface or plain IDs.',
               },
               {
-                group: ['*auth*'],
+                group: ['**/auth/*', '!**/auth', '!**/auth/index'],
                 message:
                   'Circulation must not import Auth internals. Use public interface or plain IDs.',
               },
@@ -58,7 +58,7 @@ module.exports = {
           {
             patterns: [
               {
-                group: ['*circulation*'],
+                group: ['**/circulation/*'],
                 message: 'Must not import Circulation internals.',
               },
             ],
