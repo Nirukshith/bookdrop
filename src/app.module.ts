@@ -52,6 +52,7 @@ import { envValidationSchema } from './config/env.validation';
           playground: !isProd,
           introspection: !isProd,
           validationRules: [depthLimit(5)],
+          fieldResolverEnhancers: ['guards'],
           context: ({ req, res }: { req: unknown; res: unknown }) => ({
             req,
             res,

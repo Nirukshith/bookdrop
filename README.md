@@ -570,6 +570,18 @@ Cross-domain boundary rules are enforced at build-time via ESLint (`no-restricte
 | :--- | :--- | :--- | :--- |
 | `Copy` (Circulation) | `Book` (Catalog) | `Copy.bookId -> Book.id` | **To remove when services are split.** Will become an unconstrained scalar `bookId` validated via Catalog gRPC/API. |
 | `CopyStatusHistory` (Circulation) | `User` (Identity) | `changedById: Int?` | **Already decoupled.** Deliberately designed as a plain scalar integer ID without a database foreign key. |
+| `Hold` (Circulation) | `User` (Identity) | `Hold.userId: Int` | **Already decoupled.** Plain scalar integer reference; no foreign key constraint across domain boundaries. |
+| `Hold` (Circulation) | `Book` (Catalog) | `Hold.bookId: Int` | **Already decoupled.** Plain scalar integer reference; no foreign key constraint across domain boundaries. |
+| `Hold` (Circulation) | `Copy` (Circulation) | `Hold.copyId -> Copy.id` | **Intra-domain relationship.** Retains relational foreign key constraint within the Circulation database boundary. |
+
+> [!NOTE]
+> **PostgreSQL Partial Unique Indexes in Circulation (Holds)**:
+> Prisma schema does not natively represent conditional/partial SQL indexes with `WHERE` clauses. Therefore, two critical business invariants are managed via raw SQL in migration `20261021132047_add_holds_and_partial_indexes`:
+> - `hold_one_active_per_copy`: `CREATE UNIQUE INDEX hold_one_active_per_copy ON "Hold" ("copyId") WHERE status = 'ACTIVE';` (prevents double-allocation of a physical copy to multiple active holds)
+> - `hold_one_active_per_user_book`: `CREATE UNIQUE INDEX hold_one_active_per_user_book ON "Hold" ("userId", "bookId") WHERE status = 'ACTIVE';` (prevents a member from holding the same title multiple times concurrently, while allowing re-holds after resolution)
+>
+> `prisma migrate dev` and `prisma migrate deploy` track these indexes through the migration history. Because Prisma only alters indexes declared in `schema.prisma`, it safely ignores these unmanaged partial indexes without generating drift or dropping them.
+
 
 ---
 
