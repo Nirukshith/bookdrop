@@ -28,6 +28,9 @@ export class BookModel {
   @Field(() => Int)
   availableCopiesCount: number;
 
+  @Field(() => Int)
+  availableCopies: number;
+
   @Field(() => Date)
   createdAt: Date;
 }

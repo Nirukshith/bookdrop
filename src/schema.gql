@@ -2,6 +2,13 @@
 # THIS FILE WAS AUTOMATICALLY GENERATED (DO NOT MODIFY)
 # ------------------------------------------------------
 
+input AddCopyInput {
+  barcode: String
+  bookId: Int!
+  notes: String
+  shelfLocation: String
+}
+
 type AuthPayload {
   accessToken: String!
   refreshToken: String!
@@ -15,8 +22,10 @@ type Author {
 
 type Book {
   authors: [Author!]!
+  availableCopies: Int!
   availableCopiesCount: Int!
   categories: [Category!]!
+  copyCounts: CopyCounts!
   createdAt: DateTime!
   description: String
   id: ID!
@@ -28,6 +37,46 @@ type Book {
 type Category {
   id: ID!
   name: String!
+}
+
+type Copy {
+  barcode: String!
+  bookId: Int!
+  createdAt: DateTime!
+  id: ID!
+  notes: String
+  retiredAt: DateTime
+  shelfLocation: String
+  status: CopyStatus!
+  updatedAt: DateTime!
+}
+
+type CopyCounts {
+  available: Int!
+  borrowed: Int!
+  damaged: Int!
+  lost: Int!
+  onHold: Int!
+  total: Int!
+}
+
+"""Lifecycle statuses for physical book copies"""
+enum CopyStatus {
+  AVAILABLE
+  BORROWED
+  DAMAGED
+  LOST
+  ON_HOLD
+}
+
+type CopyStatusHistory {
+  changedById: Int
+  copyId: Int!
+  createdAt: DateTime!
+  fromStatus: CopyStatus
+  id: ID!
+  reason: String
+  toStatus: CopyStatus!
 }
 
 input CreateBookInput {
@@ -50,18 +99,27 @@ input LoginInput {
 }
 
 type Mutation {
+  addCopies(bookId: Int!, quantity: Int!, shelfLocation: String): [Copy!]!
+  addCopy(input: AddCopyInput!): Copy!
+  changeCopyStatus(id: Int!, reason: String, to: CopyStatus!): Copy!
   createBook(input: CreateBookInput!): Book!
   login(input: LoginInput!): AuthPayload!
   logout(refreshToken: String!): Boolean!
   refreshTokens(refreshToken: String!): AuthPayload!
   register(input: RegisterInput!): AuthPayload!
+  retireCopy(id: Int!, reason: String): Copy!
   updateBook(id: Int!, input: UpdateBookInput!): Book!
+  updateCopy(id: Int!, input: UpdateCopyInput!): Copy!
   updateUserRole(role: Role!, userId: Int!): User!
 }
 
 type Query {
   book(id: Int!): Book
   books(authorId: Int, categoryId: Int, search: String, skip: Int = 0, take: Int = 10): [Book!]!
+  copies(bookId: Int, includeRetired: Boolean = false, skip: Int = 0, status: CopyStatus, take: Int = 20): [Copy!]!
+  copy(id: Int!): Copy!
+  copyByBarcode(barcode: String!): Copy!
+  copyStatusHistory(copyId: Int!): [CopyStatusHistory!]!
   me: User!
   users: [User!]!
 }
@@ -86,6 +144,11 @@ input UpdateBookInput {
   isbn: String
   publishedYear: Int
   title: String
+}
+
+input UpdateCopyInput {
+  notes: String
+  shelfLocation: String
 }
 
 type User {

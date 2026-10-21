@@ -4,7 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { CopyStatus, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateBookInput } from './dto/create-book.input';
 import { GetBooksArgs } from './dto/get-books.args';
@@ -46,11 +46,6 @@ export class BooksService {
       include: {
         authors: true,
         categories: true,
-        copies: {
-          where: {
-            status: CopyStatus.AVAILABLE,
-          },
-        },
       },
       orderBy: {
         id: 'asc',
@@ -66,11 +61,6 @@ export class BooksService {
       include: {
         authors: true,
         categories: true,
-        copies: {
-          where: {
-            status: CopyStatus.AVAILABLE,
-          },
-        },
       },
     });
 
@@ -134,9 +124,6 @@ export class BooksService {
         include: {
           authors: true,
           categories: true,
-          copies: {
-            where: { status: CopyStatus.AVAILABLE },
-          },
         },
       });
 
@@ -219,9 +206,6 @@ export class BooksService {
         include: {
           authors: true,
           categories: true,
-          copies: {
-            where: { status: CopyStatus.AVAILABLE },
-          },
         },
       });
 
@@ -242,7 +226,8 @@ export class BooksService {
       ...book,
       description: book.description ?? undefined,
       publishedYear: book.publishedYear ?? undefined,
-      availableCopiesCount: book.copies ? book.copies.length : 0,
+      availableCopiesCount: book.availableCopiesCount ?? 0,
+      availableCopies: book.availableCopies ?? 0,
     };
   }
 }

@@ -13,6 +13,10 @@ import {
 import { CopyStatusConflictError } from './errors/copy-status-conflict.error';
 import { DuplicateBarcodeError } from './errors/duplicate-barcode.error';
 import { InvalidCopyStateTransitionError } from './errors/invalid-copy-state-transition.error';
+import {
+  CopiesPublicApi,
+  CopyPublicObject,
+} from './copies-public-api.interface';
 
 export interface TransitionStatusMeta {
   reason?: string;
@@ -28,7 +32,7 @@ export interface ListCopiesFilter {
 }
 
 @Injectable()
-export class CopiesService {
+export class CopiesService implements CopiesPublicApi {
   constructor(
     private readonly prisma: PrismaService,
     private readonly booksService: BooksService,
@@ -435,5 +439,134 @@ export class CopiesService {
       where: { copyId },
       orderBy: { createdAt: 'desc' },
     });
+  }
+
+  // --- CopiesPublicApi Implementation ---
+
+  /**
+   * Batched query returning a Map of bookId -> count of AVAILABLE, non-retired copies.
+   * Guarantees every requested bookId exists in the Map with at least 0.
+   * Solves the N+1 query problem by executing exactly one database aggregation.
+   */
+  async availableCountsForBooks(
+    bookIds: number[],
+  ): Promise<Map<number, number>> {
+    const countsMap = new Map<number, number>();
+    if (!bookIds || bookIds.length === 0) {
+      return countsMap;
+    }
+
+    const uniqueIds = Array.from(new Set(bookIds));
+    for (const id of uniqueIds) {
+      countsMap.set(id, 0);
+    }
+
+    const groupedCounts = await this.prisma.copy.groupBy({
+      by: ['bookId'],
+      where: {
+        bookId: { in: uniqueIds },
+        status: CopyStatus.AVAILABLE,
+        retiredAt: null,
+      },
+      _count: {
+        _all: true,
+      },
+    });
+
+    for (const row of groupedCounts) {
+      countsMap.set(row.bookId, row._count._all);
+    }
+
+    return countsMap;
+  }
+
+  /**
+   * Plain object lookup by ID for public/cross-module consumers (no Prisma relations).
+   * Returns null if not found.
+   */
+  async getCopy(id: number): Promise<CopyPublicObject | null> {
+    const copy = await this.prisma.copy.findUnique({
+      where: { id },
+    });
+    if (!copy) {
+      return null;
+    }
+    return this.mapToPublicObject(copy);
+  }
+
+  /**
+   * Plain object lookup by barcode for public/cross-module consumers (no Prisma relations).
+   * Returns null if not found.
+   */
+  async getCopyByBarcode(barcode: string): Promise<CopyPublicObject | null> {
+    const trimmed = barcode?.trim();
+    if (!trimmed) {
+      return null;
+    }
+    const copy = await this.prisma.copy.findUnique({
+      where: { barcode: trimmed },
+    });
+    if (!copy) {
+      return null;
+    }
+    return this.mapToPublicObject(copy);
+  }
+
+  /**
+   * Staff-only query returning counts broken down by status for a specific book.
+   */
+  async copyCountsForBook(bookId: number): Promise<{
+    total: number;
+    available: number;
+    onHold: number;
+    borrowed: number;
+    lost: number;
+    damaged: number;
+  }> {
+    const grouped = await this.prisma.copy.groupBy({
+      by: ['status'],
+      where: {
+        bookId,
+        retiredAt: null,
+      },
+      _count: {
+        _all: true,
+      },
+    });
+
+    const counts = {
+      total: 0,
+      available: 0,
+      onHold: 0,
+      borrowed: 0,
+      lost: 0,
+      damaged: 0,
+    };
+
+    for (const row of grouped) {
+      const cnt = row._count._all;
+      counts.total += cnt;
+      if (row.status === CopyStatus.AVAILABLE) counts.available = cnt;
+      if (row.status === CopyStatus.ON_HOLD) counts.onHold = cnt;
+      if (row.status === CopyStatus.BORROWED) counts.borrowed = cnt;
+      if (row.status === CopyStatus.LOST) counts.lost = cnt;
+      if (row.status === CopyStatus.DAMAGED) counts.damaged = cnt;
+    }
+
+    return counts;
+  }
+
+  private mapToPublicObject(copy: Copy): CopyPublicObject {
+    return {
+      id: copy.id,
+      bookId: copy.bookId,
+      barcode: copy.barcode,
+      status: copy.status,
+      shelfLocation: copy.shelfLocation,
+      notes: copy.notes,
+      retiredAt: copy.retiredAt,
+      createdAt: copy.createdAt,
+      updatedAt: copy.updatedAt,
+    };
   }
 }
