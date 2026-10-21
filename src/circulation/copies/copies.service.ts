@@ -3,6 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Copy, CopyStatus, CopyStatusHistory, Prisma } from '@prisma/client';
 import { BooksService } from '../../books';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -17,6 +18,11 @@ import {
   CopiesPublicApi,
   CopyPublicObject,
 } from './copies-public-api.interface';
+import {
+  CopyCreatedEvent,
+  CopyStatusChangedEvent,
+  CopyRetiredEvent,
+} from './events';
 
 export interface TransitionStatusMeta {
   reason?: string;
@@ -36,6 +42,7 @@ export class CopiesService implements CopiesPublicApi {
   constructor(
     private readonly prisma: PrismaService,
     private readonly booksService: BooksService,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   /**
@@ -70,6 +77,8 @@ export class CopiesService implements CopiesPublicApi {
       throw new NotFoundException(`Book with ID ${bookId} not found.`);
     }
 
+    let copy: Copy;
+
     if (barcode && barcode.trim().length > 0) {
       const trimmedBarcode = barcode.trim();
       const existing = await this.prisma.copy.findUnique({
@@ -79,8 +88,8 @@ export class CopiesService implements CopiesPublicApi {
         throw new DuplicateBarcodeError(trimmedBarcode);
       }
 
-      return this.prisma.$transaction(async (tx) => {
-        const copy = await tx.copy.create({
+      copy = await this.prisma.$transaction(async (tx) => {
+        const created = await tx.copy.create({
           data: {
             bookId,
             barcode: trimmedBarcode,
@@ -92,7 +101,7 @@ export class CopiesService implements CopiesPublicApi {
 
         await tx.copyStatusHistory.create({
           data: {
-            copyId: copy.id,
+            copyId: created.id,
             fromStatus: null,
             toStatus: CopyStatus.AVAILABLE,
             reason: 'Initial copy inventory',
@@ -100,37 +109,52 @@ export class CopiesService implements CopiesPublicApi {
           },
         });
 
-        return copy;
+        return created;
+      });
+    } else {
+      copy = await this.prisma.$transaction(async (tx) => {
+        const { nextId, barcode: autoBarcode } =
+          await this.getNextSequenceBarcode(tx);
+
+        const created = await tx.copy.create({
+          data: {
+            id: nextId,
+            bookId,
+            barcode: autoBarcode,
+            shelfLocation: shelfLocation?.trim() || null,
+            notes: notes?.trim() || null,
+            status: CopyStatus.AVAILABLE,
+          },
+        });
+
+        await tx.copyStatusHistory.create({
+          data: {
+            copyId: created.id,
+            fromStatus: null,
+            toStatus: CopyStatus.AVAILABLE,
+            reason: 'Initial copy inventory',
+            changedById: actorId ?? null,
+          },
+        });
+
+        return created;
       });
     }
 
-    return this.prisma.$transaction(async (tx) => {
-      const { nextId, barcode: autoBarcode } =
-        await this.getNextSequenceBarcode(tx);
+    this.eventEmitter.emit(
+      CopyCreatedEvent.EVENT_NAME,
+      new CopyCreatedEvent(
+        copy.id,
+        copy.bookId,
+        copy.barcode,
+        copy.status,
+        copy.shelfLocation,
+        actorId ?? null,
+        copy.createdAt,
+      ),
+    );
 
-      const copy = await tx.copy.create({
-        data: {
-          id: nextId,
-          bookId,
-          barcode: autoBarcode,
-          shelfLocation: shelfLocation?.trim() || null,
-          notes: notes?.trim() || null,
-          status: CopyStatus.AVAILABLE,
-        },
-      });
-
-      await tx.copyStatusHistory.create({
-        data: {
-          copyId: copy.id,
-          fromStatus: null,
-          toStatus: CopyStatus.AVAILABLE,
-          reason: 'Initial copy inventory',
-          changedById: actorId ?? null,
-        },
-      });
-
-      return copy;
-    });
+    return copy;
   }
 
   /**
@@ -153,13 +177,13 @@ export class CopiesService implements CopiesPublicApi {
       throw new NotFoundException(`Book with ID ${bookId} not found.`);
     }
 
-    return this.prisma.$transaction(async (tx) => {
-      const createdCopies: Copy[] = [];
+    const createdCopies = await this.prisma.$transaction(async (tx) => {
+      const copies: Copy[] = [];
 
       for (let i = 0; i < quantity; i++) {
         const { nextId, barcode } = await this.getNextSequenceBarcode(tx);
 
-        const copy = await tx.copy.create({
+        const created = await tx.copy.create({
           data: {
             id: nextId,
             bookId,
@@ -171,7 +195,7 @@ export class CopiesService implements CopiesPublicApi {
 
         await tx.copyStatusHistory.create({
           data: {
-            copyId: copy.id,
+            copyId: created.id,
             fromStatus: null,
             toStatus: CopyStatus.AVAILABLE,
             reason: 'Initial copy inventory',
@@ -179,11 +203,28 @@ export class CopiesService implements CopiesPublicApi {
           },
         });
 
-        createdCopies.push(copy);
+        copies.push(created);
       }
 
-      return createdCopies;
+      return copies;
     });
+
+    for (const copy of createdCopies) {
+      this.eventEmitter.emit(
+        CopyCreatedEvent.EVENT_NAME,
+        new CopyCreatedEvent(
+          copy.id,
+          copy.bookId,
+          copy.barcode,
+          copy.status,
+          copy.shelfLocation,
+          actorId ?? null,
+          copy.createdAt,
+        ),
+      );
+    }
+
+    return createdCopies;
   }
 
   /**
@@ -285,8 +326,8 @@ export class CopiesService implements CopiesPublicApi {
 
     const trimmedReason = reason?.trim() || 'Copy retired from circulation';
 
-    return this.prisma.$transaction(async (tx) => {
-      const retiredCopy = await tx.copy.update({
+    const retiredCopy = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.copy.update({
         where: { id },
         data: {
           retiredAt: new Date(),
@@ -303,8 +344,22 @@ export class CopiesService implements CopiesPublicApi {
         },
       });
 
-      return retiredCopy;
+      return updated;
     });
+
+    this.eventEmitter.emit(
+      CopyRetiredEvent.EVENT_NAME,
+      new CopyRetiredEvent(
+        retiredCopy.id,
+        retiredCopy.bookId,
+        trimmedReason,
+        retiredCopy.retiredAt!,
+        actorId ?? null,
+        new Date(),
+      ),
+    );
+
+    return retiredCopy;
   }
 
   /**
@@ -318,52 +373,71 @@ export class CopiesService implements CopiesPublicApi {
     to: CopyStatus,
     meta?: TransitionStatusMeta,
   ): Promise<Copy> {
-    return this.prisma.$transaction(async (tx) => {
-      const current = await tx.copy.findUnique({
-        where: { id: copyId },
-      });
+    const { updatedCopy, previousStatus } = await this.prisma.$transaction(
+      async (tx) => {
+        const current = await tx.copy.findUnique({
+          where: { id: copyId },
+        });
 
-      if (!current) {
-        throw new NotFoundException(`Copy with ID ${copyId} not found.`);
-      }
+        if (!current) {
+          throw new NotFoundException(`Copy with ID ${copyId} not found.`);
+        }
 
-      if (current.retiredAt !== null) {
-        throw new InvalidCopyStateTransitionError(
-          'Retired copies accept no status changes.',
-        );
-      }
+        if (current.retiredAt !== null) {
+          throw new InvalidCopyStateTransitionError(
+            'Retired copies accept no status changes.',
+          );
+        }
 
-      const updateResult = await tx.copy.updateMany({
-        where: {
-          id: copyId,
-          status: { in: allowedFrom },
-          retiredAt: null,
-        },
-        data: {
-          status: to,
-        },
-      });
+        const updateResult = await tx.copy.updateMany({
+          where: {
+            id: copyId,
+            status: { in: allowedFrom },
+            retiredAt: null,
+          },
+          data: {
+            status: to,
+          },
+        });
 
-      if (updateResult.count === 0) {
-        throw new CopyStatusConflictError(
-          `Cannot transition copy ${copyId} to '${to}'. Current status '${current.status}' is not in allowed source statuses: [${allowedFrom.join(', ')}].`,
-        );
-      }
+        if (updateResult.count === 0) {
+          throw new CopyStatusConflictError(
+            `Cannot transition copy ${copyId} to '${to}'. Current status '${current.status}' is not in allowed source statuses: [${allowedFrom.join(', ')}].`,
+          );
+        }
 
-      await tx.copyStatusHistory.create({
-        data: {
-          copyId,
-          fromStatus: current.status,
-          toStatus: to,
-          reason: meta?.reason?.trim() || null,
-          changedById: meta?.changedById ?? null,
-        },
-      });
+        await tx.copyStatusHistory.create({
+          data: {
+            copyId,
+            fromStatus: current.status,
+            toStatus: to,
+            reason: meta?.reason?.trim() || null,
+            changedById: meta?.changedById ?? null,
+          },
+        });
 
-      return tx.copy.findUniqueOrThrow({
-        where: { id: copyId },
-      });
-    });
+        const updated = await tx.copy.findUniqueOrThrow({
+          where: { id: copyId },
+        });
+
+        return { updatedCopy: updated, previousStatus: current.status };
+      },
+    );
+
+    this.eventEmitter.emit(
+      CopyStatusChangedEvent.EVENT_NAME,
+      new CopyStatusChangedEvent(
+        updatedCopy.id,
+        updatedCopy.bookId,
+        previousStatus,
+        updatedCopy.status,
+        meta?.reason?.trim() || null,
+        meta?.changedById ?? null,
+        new Date(),
+      ),
+    );
+
+    return updatedCopy;
   }
 
   /**

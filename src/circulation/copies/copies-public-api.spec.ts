@@ -1,3 +1,4 @@
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Test, TestingModule } from '@nestjs/testing';
 import { CopyStatus } from '@prisma/client';
 import { BooksService } from '../../books';
@@ -24,6 +25,7 @@ describe('CopiesPublicApi & DataLoader (Step 4 & N+1 Prevention)', () => {
         CopiesDataLoader,
         { provide: PrismaService, useValue: prisma },
         { provide: BooksService, useValue: { exists: jest.fn() } },
+        { provide: EventEmitter2, useValue: { emit: jest.fn() } },
       ],
     }).compile();
 

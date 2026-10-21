@@ -16,3 +16,8 @@ export {
 export { CopyStatusConflictError } from './errors/copy-status-conflict.error';
 export { DuplicateBarcodeError } from './errors/duplicate-barcode.error';
 export { InvalidCopyStateTransitionError } from './errors/invalid-copy-state-transition.error';
+export {
+  CopyCreatedEvent,
+  CopyStatusChangedEvent,
+  CopyRetiredEvent,
+} from './events';

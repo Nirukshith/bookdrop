@@ -1,4 +1,5 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Test, TestingModule } from '@nestjs/testing';
 import { Copy, CopyStatus, CopyStatusHistory } from '@prisma/client';
 import { BooksService } from '../../books';
@@ -7,11 +8,17 @@ import { CopiesService } from './copies.service';
 import { CopyStatusConflictError } from './errors/copy-status-conflict.error';
 import { DuplicateBarcodeError } from './errors/duplicate-barcode.error';
 import { InvalidCopyStateTransitionError } from './errors/invalid-copy-state-transition.error';
+import {
+  CopyCreatedEvent,
+  CopyStatusChangedEvent,
+  CopyRetiredEvent,
+} from './events';
 
 describe('CopiesService', () => {
   let service: CopiesService;
   let prisma: any;
   let booksService: any;
+  let eventEmitter: { emit: jest.Mock };
 
   const mockCopy: Copy = {
     id: 1,
@@ -45,6 +52,7 @@ describe('CopiesService', () => {
         updateMany: jest.fn(),
         count: jest.fn(),
         findUniqueOrThrow: jest.fn(),
+        groupBy: jest.fn(),
       },
       copyStatusHistory: {
         findMany: jest.fn(),
@@ -59,11 +67,16 @@ describe('CopiesService', () => {
       findById: jest.fn(),
     };
 
+    eventEmitter = {
+      emit: jest.fn(),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         CopiesService,
         { provide: PrismaService, useValue: prisma },
         { provide: BooksService, useValue: booksService },
+        { provide: EventEmitter2, useValue: eventEmitter },
       ],
     }).compile();
 
@@ -532,6 +545,182 @@ describe('CopiesService', () => {
           NotFoundException,
         );
       });
+    });
+  });
+
+  describe('Domain Events (In-Process Publishing)', () => {
+    it('publishes copy.created event after addCopy commits transaction', async () => {
+      booksService.exists.mockResolvedValue(true);
+      prisma.$queryRaw.mockResolvedValue([{ nextval: 10 }]);
+      prisma.copy.create.mockResolvedValue({
+        ...mockCopy,
+        id: 10,
+        barcode: 'BD-000010',
+        shelfLocation: 'ROW-1',
+      });
+      prisma.copyStatusHistory.create.mockResolvedValue(mockHistory);
+
+      await service.addCopy(10, undefined, 'ROW-1', undefined, 42);
+
+      expect(eventEmitter.emit).toHaveBeenCalledTimes(1);
+      expect(eventEmitter.emit).toHaveBeenCalledWith(
+        CopyCreatedEvent.EVENT_NAME,
+        expect.objectContaining({
+          copyId: 10,
+          bookId: 10,
+          barcode: 'BD-000010',
+          status: CopyStatus.AVAILABLE,
+          shelfLocation: 'ROW-1',
+          actorId: 42,
+          occurredAt: expect.any(Date),
+        }),
+      );
+    });
+
+    it('does NOT publish copy.created event if addCopy fails before or during transaction', async () => {
+      booksService.exists.mockResolvedValue(true);
+      prisma.copy.findUnique.mockResolvedValue(mockCopy); // triggers DuplicateBarcodeError
+
+      await expect(service.addCopy(10, 'BD-000001')).rejects.toThrow(
+        DuplicateBarcodeError,
+      );
+
+      expect(eventEmitter.emit).not.toHaveBeenCalled();
+    });
+
+    it('publishes copy.created events for every copy in addCopies batch after commit', async () => {
+      booksService.exists.mockResolvedValue(true);
+      prisma.$queryRaw
+        .mockResolvedValueOnce([{ nextval: 1 }])
+        .mockResolvedValueOnce([{ nextval: 2 }]);
+      prisma.copy.create
+        .mockResolvedValueOnce({
+          ...mockCopy,
+          id: 1,
+          barcode: 'BD-000001',
+          shelfLocation: 'STACK-B',
+        })
+        .mockResolvedValueOnce({
+          ...mockCopy,
+          id: 2,
+          barcode: 'BD-000002',
+          shelfLocation: 'STACK-B',
+        });
+      prisma.copyStatusHistory.create.mockResolvedValue(mockHistory);
+
+      await service.addCopies(10, 2, 'STACK-B', 99);
+
+      expect(eventEmitter.emit).toHaveBeenCalledTimes(2);
+      expect(eventEmitter.emit).toHaveBeenNthCalledWith(
+        1,
+        CopyCreatedEvent.EVENT_NAME,
+        expect.objectContaining({
+          copyId: 1,
+          bookId: 10,
+          barcode: 'BD-000001',
+          status: CopyStatus.AVAILABLE,
+          shelfLocation: 'STACK-B',
+          actorId: 99,
+        }),
+      );
+      expect(eventEmitter.emit).toHaveBeenNthCalledWith(
+        2,
+        CopyCreatedEvent.EVENT_NAME,
+        expect.objectContaining({
+          copyId: 2,
+          bookId: 10,
+          barcode: 'BD-000002',
+          status: CopyStatus.AVAILABLE,
+          shelfLocation: 'STACK-B',
+          actorId: 99,
+        }),
+      );
+    });
+
+    it('publishes copy.status_changed event on transitionStatus compare-and-set', async () => {
+      prisma.copy.findUnique.mockResolvedValue({
+        ...mockCopy,
+        status: CopyStatus.AVAILABLE,
+      });
+      prisma.copy.updateMany.mockResolvedValue({ count: 1 });
+      prisma.copy.findUniqueOrThrow.mockResolvedValue({
+        ...mockCopy,
+        status: CopyStatus.LOST,
+      });
+      prisma.copyStatusHistory.create.mockResolvedValue(mockHistory);
+
+      await service.transitionStatus(
+        1,
+        [CopyStatus.AVAILABLE],
+        CopyStatus.LOST,
+        { reason: 'Lost by reader', changedById: 88 },
+      );
+
+      expect(eventEmitter.emit).toHaveBeenCalledTimes(1);
+      expect(eventEmitter.emit).toHaveBeenCalledWith(
+        CopyStatusChangedEvent.EVENT_NAME,
+        expect.objectContaining({
+          copyId: 1,
+          bookId: 10,
+          fromStatus: CopyStatus.AVAILABLE,
+          toStatus: CopyStatus.LOST,
+          reason: 'Lost by reader',
+          actorId: 88,
+          occurredAt: expect.any(Date),
+        }),
+      );
+    });
+
+    it('does NOT publish copy.status_changed event on compare-and-set conflict', async () => {
+      prisma.copy.findUnique.mockResolvedValue({
+        ...mockCopy,
+        status: CopyStatus.BORROWED,
+      });
+      prisma.copy.updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(
+        service.transitionStatus(1, [CopyStatus.AVAILABLE], CopyStatus.LOST),
+      ).rejects.toThrow(CopyStatusConflictError);
+
+      expect(eventEmitter.emit).not.toHaveBeenCalled();
+    });
+
+    it('publishes copy.retired event after retireCopy transaction commits', async () => {
+      const retiredDate = new Date();
+      prisma.copy.findUnique.mockResolvedValue(mockCopy);
+      prisma.copy.update.mockResolvedValue({
+        ...mockCopy,
+        retiredAt: retiredDate,
+      });
+      prisma.copyStatusHistory.create.mockResolvedValue(mockHistory);
+
+      await service.retireCopy(1, 'Damaged copy', 55);
+
+      expect(eventEmitter.emit).toHaveBeenCalledTimes(1);
+      expect(eventEmitter.emit).toHaveBeenCalledWith(
+        CopyRetiredEvent.EVENT_NAME,
+        expect.objectContaining({
+          copyId: 1,
+          bookId: 10,
+          reason: 'Damaged copy',
+          retiredAt: retiredDate,
+          actorId: 55,
+          occurredAt: expect.any(Date),
+        }),
+      );
+    });
+
+    it('does NOT publish copy.retired event if copy is already retired', async () => {
+      prisma.copy.findUnique.mockResolvedValue({
+        ...mockCopy,
+        retiredAt: new Date(),
+      });
+
+      await expect(service.retireCopy(1)).rejects.toThrow(
+        InvalidCopyStateTransitionError,
+      );
+
+      expect(eventEmitter.emit).not.toHaveBeenCalled();
     });
   });
 });
