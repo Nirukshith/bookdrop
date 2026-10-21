@@ -6,7 +6,6 @@ import {
 } from '@nestjs/common';
 import { BooksService } from './books.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { CopyStatus } from '@prisma/client';
 
 describe('BooksService', () => {
   let service: BooksService;
@@ -16,6 +15,7 @@ describe('BooksService', () => {
       findUnique: jest.Mock;
       create: jest.Mock;
       update: jest.Mock;
+      count: jest.Mock;
     };
     author: {
       count: jest.Mock;
@@ -32,6 +32,7 @@ describe('BooksService', () => {
         findUnique: jest.fn(),
         create: jest.fn(),
         update: jest.fn(),
+        count: jest.fn(),
       },
       author: {
         count: jest.fn(),
@@ -69,10 +70,6 @@ describe('BooksService', () => {
         createdAt: new Date(),
         authors: [{ id: 1, name: 'George Orwell' }],
         categories: [{ id: 1, name: 'Dystopian' }],
-        copies: [
-          { id: 101, status: CopyStatus.AVAILABLE },
-          { id: 102, status: CopyStatus.AVAILABLE },
-        ],
       };
 
       prismaMock.book.findMany.mockResolvedValue([mockBook]);
@@ -103,11 +100,6 @@ describe('BooksService', () => {
         include: {
           authors: true,
           categories: true,
-          copies: {
-            where: {
-              status: CopyStatus.AVAILABLE,
-            },
-          },
         },
         orderBy: {
           id: 'asc',
@@ -116,7 +108,6 @@ describe('BooksService', () => {
 
       expect(result).toHaveLength(1);
       expect(result[0].title).toBe('1984');
-      expect(result[0].availableCopiesCount).toBe(2);
     });
 
     it('uses default pagination values when take and skip are not provided', async () => {
@@ -134,7 +125,7 @@ describe('BooksService', () => {
   });
 
   describe('findById', () => {
-    it('returns a book by id with available copies count', async () => {
+    it('returns a book by id', async () => {
       const mockBook = {
         id: 1,
         title: '1984',
@@ -144,7 +135,6 @@ describe('BooksService', () => {
         createdAt: new Date(),
         authors: [{ id: 1, name: 'George Orwell' }],
         categories: [{ id: 1, name: 'Dystopian' }],
-        copies: [{ id: 101, status: CopyStatus.AVAILABLE }],
       };
 
       prismaMock.book.findUnique.mockResolvedValue(mockBook);
@@ -156,17 +146,11 @@ describe('BooksService', () => {
         include: {
           authors: true,
           categories: true,
-          copies: {
-            where: {
-              status: CopyStatus.AVAILABLE,
-            },
-          },
         },
       });
 
       expect(result).toBeDefined();
       expect(result?.title).toBe('1984');
-      expect(result?.availableCopiesCount).toBe(1);
     });
 
     it('returns null if book is not found', async () => {
@@ -174,6 +158,25 @@ describe('BooksService', () => {
 
       const result = await service.findById(999);
       expect(result).toBeNull();
+    });
+  });
+
+  describe('exists', () => {
+    it('returns true when book count > 0', async () => {
+      prismaMock.book.count.mockResolvedValue(1);
+
+      const result = await service.exists(1);
+      expect(result).toBe(true);
+      expect(prismaMock.book.count).toHaveBeenCalledWith({
+        where: { id: 1 },
+      });
+    });
+
+    it('returns false when book count is 0', async () => {
+      prismaMock.book.count.mockResolvedValue(0);
+
+      const result = await service.exists(999);
+      expect(result).toBe(false);
     });
   });
 
@@ -192,7 +195,6 @@ describe('BooksService', () => {
         createdAt: new Date(),
         authors: [{ id: 1, name: 'Aldous Huxley' }],
         categories: [{ id: 1, name: 'Dystopian' }],
-        copies: [],
       };
 
       prismaMock.book.create.mockResolvedValue(mockCreated);
@@ -274,7 +276,6 @@ describe('BooksService', () => {
           { id: 2, name: 'Co-Author' },
         ],
         categories: [{ id: 1, name: 'Dystopian' }],
-        copies: [{ id: 101, status: CopyStatus.AVAILABLE }],
       };
 
       prismaMock.book.update.mockResolvedValue(mockUpdated);
@@ -288,7 +289,6 @@ describe('BooksService', () => {
 
       expect(result.title).toBe('Updated 1984');
       expect(result.isbn).toBe('978-0451524939');
-      expect(result.availableCopiesCount).toBe(1);
       expect(prismaMock.book.update).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: 1 },

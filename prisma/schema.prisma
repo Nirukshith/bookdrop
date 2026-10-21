@@ -43,10 +43,32 @@ enum CopyStatus {
 }
 
 model Copy {
-  id     Int        @id @default(autoincrement())
-  bookId Int
-  book   Book       @relation(fields: [bookId], references: [id])
-  status CopyStatus @default(AVAILABLE)
+  id            Int                 @id @default(autoincrement())
+  bookId        Int
+  book          Book                @relation(fields: [bookId], references: [id])
+  barcode       String              @unique
+  status        CopyStatus          @default(AVAILABLE)
+  shelfLocation String?
+  notes         String?
+  retiredAt     DateTime?
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+  history       CopyStatusHistory[]
+
+  @@index([bookId, status])
+}
+
+model CopyStatusHistory {
+  id          Int         @id @default(autoincrement())
+  copyId      Int
+  copy        Copy        @relation(fields: [copyId], references: [id], onDelete: Cascade)
+  fromStatus  CopyStatus?
+  toStatus    CopyStatus
+  reason      String?
+  changedById Int?        // plain user id, deliberately NOT a foreign key
+  createdAt   DateTime    @default(now())
+
+  @@index([copyId])
 }
 
 enum Role {

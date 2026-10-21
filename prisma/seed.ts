@@ -23,6 +23,7 @@ async function main() {
 
   if (!isProduction) {
     // Clear existing records in reverse dependency order for repeatability in development/test
+    await prisma.copyStatusHistory.deleteMany();
     await prisma.copy.deleteMany();
     await prisma.book.deleteMany();
     await prisma.author.deleteMany();
@@ -358,7 +359,8 @@ async function main() {
   ];
 
   let totalCopies = 0;
-  for (const book of booksData) {
+  for (let bookIndex = 0; bookIndex < booksData.length; bookIndex++) {
+    const book = booksData[bookIndex];
     let targetBook = await prisma.book.findUnique({
       where: { isbn: book.isbn },
       include: { copies: true },
@@ -378,8 +380,10 @@ async function main() {
             connect: book.categoryNames.map((name) => ({ id: categoriesMap[name].id })),
           },
           copies: {
-            create: Array.from({ length: book.copiesCount }, () => ({
+            create: Array.from({ length: book.copiesCount }, (_, cIndex) => ({
+              barcode: `BD-${String(bookIndex + 1).padStart(3, '0')}-${String(cIndex + 1).padStart(3, '0')}`,
               status: CopyStatus.AVAILABLE,
+              shelfLocation: `STACK-${String(bookIndex + 1).padStart(2, '0')}`,
             })),
           },
         },
@@ -396,7 +400,9 @@ async function main() {
         await prisma.copy.create({
           data: {
             bookId: targetBook.id,
+            barcode: `BD-${String(bookIndex + 1).padStart(3, '0')}-${String(existingCopiesCount + i + 1).padStart(3, '0')}`,
             status: CopyStatus.AVAILABLE,
+            shelfLocation: `STACK-${String(bookIndex + 1).padStart(2, '0')}`,
           },
         });
       }

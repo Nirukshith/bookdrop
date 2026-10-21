@@ -22,4 +22,49 @@ module.exports = {
     '@typescript-eslint/explicit-module-boundary-types': 'off',
     '@typescript-eslint/no-explicit-any': 'off',
   },
+  overrides: [
+    {
+      files: ['src/circulation/**/*.ts'],
+      rules: {
+        'no-restricted-imports': [
+          'error',
+          {
+            patterns: [
+              {
+                group: ['**/books/*', '!**/books', '!**/books/index'],
+                message:
+                  'Circulation must not import Catalog (books) internals. Use public interface or plain IDs.',
+              },
+              {
+                group: ['**/users/*', '!**/users', '!**/users/index'],
+                message:
+                  'Circulation must not import Identity (users) internals. Use public interface or plain IDs.',
+              },
+              {
+                group: ['**/auth/*', '!**/auth', '!**/auth/index'],
+                message:
+                  'Circulation must not import Auth internals. Use public interface or plain IDs.',
+              },
+            ],
+          },
+        ],
+      },
+    },
+    {
+      files: ['src/books/**/*.ts', 'src/users/**/*.ts', 'src/auth/**/*.ts'],
+      rules: {
+        'no-restricted-imports': [
+          'error',
+          {
+            patterns: [
+              {
+                group: ['**/circulation/*'],
+                message: 'Must not import Circulation internals.',
+              },
+            ],
+          },
+        ],
+      },
+    },
+  ],
 };

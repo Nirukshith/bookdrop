@@ -4,7 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { CopyStatus, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateBookInput } from './dto/create-book.input';
 import { GetBooksArgs } from './dto/get-books.args';
@@ -46,11 +46,6 @@ export class BooksService {
       include: {
         authors: true,
         categories: true,
-        copies: {
-          where: {
-            status: CopyStatus.AVAILABLE,
-          },
-        },
       },
       orderBy: {
         id: 'asc',
@@ -66,11 +61,6 @@ export class BooksService {
       include: {
         authors: true,
         categories: true,
-        copies: {
-          where: {
-            status: CopyStatus.AVAILABLE,
-          },
-        },
       },
     });
 
@@ -79,6 +69,13 @@ export class BooksService {
     }
 
     return this.mapToModel(book);
+  }
+
+  async exists(id: number): Promise<boolean> {
+    const count = await this.prisma.book.count({
+      where: { id },
+    });
+    return count > 0;
   }
 
   // check if the authorids and category ids passed are valid, otherwise throw a bad request exception
@@ -127,9 +124,6 @@ export class BooksService {
         include: {
           authors: true,
           categories: true,
-          copies: {
-            where: { status: CopyStatus.AVAILABLE },
-          },
         },
       });
 
@@ -212,9 +206,6 @@ export class BooksService {
         include: {
           authors: true,
           categories: true,
-          copies: {
-            where: { status: CopyStatus.AVAILABLE },
-          },
         },
       });
 
@@ -235,7 +226,8 @@ export class BooksService {
       ...book,
       description: book.description ?? undefined,
       publishedYear: book.publishedYear ?? undefined,
-      availableCopiesCount: book.copies ? book.copies.length : 0,
+      availableCopiesCount: book.availableCopiesCount ?? 0,
+      availableCopies: book.availableCopies ?? 0,
     };
   }
 }

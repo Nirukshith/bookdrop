@@ -556,6 +556,23 @@ mutation UpdateRole {
 
 ---
 
+## Architectural Boundaries & Future Service Split
+
+Bookdrop is structured into distinct bounded contexts designed for future decomposition into standalone microservices:
+* **Identity**: `src/users`, `src/auth` (Users, Credentials, Refresh Tokens, Roles)
+* **Catalog**: `src/books` (Books, Authors, Categories)
+* **Circulation**: `src/circulation` (Copies, and upcoming Holds, Loans, Queue, Fines)
+
+Cross-domain boundary rules are enforced at build-time via ESLint (`no-restricted-imports`). Domains communicate via plain scalar IDs and public service interfaces rather than internal imports or cross-domain relational SQL `include`s.
+
+### Cross-Area Foreign Keys (to remove when services are split)
+| Source Model (Area) | Target Model (Area) | Field | Status & Strategy Upon Service Split |
+| :--- | :--- | :--- | :--- |
+| `Copy` (Circulation) | `Book` (Catalog) | `Copy.bookId -> Book.id` | **To remove when services are split.** Will become an unconstrained scalar `bookId` validated via Catalog gRPC/API. |
+| `CopyStatusHistory` (Circulation) | `User` (Identity) | `changedById: Int?` | **Already decoupled.** Deliberately designed as a plain scalar integer ID without a database foreign key. |
+
+---
+
 ## Security Hardening
 
 * **Helmet**: Sets defensive HTTP headers (`X-Content-Type-Options`, `X-Frame-Options`, `Strict-Transport-Security`). In development, Content Security Policy (CSP) is relaxed so the Apollo Sandbox UI loads properly; in production, strict CSP is enforced.
