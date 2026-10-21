@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { HoldStatus } from '@prisma/client';
+import { HoldStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { MAX_ACTIVE_HOLDS, MAX_ACTIVE_LOANS } from '../../config/library-rules';
 import {
@@ -33,9 +33,15 @@ export class MemberEligibilityPolicy {
    *
    * Throws a domain exception with a stable error code if any rule is violated.
    */
-  async assertEligible(userId: number, bookId: number): Promise<void> {
+  async assertEligible(
+    userId: number,
+    bookId: number,
+    tx?: Prisma.TransactionClient,
+  ): Promise<void> {
+    const client = tx ?? this.prisma;
+
     // 1. Active holds check
-    const activeHoldsCount = await this.prisma.hold.count({
+    const activeHoldsCount = await client.hold.count({
       where: {
         userId,
         status: HoldStatus.ACTIVE,
@@ -62,7 +68,7 @@ export class MemberEligibilityPolicy {
     }
 
     // 4. Duplicate active hold for same book check
-    const existingHold = await this.prisma.hold.findFirst({
+    const existingHold = await client.hold.findFirst({
       where: {
         userId,
         bookId,
