@@ -25,9 +25,10 @@ Bookdrop enforces declarative Role-Based Access Control (RBAC) via global guards
 
 | Role | Permissions & Capabilities |
 | :--- | :--- |
-| **MEMBER** | • View catalog books and single book details (`books`, `book` - public)<br>• Register and authenticate (`register`, `login`, `refreshTokens`, `logout`)<br>• View own authenticated profile (`me`)<br>• *Forbidden from mutating books or managing user accounts.* |
-| **LIBRARIAN** | • All MEMBER permissions<br>• Manage catalog inventory: create new books (`createBook`) and update existing book details/authors/categories (`updateBook`)<br>• *Forbidden from administrative user operations.* |
-| **ADMIN** | • Full system administration<br>• Manage catalog inventory (`createBook`, `updateBook`)<br>• List all registered users (`users`)<br>• Update any user's role (`updateUserRole`)<br>• *Self-Demotion Lockout: An admin is strictly prohibited from removing their own admin status to prevent administrative lockouts.* |
+| **MEMBER** | • View catalog books and single book details (`books`, `book` - public)<br>• Register and authenticate (`register`, `login`, `refreshTokens`, `logout`)<br>• View own authenticated profile (`me`)<br>• Request remote holds on titles (`requestHold`)<br>• View own active and historical holds (`myHolds`)<br>• Cancel own active hold (`cancelMyHold`)<br>• *Forbidden from modifying catalog books, managing physical copy inventory, viewing physical copy barcodes (masked), cancelling other patrons' holds, or administrative user operations.* |
+| **LIBRARIAN** | • All MEMBER permissions<br>• Manage catalog inventory: create new books (`createBook`) and update existing book details/authors/categories (`updateBook`)<br>• Manage physical copy inventory: add copies (`addCopies`), update location (`updateCopy`), manually change condition status (`transitionCopyStatus`), and retire copies (`retireCopy`)<br>• Query physical copy inventory and inspect unmasked barcodes (`copies`, `copy`, `bookCopies`, `Book.copies`)<br>• Manage remote holds across the system: view all member holds (`holds`, `hold`) and administratively cancel holds with staff audit notes (`cancelHold`)<br>• *Forbidden from administrative user operations.* |
+| **ADMIN** | • Full system administration<br>• All LIBRARIAN and MEMBER capabilities<br>• List all registered users (`users`)<br>• Update any user's role (`updateUserRole`)<br>• *Self-Demotion Lockout: An admin is strictly prohibited from removing their own admin status to prevent administrative lockouts.* |
+
 
 ---
 
@@ -556,22 +557,218 @@ mutation UpdateRole {
 
 ---
 
+## Circulation Lifecycles & State Machines
+
+Circulation manages physical inventory and reservation requests using two distinct, fully unit-tested finite state machines.
+
+### 1. Copy State Machine (Physical Inventory)
+
+Physical book copies transition between operational and physical condition states. In accordance with domain rules, condition changes are performed manually by library staff, whereas allocation states (`ON_HOLD`, `BORROWED`) are governed strictly by automated domain workflows.
+
+```mermaid
+stateDiagram-v2
+    [*] --> AVAILABLE : addCopies (Initial status)
+
+    AVAILABLE --> ON_HOLD : [System] Hold Requested / Queue Promoted
+    AVAILABLE --> DAMAGED : [Manual Staff] transitionCopyStatus
+    AVAILABLE --> LOST : [Manual Staff] transitionCopyStatus
+    AVAILABLE --> RETIRED : [Manual Staff] retireCopy
+
+    ON_HOLD --> AVAILABLE : [System] Hold Cancelled / Expired
+    ON_HOLD --> BORROWED : [System] Hold Fulfilled / Checkout
+
+    BORROWED --> AVAILABLE : [System] Book Returned in good condition
+    BORROWED --> DAMAGED : [Manual Staff] Book Returned damaged
+    BORROWED --> LOST : [Manual Staff / System] Overdue / Declared lost
+
+    DAMAGED --> AVAILABLE : [Manual Staff] Repaired
+    DAMAGED --> LOST : [Manual Staff] Lost from storage
+    DAMAGED --> RETIRED : [Manual Staff] retireCopy (Irreparable)
+
+    LOST --> AVAILABLE : [Manual Staff] Located / Replaced
+    LOST --> DAMAGED : [Manual Staff] Located damaged
+    LOST --> RETIRED : [Manual Staff] retireCopy (Written off)
+
+    RETIRED --> [*] : Permanent terminal state
+```
+
+* **Manual Transitions (Staff - LIBRARIAN / ADMIN)**:
+  * `AVAILABLE <-> LOST`
+  * `AVAILABLE <-> DAMAGED`
+  * `LOST <-> DAMAGED`
+  * Any unheld copy in `AVAILABLE`, `LOST`, or `DAMAGED` can be permanently retired via `retireCopy`.
+* **System-Only Transitions (Reserved for Holds and Loans workflows)**:
+  * `AVAILABLE -> ON_HOLD` (Hold request placed or queue promoted)
+  * `ON_HOLD -> AVAILABLE` (Hold cancelled or expired)
+  * `ON_HOLD -> BORROWED` (Hold fulfilled at circulation desk)
+  * `BORROWED -> AVAILABLE` (Book returned)
+* **Retirement Invariants**: Copies in `ON_HOLD` or `BORROWED` status **cannot** be manually altered or retired. Once a copy is `RETIRED`, it enters an irreversible terminal state.
+
+---
+
+### 2. Hold State Machine (Remote Requests & Pickup Deadlines)
+
+Patron remote requests move through a linear, forward-only lifecycle from active reservation to resolution.
+
+```mermaid
+stateDiagram-v2
+    [*] --> ACTIVE : requestHold / Queue Promotion
+
+    ACTIVE --> FULFILLED : [Staff] Desk Pickup (fulfillHold)
+    ACTIVE --> CANCELLED : [Member] cancelMyHold / [Staff] cancelHold
+    ACTIVE --> EXPIRED : [System Cron] Pickup deadline passed (expireDueHolds)
+
+    FULFILLED --> [*] : Terminal state (loan activated)
+    CANCELLED --> [*] : Terminal state (copy released)
+    EXPIRED --> [*] : Terminal state (copy released)
+```
+
+* **ACTIVE**: Hold successfully reserved against an available copy with a 24-hour pickup deadline (`expiresAt = now() + 24h`).
+* **FULFILLED**: Patron visits the library and checks out the reserved copy.
+* **CANCELLED**: Patron self-cancels (`cancelMyHold`) or staff administratively cancels with an audit note (`cancelHold`).
+* **EXPIRED**: Pickup deadline elapses without collection. Automated background cron (`expireDueHolds`) expires the hold and returns the copy to `AVAILABLE`.
+* All resolved states (`FULFILLED`, `CANCELLED`, `EXPIRED`) are immutable terminal states.
+
+---
+
+### 7. Circulation: Request Hold on a Title (Member)
+Requires `Authorization: Bearer <member_token>`:
+```graphql
+mutation RequestHold {
+  requestHold(bookId: 1) {
+    id
+    bookId
+    bookTitle
+    status
+    expiresAt
+    createdAt
+  }
+}
+```
+*Note: `copyBarcode` is masked as `null` for MEMBER queries to prevent patron front-running of physical shelf copies.*
+
+### 8. Circulation: Cancel Own Active Hold (Member)
+Requires `Authorization: Bearer <member_token>`:
+```graphql
+mutation CancelMyHold {
+  cancelMyHold(holdId: 1) {
+    id
+    status
+    resolvedAt
+  }
+}
+```
+
+### 9. Circulation: Query My Holds (Member)
+Requires `Authorization: Bearer <member_token>`:
+```graphql
+query MyHolds {
+  myHolds(filter: { status: ACTIVE }) {
+    id
+    bookTitle
+    status
+    expiresAt
+    copyBarcode # Evaluates to null for patrons
+  }
+}
+```
+
+### 10. Circulation: Staff Inventory & Copy Management (Librarian / Admin)
+Requires `Authorization: Bearer <librarian_or_admin_token>`:
+
+```graphql
+# Add physical copies with shelf location
+mutation AddCopies {
+  addCopies(bookId: 1, count: 2, shelfLocation: "STACK-A3") {
+    id
+    barcode
+    status
+    shelfLocation
+  }
+}
+
+# Manually transition condition status (AVAILABLE, DAMAGED, LOST)
+mutation TransitionCopyStatus {
+  transitionCopyStatus(input: {
+    copyId: 10
+    targetStatus: DAMAGED
+    reason: "Water damage on cover"
+  }) {
+    id
+    status
+  }
+}
+
+# Retire damaged or written-off copy
+mutation RetireCopy {
+  retireCopy(id: 10, reason: "Beyond repair") {
+    id
+    isRetired
+    retiredAt
+  }
+}
+```
+
+### 11. Circulation: Staff Hold Administration (Librarian / Admin)
+Requires `Authorization: Bearer <librarian_or_admin_token>`:
+
+```graphql
+# Cancel hold administratively with staff note
+mutation CancelHoldByStaff {
+  cancelHold(id: 1, staffNote: "Patron called to cancel pickup") {
+    id
+    status
+    resolvedNote
+  }
+}
+
+# Query all holds across members with pagination and unmasked copy barcodes
+query GetAllHolds {
+  holds(pagination: { take: 10 }, filter: { status: ACTIVE }) {
+    id
+    userId
+    bookTitle
+    copyBarcode # Exposed to staff: "BD-000042"
+    status
+    expiresAt
+  }
+}
+```
+
+---
+
 ## Architectural Boundaries & Future Service Split
 
-Bookdrop is structured into distinct bounded contexts designed for future decomposition into standalone microservices:
-* **Identity**: `src/users`, `src/auth` (Users, Credentials, Refresh Tokens, Roles)
-* **Catalog**: `src/books` (Books, Authors, Categories)
-* **Circulation**: `src/circulation` (Copies, and upcoming Holds, Loans, Queue, Fines)
+Bookdrop is structured into three distinct bounded contexts designed for future decomposition into standalone microservices:
 
-Cross-domain boundary rules are enforced at build-time via ESLint (`no-restricted-imports`). Domains communicate via plain scalar IDs and public service interfaces rather than internal imports or cross-domain relational SQL `include`s.
+1. **Identity** (`src/users`, `src/auth`):
+   - Patron and staff accounts, credentials, Argon2id passwords, JWT access tokens, rotating opaque refresh tokens, and RBAC roles (`MEMBER`, `LIBRARIAN`, `ADMIN`).
+2. **Catalog** (`src/books`):
+   - Bibliographic catalog metadata: Books, Authors, Categories, ISBNs, and summary counters.
+3. **Circulation** (`src/circulation/copies`, `src/circulation/holds`):
+   - Physical copy inventory, barcode tracking, copy lifecycle state machine, remote hold requests, member eligibility rules, pickup deadlines, and upcoming loan/waitlist features.
 
-### Cross-Area Foreign Keys (to remove when services are split)
+### Boundary Import Rules (CI Enforced)
+
+Cross-domain boundary integrity is strictly enforced at build-time and in CI via ESLint `no-restricted-imports` in [`.eslintrc.js`](.eslintrc.js):
+* **Circulation** must never import Catalog (`src/books/*`) or Identity (`src/users/*`, `src/auth/*`) internal files. All cross-boundary interactions occur strictly via:
+  - Public module interfaces (e.g. `BooksModule`, `UsersModule`)
+  - Shared domain event contracts (`src/contracts/events.ts`)
+  - Plain unconstrained scalar IDs (`userId: Int`, `bookId: Int`)
+  - Inverted ports / interfaces (e.g., `ActiveLoanCountPort`, `UnpaidFinesPort`)
+* **Catalog** and **Identity** must never import Circulation internal files (`src/circulation/*`).
+* Boundary violations cause `npm run lint` to fail with exit code 1, which blocks the CI pipeline in `.github/workflows/ci.yml`.
+
+### Cross-Area Foreign Keys (To Remove When Services Are Split)
+
+During the modular monolith phase, minimal foreign keys maintain relational referential integrity. When decomposed into standalone microservices with independent databases, these constraints will be removed:
+
 | Source Model (Area) | Target Model (Area) | Field | Status & Strategy Upon Service Split |
 | :--- | :--- | :--- | :--- |
-| `Copy` (Circulation) | `Book` (Catalog) | `Copy.bookId -> Book.id` | **To remove when services are split.** Will become an unconstrained scalar `bookId` validated via Catalog gRPC/API. |
-| `CopyStatusHistory` (Circulation) | `User` (Identity) | `changedById: Int?` | **Already decoupled.** Deliberately designed as a plain scalar integer ID without a database foreign key. |
-| `Hold` (Circulation) | `User` (Identity) | `Hold.userId: Int` | **Already decoupled.** Plain scalar integer reference; no foreign key constraint across domain boundaries. |
-| `Hold` (Circulation) | `Book` (Catalog) | `Hold.bookId: Int` | **Already decoupled.** Plain scalar integer reference; no foreign key constraint across domain boundaries. |
+| `Copy` (Circulation) | `Book` (Catalog) | `Copy.bookId -> Book.id` | **To remove when services are split.** Will become an unconstrained scalar `bookId` validated via Catalog gRPC/REST API. |
+| `CopyStatusHistory` (Circulation) | `User` (Identity) | `changedById: Int?` | **Already decoupled.** Deliberately designed as a plain scalar integer ID without a database foreign key constraint. |
+| `Hold` (Circulation) | `User` (Identity) | `Hold.userId: Int` | **Already decoupled.** Plain scalar integer reference; no cross-boundary database foreign key. |
+| `Hold` (Circulation) | `Book` (Catalog) | `Hold.bookId: Int` | **Already decoupled.** Plain scalar integer reference; no cross-boundary database foreign key. |
 | `Hold` (Circulation) | `Copy` (Circulation) | `Hold.copyId -> Copy.id` | **Intra-domain relationship.** Retains relational foreign key constraint within the Circulation database boundary. |
 
 > [!NOTE]
@@ -582,6 +779,30 @@ Cross-domain boundary rules are enforced at build-time via ESLint (`no-restricte
 >
 > `prisma migrate dev` and `prisma migrate deploy` track these indexes through the migration history. Because Prisma only alters indexes declared in `schema.prisma`, it safely ignores these unmanaged partial indexes without generating drift or dropping them.
 
+---
+
+## Domain Events & Message Contracts
+
+Bookdrop implements an event-driven architecture using asynchronous domain events. Events are defined in [`src/contracts/events.ts`](src/contracts/events.ts) and dispatched strictly **after** database transactions successfully commit. If a transaction fails or rolls back, no domain events are published.
+
+### Event Catalog & Payloads
+
+| Event Name | Domain | Description | Payload Schema |
+| :--- | :--- | :--- | :--- |
+| `copy.created` | `copy` | Physical copy added to catalog inventory | `{ copyId: number, bookId: number, barcode: string, status: 'AVAILABLE', shelfLocation: string, actorId: number \| null, occurredAt: Date }` |
+| `copy.status_changed` | `copy` | Copy status transitioned (manual or workflow) | `{ copyId: number, bookId: number, fromStatus: CopyStatus, toStatus: CopyStatus, reason: string \| null, actorId: number \| null, occurredAt: Date }` |
+| `copy.retired` | `copy` | Copy retired permanently from circulation | `{ copyId: number, bookId: number, barcode: string, reason: string \| null, actorId: number \| null, occurredAt: Date }` |
+| `hold.created` | `hold` | Active hold created for patron | `{ holdId: number, userId: number, bookId: number, copyId: number, expiresAt: Date, createdAt: Date }` |
+| `hold.cancelled` | `hold` | Hold cancelled by patron or staff | `{ holdId: number, cancelledBy: 'member' \| 'staff', reason: string \| null, userId: number, bookId: number, copyId: number, cancelledById: number \| null, cancelledAt: Date }` |
+| `hold.expired` | `hold` | Pickup deadline expired; copy released | `{ holdId: number, userId: number, bookId: number, copyId: number, expiredAt: Date }` |
+
+### Observability & Subscriber
+
+A centralized subscriber ([`src/common/events/domain-events.subscriber.ts`](src/common/events/domain-events.subscriber.ts)) listens to domain events using wildcard patterns:
+- `@OnEvent('copy.*')`
+- `@OnEvent('hold.*')`
+
+All received events are formatted as structured JSON via [`JsonLogger`](src/common/logger/json-logger.ts) including standard timestamps, log levels, event domain names, and payloads. This provides seamless out-of-the-box ingestion for log aggregation tools (e.g., Datadog, ELK, CloudWatch).
 
 ---
 
@@ -600,20 +821,22 @@ Cross-domain boundary rules are enforced at build-time via ESLint (`no-restricte
 ```bash
 npm test
 ```
-*Executes 47 unit tests across services, guards, and environment validation schemas.*
+*Executes 272 unit tests across 21 test suites covering domain state machines, eligibility policies, clock deadlines, services, loaders, guards, and validators.*
 
 ### Run End-to-End (E2E) Tests
 ```bash
 npm run test:e2e
 ```
-*Executes 32 integration tests against the real PostgreSQL container (Auth, RBAC, Catalog, Security headers, Rate limiting, Depth limits).*
+*Executes 81 integration tests across 7 suites against the real PostgreSQL container (Holds lifecycle, 20-member copy contention, advisory locks, CAS race conditions, database partial unique indexes, Auth, RBAC, Catalog, Security headers, Rate limiting, Depth limits).*
 
 ### Run Code Linter
 ```bash
 npm run lint
 ```
+*Enforces TypeScript formatting, code quality, and cross-boundary architectural import restrictions.*
 
 ### Build Production Bundle
 ```bash
 npm run build
 ```
+
