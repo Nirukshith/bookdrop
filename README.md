@@ -762,6 +762,93 @@ Cross-domain boundary integrity is strictly enforced at build-time and in CI via
 ### Cross-Area Foreign Keys (To Remove When Services Are Split)
 
 During the modular monolith phase, minimal foreign keys maintain relational referential integrity. When decomposed into standalone microservices with independent databases, these constraints will be removed:
+## Physical Inventory & Circulation (Copies)
+
+The Circulation domain manages the lifecycle, tracking, and availability of physical library book copies.
+
+### Copy State Machine
+
+Copies follow strict state transition rules. Transitions are split into **Manual Staff Actions** (Librarians and Admins) and **System-Only Workflows** (automated hold/loan engines).
+
+```mermaid
+stateDiagram-v2
+    [*] --> AVAILABLE: addCopy / addCopies
+
+    state "AVAILABLE" as AVAILABLE
+    state "LOST" as LOST
+    state "DAMAGED" as DAMAGED
+    state "ON_HOLD (System Only)" as ON_HOLD
+    state "BORROWED (System Only)" as BORROWED
+    state "RETIRED (Terminal)" as RETIRED
+
+    %% Manual Staff Transitions
+    AVAILABLE --> LOST: Manual (requires reason)
+    AVAILABLE --> DAMAGED: Manual (requires reason)
+    LOST --> AVAILABLE: Manual (Found)
+    DAMAGED --> AVAILABLE: Manual (Repaired)
+    LOST --> DAMAGED: Manual (requires reason)
+    DAMAGED --> LOST: Manual (requires reason)
+
+    %% System-Only Transitions
+    AVAILABLE --> ON_HOLD: System (Hold placed)
+    ON_HOLD --> BORROWED: System (Checkout)
+    BORROWED --> AVAILABLE: System (Return)
+    ON_HOLD --> AVAILABLE: System (Hold cancelled/expired)
+    BORROWED --> LOST: System / Manual (Declared lost)
+
+    %% Soft Retirement
+    AVAILABLE --> RETIRED: retireCopy (soft-retire)
+    LOST --> RETIRED: retireCopy (soft-retire)
+    DAMAGED --> RETIRED: retireCopy (soft-retire)
+```
+
+> [!NOTE]
+> * **Atomic Compare-and-Set (CAS)**: All status changes execute via `transitionStatus(copyId, allowedFrom, to, meta)` with a conditional update (`WHERE id = copyId AND status IN (allowedFrom) AND retiredAt IS NULL`), guaranteeing race-condition safety.
+> * **Soft-Retirement**: Copies are never hard-deleted because historic loans and holds depend on copy records. Retiring a copy sets `retiredAt: Date`. Retired copies are excluded from availability counts and hidden from default queries.
+
+---
+
+### GraphQL Operations (Physical Inventory)
+
+| Operation | Type | Authorization | Description |
+| :--- | :--- | :--- | :--- |
+| `Book.availableCopies` | Field Resolver | **Public** | Count of active, non-retired `AVAILABLE` copies. Batched via `DataLoader` (1 SQL query per batch, eliminating N+1). |
+| `Book.copyCounts` | Field Resolver | **LIBRARIAN, ADMIN** | Full inventory breakdown (`total`, `available`, `onHold`, `borrowed`, `lost`, `damaged`, `retired`). Guarded at field level. |
+| `copies(bookId?, status?, includeRetired?, skip?, take?)` | Query | **LIBRARIAN, ADMIN** | Filtered pagination of copies. Retired copies hidden by default unless `includeRetired: true`. |
+| `copy(id: Int!)` | Query | **LIBRARIAN, ADMIN** | Find copy by numeric primary key. |
+| `copyByBarcode(barcode: String!)` | Query | **LIBRARIAN, ADMIN** | Lookup copy by standardized barcode (e.g., used at the circulation desk scanner). |
+| `copyStatusHistory(copyId: Int!)` | Query | **LIBRARIAN, ADMIN** | Audit trail of all lifecycle changes for a copy in reverse chronological order. |
+| `addCopy(input: AddCopyInput!)` | Mutation | **LIBRARIAN, ADMIN** | Add single copy with custom or auto-generated sequence barcode (`BD-000001`). |
+| `addCopies(bookId: Int!, quantity: Int!, shelfLocation?: String)` | Mutation | **LIBRARIAN, ADMIN** | Batch add 1–50 copies with auto-generated sequence barcodes in a single atomic transaction. |
+| `updateCopy(id: Int!, input: UpdateCopyInput!)` | Mutation | **LIBRARIAN, ADMIN** | Update physical metadata (`shelfLocation`, `notes`). Retired copies cannot be updated. |
+| `changeCopyStatus(id: Int!, to: CopyStatus!, reason?: String)` | Mutation | **LIBRARIAN, ADMIN** | Perform allowed manual transition. Reasons required for `LOST` and `DAMAGED`. |
+| `retireCopy(id: Int!, reason?: String)` | Mutation | **LIBRARIAN, ADMIN** | Permanently soft-retire copy from circulation. |
+
+---
+
+### In-Process Domain Events
+
+`CopiesService` publishes strongly-typed domain events via `@nestjs/event-emitter`. Events are dispatched **strictly after** database transactions successfully commit to prevent phantom events.
+
+| Event Name | Class | Payload Contract | Trigger |
+| :--- | :--- | :--- | :--- |
+| `copy.created` | `CopyCreatedEvent` | `{ copyId: number, bookId: number, barcode: string, status: CopyStatus, shelfLocation: string \| null, actorId: number \| null, occurredAt: Date }` | Published when a copy is created individually or in batch. |
+| `copy.status_changed` | `CopyStatusChangedEvent` | `{ copyId: number, bookId: number, fromStatus: CopyStatus, toStatus: CopyStatus, reason: string \| null, actorId: number \| null, occurredAt: Date }` | Published on successful atomic status transitions. |
+| `copy.retired` | `CopyRetiredEvent` | `{ copyId: number, bookId: number, reason: string, retiredAt: Date, actorId: number \| null, occurredAt: Date }` | Published when a copy is soft-retired. |
+
+---
+
+## Architectural Boundaries & Microservice Readiness
+
+Bookdrop is structured into distinct bounded contexts designed for seamless decomposition into independent microservices:
+* **Identity**: `src/users`, `src/auth` (Users, Credentials, Refresh Tokens, Roles)
+* **Catalog**: `src/books` (Books, Authors, Categories)
+* **Circulation**: `src/circulation` (Copies, and upcoming Holds, Loans, Queue, Fines)
+
+### Domain Boundary Rules & Isolation
+* Cross-domain boundary rules are enforced at build-time via ESLint (`no-restricted-imports`). Domains may only import public barrel facades (`src/books`, `src/auth`, `src/circulation/copies`) and are strictly forbidden from importing internal services or models.
+* Relational joins across domains are eliminated: `BooksService` does not query `Copy` records, and `CopiesService` does not query `Book` records directly.
+* Data aggregation (such as `availableCopies` on `Book`) is resolved at the GraphQL resolver layer (`BookCopiesResolver`) using batched `DataLoader` queries (`CopiesPublicApi.availableCountsForBooks`).
 
 | Source Model (Area) | Target Model (Area) | Field | Status & Strategy Upon Service Split |
 | :--- | :--- | :--- | :--- |
@@ -803,6 +890,8 @@ A centralized subscriber ([`src/common/events/domain-events.subscriber.ts`](src/
 - `@OnEvent('hold.*')`
 
 All received events are formatted as structured JSON via [`JsonLogger`](src/common/logger/json-logger.ts) including standard timestamps, log levels, event domain names, and payloads. This provides seamless out-of-the-box ingestion for log aggregation tools (e.g., Datadog, ELK, CloudWatch).
+| `Copy` (Circulation) | `Book` (Catalog) | `Copy.bookId -> Book.id` | **To remove when services are split.** Will become an unconstrained scalar `bookId` validated via Catalog gRPC/API. |
+| `CopyStatusHistory` (Circulation) | `User` (Identity) | `changedById: Int?` | **Already decoupled.** Deliberately designed as a plain scalar integer ID without a database foreign key constraint. |
 
 ---
 
@@ -812,6 +901,7 @@ All received events are formatted as structured JSON via [`JsonLogger`](src/comm
 * **Rate Limiting (`@nestjs/throttler`)**: GraphQL-aware throttling with default quota of 100 requests/minute, and strict throttling (10 requests/minute) on sensitive endpoints (`login`, `register`, `refreshTokens`) to block brute-force credential stuffing.
 * **Query Depth Limiting**: Protects against denial-of-service query nesting attacks by capping GraphQL AST depth at 5 (`depthLimit(5)`).
 * **Production Protection**: GraphQL Introspection and Playground are automatically disabled when `NODE_ENV=production`.
+* **Field-Level Access Control**: Sensitive fields (`Book.copyCounts`) are guarded independently at the GraphQL field resolver level using `@UseGuards(RolesGuard)` and `fieldResolverEnhancers: ['guards']`.
 
 ---
 
@@ -822,18 +912,21 @@ All received events are formatted as structured JSON via [`JsonLogger`](src/comm
 npm test
 ```
 *Executes 272 unit tests across 21 test suites covering domain state machines, eligibility policies, clock deadlines, services, loaders, guards, and validators.*
+*Executes 187 unit tests across state machines, domain events, services, resolvers, guards, and environment validation schemas.*
 
 ### Run End-to-End (E2E) Tests
 ```bash
 npm run test:e2e
 ```
 *Executes 81 integration tests across 7 suites against the real PostgreSQL container (Holds lifecycle, 20-member copy contention, advisory locks, CAS race conditions, database partial unique indexes, Auth, RBAC, Catalog, Security headers, Rate limiting, Depth limits).*
+*Executes 55 integration tests against the real PostgreSQL container (Auth, RBAC, Catalog, Physical Inventory, DataLoader batching, CAS race condition verification, Security headers, Rate limiting).*
 
-### Run Code Linter
+### Run Code Linter & Boundary Check
 ```bash
 npm run lint
 ```
 *Enforces TypeScript formatting, code quality, and cross-boundary architectural import restrictions.*
+*Enforces ESLint domain boundary rules across modules.*
 
 ### Build Production Bundle
 ```bash
