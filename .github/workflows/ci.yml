@@ -21,7 +21,7 @@ jobs:
     env:
       NODE_ENV: test
       PORT: 3000
-      DATABASE_URL: postgresql://bookdrop:bookdrop@localhost:5432/bookdrop
+      DATABASE_URL: postgresql://bookdrop:bookdrop@localhost:5432/bookdrop?connection_limit=25
       JWT_ACCESS_SECRET: ci-dummy-test-jwt-access-secret-minimum-32-characters
       JWT_ACCESS_TTL: 15m
       REFRESH_TOKEN_TTL_DAYS: 7

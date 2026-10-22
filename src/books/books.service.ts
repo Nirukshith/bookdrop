@@ -78,6 +78,34 @@ export class BooksService {
     return count > 0;
   }
 
+  /**
+   * Batched lookup returning book titles for given book IDs.
+   * Employs select: { id: true, title: true } to minimize database I/O.
+   * Used by DataLoader to eliminate N+1 cross-domain queries.
+   */
+  async findTitlesByIds(bookIds: number[]): Promise<Map<number, string>> {
+    if (!bookIds || bookIds.length === 0) {
+      return new Map();
+    }
+
+    const uniqueIds = Array.from(new Set(bookIds));
+    const books = await this.prisma.book.findMany({
+      where: {
+        id: { in: uniqueIds },
+      },
+      select: {
+        id: true,
+        title: true,
+      },
+    });
+
+    const map = new Map<number, string>();
+    for (const book of books) {
+      map.set(book.id, book.title);
+    }
+    return map;
+  }
+
   // check if the authorids and category ids passed are valid, otherwise throw a bad request exception
   // then check if the book with the same isbn already exists, otherwise throw a conflict exception
   // then create the book

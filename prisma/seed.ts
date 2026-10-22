@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import * as argon2 from 'argon2';
-import { PrismaClient, CopyStatus, Role } from '@prisma/client';
+import { PrismaClient, CopyStatus, Role, HoldStatus, HoldSource } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
@@ -23,6 +23,7 @@ async function main() {
 
   if (!isProduction) {
     // Clear existing records in reverse dependency order for repeatability in development/test
+    await prisma.hold.deleteMany();
     await prisma.copyStatusHistory.deleteMany();
     await prisma.copy.deleteMany();
     await prisma.book.deleteMany();
@@ -47,6 +48,7 @@ async function main() {
     { name: 'Arthur Conan Doyle' },
     { name: 'Agatha Christie' },
     { name: 'Ursula K. Le Guin' },
+    { name: 'Aldous Huxley' },
   ];
 
   const authorsMap: Record<string, { id: number }> = {};
@@ -93,7 +95,7 @@ async function main() {
       publishedYear: 1949,
       authorNames: ['George Orwell'],
       categoryNames: ['Dystopian', 'Classic Fiction'],
-      copiesCount: 3,
+      copiesCount: 4,
     },
     {
       title: 'Animal Farm',
@@ -102,7 +104,7 @@ async function main() {
       publishedYear: 1945,
       authorNames: ['George Orwell'],
       categoryNames: ['Classic Fiction', 'Dystopian'],
-      copiesCount: 2,
+      copiesCount: 3,
     },
     {
       title: 'Pride and Prejudice',
@@ -356,6 +358,15 @@ async function main() {
       categoryNames: ['Science Fiction', 'Dystopian'],
       copiesCount: 2,
     },
+    {
+      title: 'Brave New World',
+      isbn: '978-0060850524',
+      description: 'A terrifying vision of a dystopian, technologically controlled, and commodified future society.',
+      publishedYear: 1932,
+      authorNames: ['Aldous Huxley'],
+      categoryNames: ['Dystopian', 'Science Fiction', 'Classic Fiction'],
+      copiesCount: 3,
+    },
   ];
 
   let totalCopies = 0;
@@ -556,6 +567,153 @@ async function main() {
     }
 
     console.log(`✅ Seeded ${demoUsers.length} demo users (ADMIN, LIBRARIAN, MEMBER).`);
+
+    // 5. Seed Demo Holds for Demo Member (ACTIVE, EXPIRED, CANCELLED)
+    console.log('🔖 Seeding demo holds for demo member...');
+
+    const demoMember = await prisma.user.findUnique({
+      where: { email: memberEmail },
+    });
+
+    if (demoMember) {
+      const [book1984, bookAnimalFarm, bookBraveNewWorld] = await Promise.all([
+        prisma.book.findUnique({
+          where: { isbn: '978-0451524935' },
+          include: { copies: { orderBy: { id: 'asc' } } },
+        }),
+        prisma.book.findUnique({
+          where: { isbn: '978-0451526342' },
+          include: { copies: { orderBy: { id: 'asc' } } },
+        }),
+        prisma.book.findUnique({
+          where: { isbn: '978-0060850524' },
+          include: { copies: { orderBy: { id: 'asc' } } },
+        }),
+      ]);
+
+      const now = new Date();
+
+      // Hold 1: ACTIVE hold on 1984 (Copy 1: marked ON_HOLD)
+      if (book1984 && book1984.copies.length > 0) {
+        const activeCopy = book1984.copies[0];
+        const activeCreatedAt = new Date(now.getTime() - 24 * 60 * 60 * 1000); // 1 day ago
+        const activeExpiresAt = new Date(now.getTime() + 6 * 24 * 60 * 60 * 1000); // 6 days in future
+
+        await prisma.hold.create({
+          data: {
+            userId: demoMember.id,
+            bookId: book1984.id,
+            copyId: activeCopy.id,
+            status: HoldStatus.ACTIVE,
+            source: HoldSource.REQUEST,
+            createdAt: activeCreatedAt,
+            expiresAt: activeExpiresAt,
+          },
+        });
+
+        await prisma.copy.update({
+          where: { id: activeCopy.id },
+          data: { status: CopyStatus.ON_HOLD },
+        });
+
+        await prisma.copyStatusHistory.create({
+          data: {
+            copyId: activeCopy.id,
+            fromStatus: CopyStatus.AVAILABLE,
+            toStatus: CopyStatus.ON_HOLD,
+            reason: `Hold requested by demo member #${demoMember.id}`,
+            changedById: demoMember.id,
+            createdAt: activeCreatedAt,
+          },
+        });
+      }
+
+      // Hold 2: EXPIRED hold on Brave New World (Copy 1: returned to AVAILABLE)
+      if (bookBraveNewWorld && bookBraveNewWorld.copies.length > 0) {
+        const expiredCopy = bookBraveNewWorld.copies[0];
+        const expiredCreatedAt = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000); // 14 days ago
+        const expiredAt = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000); // expired 7 days ago
+
+        await prisma.hold.create({
+          data: {
+            userId: demoMember.id,
+            bookId: bookBraveNewWorld.id,
+            copyId: expiredCopy.id,
+            status: HoldStatus.EXPIRED,
+            source: HoldSource.REQUEST,
+            createdAt: expiredCreatedAt,
+            expiresAt: expiredAt,
+            resolvedAt: expiredAt,
+            resolvedNote: 'Expired due to missed pickup deadline',
+          },
+        });
+
+        await prisma.copyStatusHistory.createMany({
+          data: [
+            {
+              copyId: expiredCopy.id,
+              fromStatus: CopyStatus.AVAILABLE,
+              toStatus: CopyStatus.ON_HOLD,
+              reason: `Hold requested by demo member #${demoMember.id}`,
+              changedById: demoMember.id,
+              createdAt: expiredCreatedAt,
+            },
+            {
+              copyId: expiredCopy.id,
+              fromStatus: CopyStatus.ON_HOLD,
+              toStatus: CopyStatus.AVAILABLE,
+              reason: 'Hold expired at pickup deadline',
+              createdAt: expiredAt,
+            },
+          ],
+        });
+      }
+
+      // Hold 3: CANCELLED hold on Animal Farm (Copy 1: returned to AVAILABLE)
+      if (bookAnimalFarm && bookAnimalFarm.copies.length > 0) {
+        const cancelledCopy = bookAnimalFarm.copies[0];
+        const cancelledCreatedAt = new Date(now.getTime() - 5 * 24 * 60 * 60 * 1000); // 5 days ago
+        const cancelledExpiresAt = new Date(now.getTime() + 2 * 24 * 60 * 60 * 1000); // originally 2 days in future
+        const cancelledAt = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000); // cancelled 3 days ago
+
+        await prisma.hold.create({
+          data: {
+            userId: demoMember.id,
+            bookId: bookAnimalFarm.id,
+            copyId: cancelledCopy.id,
+            status: HoldStatus.CANCELLED,
+            source: HoldSource.REQUEST,
+            createdAt: cancelledCreatedAt,
+            expiresAt: cancelledExpiresAt,
+            resolvedAt: cancelledAt,
+            resolvedNote: 'Cancelled by member',
+          },
+        });
+
+        await prisma.copyStatusHistory.createMany({
+          data: [
+            {
+              copyId: cancelledCopy.id,
+              fromStatus: CopyStatus.AVAILABLE,
+              toStatus: CopyStatus.ON_HOLD,
+              reason: `Hold requested by demo member #${demoMember.id}`,
+              changedById: demoMember.id,
+              createdAt: cancelledCreatedAt,
+            },
+            {
+              copyId: cancelledCopy.id,
+              fromStatus: CopyStatus.ON_HOLD,
+              toStatus: CopyStatus.AVAILABLE,
+              reason: 'Hold cancelled by member',
+              changedById: demoMember.id,
+              createdAt: cancelledAt,
+            },
+          ],
+        });
+      }
+
+      console.log('✅ Seeded 3 demo holds (ACTIVE, EXPIRED, CANCELLED) with consistent copy statuses.');
+    }
   } else {
     console.log('🔒 Production mode detected: Skipping demo users seed.');
   }

@@ -93,6 +93,49 @@ A date-time string at UTC, such as 2019-12-03T09:54:33Z, compliant with the date
 """
 scalar DateTime
 
+type Hold {
+  bookId: Int!
+  bookTitle: String!
+  copyBarcode: String
+  copyId: Int!
+  createdAt: DateTime!
+
+  """Pickup deadline in UTC"""
+  expiresAt: DateTime!
+  id: ID!
+  resolvedAt: DateTime
+  resolvedNote: String
+  source: HoldSource!
+  status: HoldStatus!
+  userId: Int!
+}
+
+input HoldFilterInput {
+  bookId: Int
+  expiringBefore: DateTime
+  status: HoldStatus
+  userId: Int
+}
+
+"""Source or mechanism that originated the hold request"""
+enum HoldSource {
+  QUEUE_PROMOTION
+  REQUEST
+}
+
+"""Lifecycle statuses for book reservation holds"""
+enum HoldStatus {
+  ACTIVE
+  CANCELLED
+  EXPIRED
+  FULFILLED
+}
+
+input HoldsPaginationInput {
+  skip: Int = 0
+  take: Int = 20
+}
+
 input LoginInput {
   email: String!
   password: String!
@@ -101,12 +144,15 @@ input LoginInput {
 type Mutation {
   addCopies(bookId: Int!, quantity: Int!, shelfLocation: String): [Copy!]!
   addCopy(input: AddCopyInput!): Copy!
+  cancelHold(holdId: Int!, reason: String): Hold!
+  cancelMyHold(holdId: Int!): Hold!
   changeCopyStatus(id: Int!, reason: String, to: CopyStatus!): Copy!
   createBook(input: CreateBookInput!): Book!
   login(input: LoginInput!): AuthPayload!
   logout(refreshToken: String!): Boolean!
   refreshTokens(refreshToken: String!): AuthPayload!
   register(input: RegisterInput!): AuthPayload!
+  requestHold(bookId: Int!): Hold!
   retireCopy(id: Int!, reason: String): Copy!
   updateBook(id: Int!, input: UpdateBookInput!): Book!
   updateCopy(id: Int!, input: UpdateCopyInput!): Copy!
@@ -120,7 +166,10 @@ type Query {
   copy(id: Int!): Copy!
   copyByBarcode(barcode: String!): Copy!
   copyStatusHistory(copyId: Int!): [CopyStatusHistory!]!
+  hold(id: Int!): Hold!
+  holds(filter: HoldFilterInput, pagination: HoldsPaginationInput): [Hold!]!
   me: User!
+  myHolds(status: HoldStatus): [Hold!]!
   users: [User!]!
 }
 

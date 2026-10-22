@@ -372,57 +372,60 @@ export class CopiesService implements CopiesPublicApi {
     allowedFrom: CopyStatus[],
     to: CopyStatus,
     meta?: TransitionStatusMeta,
+    tx?: Prisma.TransactionClient,
   ): Promise<Copy> {
-    const { updatedCopy, previousStatus } = await this.prisma.$transaction(
-      async (tx) => {
-        const current = await tx.copy.findUnique({
-          where: { id: copyId },
-        });
+    const executeInTx = async (client: Prisma.TransactionClient) => {
+      const current = await client.copy.findUnique({
+        where: { id: copyId },
+      });
 
-        if (!current) {
-          throw new NotFoundException(`Copy with ID ${copyId} not found.`);
-        }
+      if (!current) {
+        throw new NotFoundException(`Copy with ID ${copyId} not found.`);
+      }
 
-        if (current.retiredAt !== null) {
-          throw new InvalidCopyStateTransitionError(
-            'Retired copies accept no status changes.',
-          );
-        }
+      if (current.retiredAt !== null) {
+        throw new InvalidCopyStateTransitionError(
+          'Retired copies accept no status changes.',
+        );
+      }
 
-        const updateResult = await tx.copy.updateMany({
-          where: {
-            id: copyId,
-            status: { in: allowedFrom },
-            retiredAt: null,
-          },
-          data: {
-            status: to,
-          },
-        });
+      const updateResult = await client.copy.updateMany({
+        where: {
+          id: copyId,
+          status: { in: allowedFrom },
+          retiredAt: null,
+        },
+        data: {
+          status: to,
+        },
+      });
 
-        if (updateResult.count === 0) {
-          throw new CopyStatusConflictError(
-            `Cannot transition copy ${copyId} to '${to}'. Current status '${current.status}' is not in allowed source statuses: [${allowedFrom.join(', ')}].`,
-          );
-        }
+      if (updateResult.count === 0) {
+        throw new CopyStatusConflictError(
+          `Cannot transition copy ${copyId} to '${to}'. Current status '${current.status}' is not in allowed source statuses: [${allowedFrom.join(', ')}].`,
+        );
+      }
 
-        await tx.copyStatusHistory.create({
-          data: {
-            copyId,
-            fromStatus: current.status,
-            toStatus: to,
-            reason: meta?.reason?.trim() || null,
-            changedById: meta?.changedById ?? null,
-          },
-        });
+      await client.copyStatusHistory.create({
+        data: {
+          copyId,
+          fromStatus: current.status,
+          toStatus: to,
+          reason: meta?.reason?.trim() || null,
+          changedById: meta?.changedById ?? null,
+        },
+      });
 
-        const updated = await tx.copy.findUniqueOrThrow({
-          where: { id: copyId },
-        });
+      const updated = await client.copy.findUniqueOrThrow({
+        where: { id: copyId },
+      });
 
-        return { updatedCopy: updated, previousStatus: current.status };
-      },
-    );
+      return { updatedCopy: updated, previousStatus: current.status };
+    };
+
+    const { updatedCopy, previousStatus } = tx
+      ? await executeInTx(tx)
+      : await this.prisma.$transaction(executeInTx);
 
     this.eventEmitter.emit(
       CopyStatusChangedEvent.EVENT_NAME,

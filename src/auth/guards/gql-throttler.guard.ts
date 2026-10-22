@@ -14,6 +14,14 @@ export class GqlThrottlerGuard extends ThrottlerGuard {
     return { req: http.getRequest(), res: http.getResponse() };
   }
 
+  protected async getTracker(req: Record<string, any>): Promise<string> {
+    const userId = req?.user?.sub ?? req?.user?.id;
+    if (userId) {
+      return `user:${userId}`;
+    }
+    return req?.ip ?? 'unknown';
+  }
+
   protected setResponseHeader(res: any, name: string, value: string | number) {
     if (
       res &&

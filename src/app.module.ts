@@ -15,6 +15,9 @@ import { UsersModule } from './users/users.module';
 import { AuthModule } from './auth/auth.module';
 import { HealthModule } from './health/health.module';
 import { CopiesModule } from './circulation/copies/copies.module';
+import { HoldsModule } from './circulation/holds/holds.module';
+import { ClockModule } from './common/clock/clock.module';
+import { DomainEventsModule } from './common/events/domain-events.module';
 import { GqlThrottlerGuard } from './auth/guards/gql-throttler.guard';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { RolesGuard } from './auth/guards/roles.guard';
@@ -22,7 +25,10 @@ import { envValidationSchema } from './config/env.validation';
 
 @Module({
   imports: [
-    EventEmitterModule.forRoot(),
+    ClockModule,
+    DomainEventsModule,
+    HoldsModule,
+    EventEmitterModule.forRoot({ wildcard: true }),
     ConfigModule.forRoot({
       isGlobal: true,
       validationSchema: envValidationSchema,
@@ -57,6 +63,42 @@ import { envValidationSchema } from './config/env.validation';
             req,
             res,
           }),
+          formatError: (formattedError, error: any) => {
+            const originalError =
+              error?.extensions?.originalError || error?.originalError;
+            const rawCode =
+              originalError?.code ||
+              error?.extensions?.code ||
+              (formattedError.extensions?.code as string);
+
+            let code = rawCode;
+            const status =
+              originalError?.statusCode || error?.extensions?.status;
+
+            if (status === 403 || rawCode === 'FORBIDDEN') {
+              code = 'FORBIDDEN';
+            } else if (status === 401 || rawCode === 'UNAUTHENTICATED') {
+              code = 'UNAUTHENTICATED';
+            } else if (formattedError.message?.includes('Too Many Requests')) {
+              code = 'TOO_MANY_REQUESTS';
+            }
+
+            const extensions: Record<string, any> = {
+              ...formattedError.extensions,
+              code: code || 'INTERNAL_SERVER_ERROR',
+            };
+
+            if (isProd) {
+              delete extensions.stacktrace;
+            }
+
+            return {
+              message: formattedError.message,
+              locations: formattedError.locations,
+              path: formattedError.path,
+              extensions,
+            };
+          },
         };
       },
     }),
@@ -72,11 +114,11 @@ import { envValidationSchema } from './config/env.validation';
     AppService,
     {
       provide: APP_GUARD,
-      useClass: GqlThrottlerGuard,
+      useClass: JwtAuthGuard,
     },
     {
       provide: APP_GUARD,
-      useClass: JwtAuthGuard,
+      useClass: GqlThrottlerGuard,
     },
     {
       provide: APP_GUARD,

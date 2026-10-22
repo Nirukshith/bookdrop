@@ -1,5 +1,8 @@
-export class CopyRetiredEvent {
+import { CopyRetiredPayload } from '../../../contracts/events';
+
+export class CopyRetiredEvent implements CopyRetiredPayload {
   static readonly EVENT_NAME = 'copy.retired';
+  readonly eventName = CopyRetiredEvent.EVENT_NAME;
 
   constructor(
     public readonly copyId: number,

@@ -54,8 +54,39 @@ model Copy {
   createdAt     DateTime            @default(now())
   updatedAt     DateTime            @updatedAt
   history       CopyStatusHistory[]
+  holds         Hold[]
 
   @@index([bookId, status])
+}
+
+enum HoldStatus {
+  ACTIVE
+  FULFILLED
+  CANCELLED
+  EXPIRED
+}
+
+enum HoldSource {
+  REQUEST          // member requested it
+  QUEUE_PROMOTION  // used by Stage 8
+}
+
+model Hold {
+  id           Int        @id @default(autoincrement())
+  userId       Int        // plain user id, deliberately NOT a foreign key
+  bookId       Int        // plain book id, deliberately NOT a foreign key
+  copyId       Int
+  copy         Copy       @relation(fields: [copyId], references: [id])
+  status       HoldStatus @default(ACTIVE)
+  source       HoldSource @default(REQUEST)
+  expiresAt    DateTime
+  createdAt    DateTime   @default(now())
+  resolvedAt   DateTime?
+  resolvedNote String?    // for example the cancellation reason or who cancelled
+
+  @@index([userId, status])
+  @@index([status, expiresAt])
+  @@index([bookId])
 }
 
 model CopyStatusHistory {
