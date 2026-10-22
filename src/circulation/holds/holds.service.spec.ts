@@ -244,7 +244,11 @@ describe('HoldsService (Step 5)', () => {
       );
       expect(eventEmitterMock.emit).toHaveBeenCalledWith(
         HoldCancelledEvent.EVENT_NAME,
-        expect.any(HoldCancelledEvent),
+        expect.objectContaining({
+          holdId,
+          cancelledBy: 'member',
+          reason: 'Changed my mind',
+        }),
       );
     });
 
@@ -269,7 +273,11 @@ describe('HoldsService (Step 5)', () => {
       expect(result.status).toBe(HoldStatus.CANCELLED);
       expect(eventEmitterMock.emit).toHaveBeenCalledWith(
         HoldCancelledEvent.EVENT_NAME,
-        expect.any(HoldCancelledEvent),
+        expect.objectContaining({
+          holdId,
+          cancelledBy: 'staff',
+          reason: 'Staff cancellation',
+        }),
       );
     });
 

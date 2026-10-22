@@ -1,7 +1,9 @@
 import { CopyStatus } from '@prisma/client';
+import { CopyCreatedPayload } from '../../../contracts/events';
 
-export class CopyCreatedEvent {
+export class CopyCreatedEvent implements CopyCreatedPayload {
   static readonly EVENT_NAME = 'copy.created';
+  readonly eventName = CopyCreatedEvent.EVENT_NAME;
 
   constructor(
     public readonly copyId: number,

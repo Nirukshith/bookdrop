@@ -1,4 +1,4 @@
-import { LoggerService } from '@nestjs/common';
+import { Injectable, LoggerService } from '@nestjs/common';
 
 const SENSITIVE_KEY_PATTERNS = [
   /password/i,
@@ -9,6 +9,7 @@ const SENSITIVE_KEY_PATTERNS = [
   /credential/i,
 ];
 
+@Injectable()
 export class JsonLogger implements LoggerService {
   log(message: any, ...optionalParams: any[]) {
     this.output('info', message, optionalParams);

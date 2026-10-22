@@ -20,6 +20,7 @@ import { computePickupDeadline } from '../../config/library-rules';
 import { MemberEligibilityPolicy } from './member-eligibility.policy';
 import { HoldsPublicApi } from './holds-public-api.interface';
 import { PaginationArgs, StaffHoldFilter } from './dto/hold-query.dto';
+import { CancelledBy } from '../../contracts/events';
 import {
   HoldCreatedEvent,
   HoldCancelledEvent,
@@ -63,7 +64,7 @@ export class HoldsService implements HoldsPublicApi {
     const { hold, now, expiresAt } = await this.prisma.$transaction(
       async (tx) => {
         // 1. Per-member advisory lock to serialize simultaneous requests by the same user
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(${HOLD_ADVISORY_NAMESPACE}, ${userId})`;
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(${HOLD_ADVISORY_NAMESPACE}::int, ${userId}::int)`;
 
         // 2. Verify book exists in the Catalog public interface
         const bookExists = await this.booksService.exists(bookId);
@@ -227,16 +228,20 @@ export class HoldsService implements HoldsPublicApi {
       });
     });
 
+    const cancelledBy: CancelledBy =
+      actor.role === 'MEMBER' ? 'member' : 'staff';
+
     // Emit event post-commit
     this.eventEmitter.emit(
       HoldCancelledEvent.EVENT_NAME,
       new HoldCancelledEvent(
         cancelledHold.id,
+        cancelledBy,
+        cancellationNote,
         cancelledHold.userId,
         cancelledHold.bookId,
         cancelledHold.copyId,
         actor.id,
-        cancellationNote,
         now,
       ),
     );
