@@ -36,6 +36,11 @@ import {
 
 export const HOLD_ADVISORY_NAMESPACE = 4201;
 
+const INTERACTIVE_TX_OPTIONS = {
+  maxWait: 15000,
+  timeout: 20000,
+};
+
 @Injectable()
 export class HoldsService implements HoldsPublicApi {
   private readonly logger = new Logger(HoldsService.name);
@@ -127,6 +132,7 @@ export class HoldsService implements HoldsPublicApi {
           expiresAt: calculatedExpiresAt,
         };
       },
+      INTERACTIVE_TX_OPTIONS,
     );
 
     // 7. Emit domain event strictly after transaction successfully commits
@@ -226,7 +232,7 @@ export class HoldsService implements HoldsPublicApi {
         where: { id: holdId },
         include: { copy: true },
       });
-    });
+    }, INTERACTIVE_TX_OPTIONS);
 
     const cancelledBy: CancelledBy =
       actor.role === 'MEMBER' ? 'member' : 'staff';
@@ -300,7 +306,7 @@ export class HoldsService implements HoldsPublicApi {
         where: { id: holdId },
         include: { copy: true },
       });
-    });
+    }, INTERACTIVE_TX_OPTIONS);
 
     if (result) {
       this.eventEmitter.emit(
@@ -406,7 +412,7 @@ export class HoldsService implements HoldsPublicApi {
         where: { id: holdId },
         include: { copy: true },
       });
-    });
+    }, INTERACTIVE_TX_OPTIONS);
 
     if (expired) {
       this.eventEmitter.emit(

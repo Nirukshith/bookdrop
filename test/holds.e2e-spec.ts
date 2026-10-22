@@ -21,12 +21,16 @@ import {
 import { ClockService, FakeClockService } from '../src/common/clock';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { UsersService } from '../src/users/users.service';
+import { JwtService } from '@nestjs/jwt';
 
 describe('Holds (Circulation Remote Requests E2E - Step 9 Comprehensive Suite)', () => {
+  jest.setTimeout(30000);
+
   let app: INestApplication;
   let prisma: PrismaService;
   let usersService: UsersService;
   let authService: AuthService;
+  let jwtService: JwtService;
   let copiesService: CopiesService;
   let holdsService: HoldsService;
   let eventEmitter: EventEmitter2;
@@ -131,9 +135,12 @@ describe('Holds (Circulation Remote Requests E2E - Step 9 Comprehensive Suite)',
     prisma = app.get<PrismaService>(PrismaService);
     usersService = app.get<UsersService>(UsersService);
     authService = app.get<AuthService>(AuthService);
+    jwtService = app.get<JwtService>(JwtService);
     copiesService = app.get<CopiesService>(CopiesService);
     holdsService = app.get<HoldsService>(HoldsService);
     eventEmitter = app.get<EventEmitter2>(EventEmitter2);
+
+    app.getHttpServer().setMaxListeners(50);
 
     // Create shared Author and Category
     const author = await prisma.author.create({
@@ -673,21 +680,32 @@ describe('Holds (Circulation Remote Requests E2E - Step 9 Comprehensive Suite)',
       });
       await copiesService.addCopies(book20.id, 3, 'STACK-C20');
 
-      // Create 20 unique member accounts
-      const memberTokens: string[] = [];
-      for (let i = 1; i <= 20; i++) {
-        await usersService.create({
-          name: `Contender ${i}`,
-          email: `${testPrefix}_contender${i}@example.com`,
-          password: 'Password123!',
-          role: Role.MEMBER,
-        });
-        const login = await authService.login({
-          email: `${testPrefix}_contender${i}@example.com`,
-          password: 'Password123!',
-        });
-        memberTokens.push(login.accessToken);
-      }
+      // Fast batch user creation: avoid 40 sequential Argon2 calculations in CPU-bound CI runner
+      const dummyHash =
+        '$argon2id$v=19$m=65536,p=4,t=3$Nf1iD2kya4Pfy0iixQn7vg$HoxJO/4+PX7iyrHXZojinz3YqwJD+k+lVDyr5b+JfFw';
+      const userData = Array.from({ length: 20 }, (_, idx) => ({
+        name: `Contender ${idx + 1}`,
+        email: `${testPrefix}_contender${idx + 1}@example.com`,
+        passwordHash: dummyHash,
+        role: Role.MEMBER,
+      }));
+      await prisma.user.createMany({ data: userData });
+
+      const createdUsers = await prisma.user.findMany({
+        where: { email: { startsWith: `${testPrefix}_contender` } },
+        select: { id: true, email: true, role: true },
+        orderBy: { id: 'asc' },
+      });
+
+      const memberTokens = await Promise.all(
+        createdUsers.map((u) =>
+          jwtService.signAsync({
+            sub: u.id,
+            email: u.email,
+            role: u.role,
+          }),
+        ),
+      );
 
       const mutation = `
         mutation RequestHold($bookId: Int!) {
@@ -728,7 +746,7 @@ describe('Holds (Circulation Remote Requests E2E - Step 9 Comprehensive Suite)',
       expect(assignedCopyIds.size).toBe(3);
 
       await assertHoldsInvariants('after 20 members compete for 3 copies');
-    });
+    }, 30000);
 
     it('concurrency: two members request the last copy at once, and exactly one wins', async () => {
       const author = await prisma.author.findFirst();
