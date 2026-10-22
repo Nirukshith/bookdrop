@@ -392,12 +392,24 @@ async function main() {
         },
       });
       totalCopies += targetBook.copies.length;
+
+      // Seed initial history for each copy
+      for (const copy of targetBook.copies) {
+        await prisma.copyStatusHistory.create({
+          data: {
+            copyId: copy.id,
+            fromStatus: null,
+            toStatus: CopyStatus.AVAILABLE,
+            reason: 'Initial copy inventory',
+          },
+        });
+      }
     } else {
       // Book already exists (e.g. in production): insert any missing copies
       const existingCopiesCount = targetBook.copies.length;
       const missingCopies = Math.max(0, book.copiesCount - existingCopiesCount);
       for (let i = 0; i < missingCopies; i++) {
-        await prisma.copy.create({
+        const newCopy = await prisma.copy.create({
           data: {
             bookId: targetBook.id,
             barcode: `BD-${String(bookIndex + 1).padStart(3, '0')}-${String(existingCopiesCount + i + 1).padStart(3, '0')}`,
@@ -405,9 +417,89 @@ async function main() {
             shelfLocation: `STACK-${String(bookIndex + 1).padStart(2, '0')}`,
           },
         });
+        await prisma.copyStatusHistory.create({
+          data: {
+            copyId: newCopy.id,
+            fromStatus: null,
+            toStatus: CopyStatus.AVAILABLE,
+            reason: 'Initial copy inventory',
+          },
+        });
       }
       totalCopies += existingCopiesCount + missingCopies;
     }
+  }
+
+  // 3b. Seed Demo Status States (LOST, DAMAGED, RETIRED) in development/test environments
+  if (!isProduction) {
+    console.log('🔄 Setting up demo states (LOST, DAMAGED, RETIRED)...');
+
+    // First book (1984) copies: mark copy 2 as LOST, copy 3 as DAMAGED
+    const book1984 = await prisma.book.findUnique({
+      where: { isbn: '978-0451524935' },
+      include: { copies: { orderBy: { id: 'asc' } } },
+    });
+
+    if (book1984 && book1984.copies.length >= 3) {
+      const lostCopy = book1984.copies[1];
+      await prisma.copy.update({
+        where: { id: lostCopy.id },
+        data: { status: CopyStatus.LOST },
+      });
+      await prisma.copyStatusHistory.create({
+        data: {
+          copyId: lostCopy.id,
+          fromStatus: CopyStatus.AVAILABLE,
+          toStatus: CopyStatus.LOST,
+          reason: 'Reported lost by member',
+        },
+      });
+
+      const damagedCopy = book1984.copies[2];
+      await prisma.copy.update({
+        where: { id: damagedCopy.id },
+        data: {
+          status: CopyStatus.DAMAGED,
+          shelfLocation: 'REPAIR-BENCH',
+          notes: 'Water damage and torn cover',
+        },
+      });
+      await prisma.copyStatusHistory.create({
+        data: {
+          copyId: damagedCopy.id,
+          fromStatus: CopyStatus.AVAILABLE,
+          toStatus: CopyStatus.DAMAGED,
+          reason: 'Spine torn and water damaged; sent to repair bench',
+        },
+      });
+    }
+
+    // Second book (Animal Farm) copy 2: mark as RETIRED
+    const bookAnimalFarm = await prisma.book.findUnique({
+      where: { isbn: '978-0451526342' },
+      include: { copies: { orderBy: { id: 'asc' } } },
+    });
+
+    if (bookAnimalFarm && bookAnimalFarm.copies.length >= 2) {
+      const retiredCopy = bookAnimalFarm.copies[1];
+      await prisma.copy.update({
+        where: { id: retiredCopy.id },
+        data: {
+          retiredAt: new Date(),
+          notes: 'Damaged beyond repair; retired from circulation',
+        },
+      });
+      await prisma.copyStatusHistory.create({
+        data: {
+          copyId: retiredCopy.id,
+          fromStatus: CopyStatus.AVAILABLE,
+          toStatus: CopyStatus.AVAILABLE,
+          reason: 'Worn beyond repair; permanently retired from circulation',
+        },
+      });
+    }
+
+    console.log('✅ Demo copy states configured (LOST, DAMAGED, RETIRED).');
   }
 
   console.log(`✅ Successfully seeded ${booksData.length} books and ${totalCopies} copies.`);
