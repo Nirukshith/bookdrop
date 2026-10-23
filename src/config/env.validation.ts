@@ -19,4 +19,18 @@ export const envValidationSchema = Joi.object({
   SEED_MEMBER_PASSWORD: Joi.string().optional(),
   TRUST_PROXY: Joi.boolean().default(false),
   ALLOWED_ORIGINS: Joi.string().allow('').default(''),
+  LIBRARY_TIMEZONE: Joi.string()
+    .default('UTC')
+    .custom((value, helpers) => {
+      try {
+        Intl.DateTimeFormat(undefined, { timeZone: value });
+        return value;
+      } catch {
+        return helpers.error('any.invalid');
+      }
+    })
+    .messages({
+      'any.invalid':
+        'LIBRARY_TIMEZONE must be a valid IANA timezone name (e.g. "Asia/Colombo", "UTC")',
+    }),
 });
