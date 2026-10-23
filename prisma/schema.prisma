@@ -55,6 +55,7 @@ model Copy {
   updatedAt     DateTime            @updatedAt
   history       CopyStatusHistory[]
   holds         Hold[]
+  loans         Loan[]
 
   @@index([bookId, status])
 }
@@ -77,6 +78,7 @@ model Hold {
   bookId       Int        // plain book id, deliberately NOT a foreign key
   copyId       Int
   copy         Copy       @relation(fields: [copyId], references: [id])
+  loan         Loan?
   status       HoldStatus @default(ACTIVE)
   source       HoldSource @default(REQUEST)
   expiresAt    DateTime
@@ -88,6 +90,34 @@ model Hold {
   @@index([status, expiresAt])
   @@index([bookId])
 }
+
+enum LoanStatus {
+  ACTIVE
+  RETURNED
+  LOST
+}
+
+model Loan {
+  id             Int        @id @default(autoincrement())
+  userId         Int        // plain user id, deliberately NOT a foreign key
+  bookId         Int        // plain book id, deliberately NOT a foreign key
+  copyId         Int
+  copy           Copy       @relation(fields: [copyId], references: [id])
+  holdId         Int?       @unique
+  hold           Hold?      @relation(fields: [holdId], references: [id])
+  status         LoanStatus @default(ACTIVE)
+  borrowedAt     DateTime
+  dueAt          DateTime
+  returnedAt     DateTime?
+  checkedOutById Int        // plain staff user id, NOT a foreign key
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  @@index([userId, status])
+  @@index([status, dueAt])
+  @@index([copyId])
+}
+
 
 model CopyStatusHistory {
   id          Int         @id @default(autoincrement())

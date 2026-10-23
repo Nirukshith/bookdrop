@@ -44,6 +44,7 @@ All environment variables are validated at application boot-time using Joi schem
 | `PORT` | HTTP server port (the application binds to `0.0.0.0`) | `3000` | Optional (default: `3000`) |
 | `JWT_ACCESS_TTL` | Lifespan and validity duration for JWT access tokens | `15m` | Optional (default: `15m`) |
 | `REFRESH_TOKEN_TTL_DAYS` | Lifespan in days for opaque hashed refresh tokens | `7` | Optional (default: `7`) |
+| `LIBRARY_TIMEZONE` | IANA timezone name for local loan due-date calendar calculation | `Asia/Colombo` | Optional (default: `UTC`) |
 | `TRUST_PROXY` | Configures Express to trust `X-Forwarded-*` headers from upstream reverse proxies / load balancers for client IP resolution and rate limiting | `false` | Optional (default: `false`) |
 | `ALLOWED_ORIGINS` | Comma-separated list of allowed CORS origins for browser applications (empty by default, disallowing cross-origin browser requests) | `https://app.bookdrop.io,https://admin.bookdrop.io` | Optional (default: `""`) |
 | `SEED_ADMIN_PASSWORD` | Password for seeded demo Admin (development only) | `AdminPassword123!` | Optional |
@@ -857,14 +858,21 @@ Bookdrop is structured into distinct bounded contexts designed for seamless deco
 | `Hold` (Circulation) | `User` (Identity) | `Hold.userId: Int` | **Already decoupled.** Plain scalar integer reference; no cross-boundary database foreign key. |
 | `Hold` (Circulation) | `Book` (Catalog) | `Hold.bookId: Int` | **Already decoupled.** Plain scalar integer reference; no cross-boundary database foreign key. |
 | `Hold` (Circulation) | `Copy` (Circulation) | `Hold.copyId -> Copy.id` | **Intra-domain relationship.** Retains relational foreign key constraint within the Circulation database boundary. |
+| `Loan` (Circulation) | `User` (Identity) | `Loan.userId: Int` | **Already decoupled.** Plain scalar integer reference; no cross-boundary database foreign key. |
+| `Loan` (Circulation) | `Book` (Catalog) | `Loan.bookId: Int` | **Already decoupled.** Plain scalar integer reference; no cross-boundary database foreign key. |
+| `Loan` (Circulation) | `User` (Identity) | `Loan.checkedOutById: Int` | **Already decoupled.** Plain staff user ID reference; no cross-boundary database foreign key. |
+| `Loan` (Circulation) | `Copy` (Circulation) | `Loan.copyId -> Copy.id` | **Intra-domain relationship.** Retains relational foreign key constraint within the Circulation database boundary. |
+| `Loan` (Circulation) | `Hold` (Circulation) | `Loan.holdId -> Hold.id` | **Intra-domain relationship.** Optional 1-to-1 relationship linking a loan to its originating hold within Circulation. |
 
 > [!NOTE]
-> **PostgreSQL Partial Unique Indexes in Circulation (Holds)**:
-> Prisma schema does not natively represent conditional/partial SQL indexes with `WHERE` clauses. Therefore, two critical business invariants are managed via raw SQL in migration `20261021132047_add_holds_and_partial_indexes`:
+> **PostgreSQL Partial Unique Indexes in Circulation (Holds & Loans)**:
+> Prisma schema does not natively represent conditional/partial SQL indexes with `WHERE` clauses. Therefore, critical business invariants are managed via raw SQL in migrations:
 > - `hold_one_active_per_copy`: `CREATE UNIQUE INDEX hold_one_active_per_copy ON "Hold" ("copyId") WHERE status = 'ACTIVE';` (prevents double-allocation of a physical copy to multiple active holds)
 > - `hold_one_active_per_user_book`: `CREATE UNIQUE INDEX hold_one_active_per_user_book ON "Hold" ("userId", "bookId") WHERE status = 'ACTIVE';` (prevents a member from holding the same title multiple times concurrently, while allowing re-holds after resolution)
+> - `loan_one_active_per_copy`: `CREATE UNIQUE INDEX loan_one_active_per_copy ON "Loan" ("copyId") WHERE status = 'ACTIVE';` (guarantees a physical copy cannot be checked out to two patrons simultaneously)
 >
 > `prisma migrate dev` and `prisma migrate deploy` track these indexes through the migration history. Because Prisma only alters indexes declared in `schema.prisma`, it safely ignores these unmanaged partial indexes without generating drift or dropping them.
+
 
 ---
 
