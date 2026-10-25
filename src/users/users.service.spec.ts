@@ -203,4 +203,86 @@ describe('UsersService', () => {
       );
     });
   });
+
+  describe('IdentityPublicApi implementation', () => {
+    describe('findMemberByEmail', () => {
+      it('queries with trimmed and lowercased email and only selects public fields', async () => {
+        prismaMock.user.findUnique.mockResolvedValue({
+          id: 5,
+          name: 'Public Member',
+          email: 'member@example.com',
+          role: Role.MEMBER,
+        });
+
+        const member = await service.findMemberByEmail('  MEMBER@example.COM ');
+
+        expect(prismaMock.user.findUnique).toHaveBeenCalledWith({
+          where: { email: 'member@example.com' },
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            role: true,
+          },
+        });
+        expect(member).toEqual({
+          id: 5,
+          name: 'Public Member',
+          email: 'member@example.com',
+          role: Role.MEMBER,
+        });
+        expect((member as any).passwordHash).toBeUndefined();
+      });
+
+      it('returns null if member not found', async () => {
+        prismaMock.user.findUnique.mockResolvedValue(null);
+
+        const member = await service.findMemberByEmail('unknown@example.com');
+        expect(member).toBeNull();
+      });
+    });
+
+    describe('getMembersByIds', () => {
+      it('returns empty array without querying database if ids array is empty', async () => {
+        const result = await service.getMembersByIds([]);
+        expect(result).toEqual([]);
+        expect(prismaMock.user.findMany).not.toHaveBeenCalled();
+      });
+
+      it('queries users by ids and only selects public fields', async () => {
+        prismaMock.user.findMany.mockResolvedValue([
+          {
+            id: 1,
+            name: 'Alice',
+            email: 'alice@example.com',
+            role: Role.MEMBER,
+          },
+          {
+            id: 2,
+            name: 'Bob',
+            email: 'bob@example.com',
+            role: Role.LIBRARIAN,
+          },
+        ]);
+
+        const result = await service.getMembersByIds([1, 2]);
+
+        expect(prismaMock.user.findMany).toHaveBeenCalledWith({
+          where: {
+            id: { in: [1, 2] },
+          },
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            role: true,
+          },
+        });
+        expect(result).toHaveLength(2);
+        expect(result[0].id).toBe(1);
+        expect(result[1].id).toBe(2);
+        expect((result[0] as any).passwordHash).toBeUndefined();
+      });
+    });
+  });
 });
