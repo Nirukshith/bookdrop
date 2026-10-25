@@ -78,7 +78,11 @@ export class HoldsService implements HoldsPublicApi {
         }
 
         // 3. Run eligibility policy inside the transaction
-        await this.eligibilityPolicy.assertEligible(userId, bookId, tx);
+        await this.eligibilityPolicy.checkRequestEligibility(
+          userId,
+          bookId,
+          tx,
+        );
 
         // 4. Select one available copy using FOR UPDATE SKIP LOCKED
         const candidates = await tx.$queryRaw<{ id: number }[]>`

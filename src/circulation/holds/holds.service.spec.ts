@@ -51,6 +51,7 @@ describe('HoldsService (Step 5)', () => {
     };
 
     eligibilityPolicyMock = {
+      checkRequestEligibility: jest.fn().mockResolvedValue(undefined),
       assertEligible: jest.fn().mockResolvedValue(undefined),
     };
 
@@ -125,11 +126,9 @@ describe('HoldsService (Step 5)', () => {
       expect(booksServiceMock.exists).toHaveBeenCalledWith(bookId);
 
       // 3. Eligibility policy check with transaction
-      expect(eligibilityPolicyMock.assertEligible).toHaveBeenCalledWith(
-        userId,
-        bookId,
-        prismaMock,
-      );
+      expect(
+        eligibilityPolicyMock.checkRequestEligibility,
+      ).toHaveBeenCalledWith(userId, bookId, prismaMock);
 
       // 4. Raw SQL copy selection
       expect(prismaMock.$queryRaw).toHaveBeenCalled();
@@ -172,12 +171,14 @@ describe('HoldsService (Step 5)', () => {
         NotFoundException,
       );
 
-      expect(eligibilityPolicyMock.assertEligible).not.toHaveBeenCalled();
+      expect(
+        eligibilityPolicyMock.checkRequestEligibility,
+      ).not.toHaveBeenCalled();
       expect(eventEmitterMock.emit).not.toHaveBeenCalled();
     });
 
     it('throws domain error if member eligibility check fails', async () => {
-      eligibilityPolicyMock.assertEligible.mockRejectedValue(
+      eligibilityPolicyMock.checkRequestEligibility.mockRejectedValue(
         new MaxActiveHoldsReachedError(3),
       );
 
