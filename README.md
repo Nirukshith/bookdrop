@@ -627,8 +627,30 @@ stateDiagram-v2
 * **ACTIVE**: Hold successfully reserved against an available copy with a 24-hour pickup deadline (`expiresAt = now() + 24h`).
 * **FULFILLED**: Patron visits the library and checks out the reserved copy.
 * **CANCELLED**: Patron self-cancels (`cancelMyHold`) or staff administratively cancels with an audit note (`cancelHold`).
-* **EXPIRED**: Pickup deadline elapses without collection. Automated background cron (`expireDueHolds`) expires the hold and returns the copy to `AVAILABLE`.
 * All resolved states (`FULFILLED`, `CANCELLED`, `EXPIRED`) are immutable terminal states.
+
+---
+
+### 3. Loan State Machine & Lifecycle (Physical Copy Loans)
+
+Loans track physical book copies borrowed by patrons. Loans originate either from an active hold pickup (`confirmPickup`) or a direct walk-in checkout (`checkoutCopy`).
+
+```mermaid
+stateDiagram-v2
+    [*] --> ACTIVE : confirmPickup (source: PICKUP) / checkoutCopy (source: WALK_IN)
+
+    ACTIVE --> RETURNED : [Staff] Return book in good condition (Stage 7)
+    ACTIVE --> LOST : [Staff] Copy declared lost / unreturned (Stage 7)
+
+    RETURNED --> [*] : Terminal state (copy returns to AVAILABLE)
+    LOST --> [*] : Terminal state (copy transitions to LOST, fine assessed)
+```
+
+* **ACTIVE**: Loan is active and in the patron's possession. Due date is set 14 calendar days out at `23:59:59.999` in the library's local timezone (`LIBRARY_TIMEZONE`).
+* **Dynamic Overdue Evaluation**: There is no database status update for overdue loans. `isOverdue` is calculated dynamically on query (`now > dueAt && status === 'ACTIVE'`), alongside dynamic computation of `daysRemaining` and `daysLate`.
+* **RETURNED**: The patron returns the physical book copy (Stage 7).
+* **LOST**: The physical copy is lost or unreturned (Stage 7).
+* Terminal states (`RETURNED`, `LOST`) release the copy or update its condition.
 
 ---
 
@@ -738,106 +760,205 @@ query GetAllHolds {
 
 ---
 
-## Architectural Boundaries & Future Service Split
+## Circulation Desk Workflows (Step 5 & 6)
 
-Bookdrop is structured into three distinct bounded contexts designed for future decomposition into standalone microservices:
+### 1. Pickup Desk Flow (`confirmPickup`)
 
-1. **Identity** (`src/users`, `src/auth`):
-   - Patron and staff accounts, credentials, Argon2id passwords, JWT access tokens, rotating opaque refresh tokens, and RBAC roles (`MEMBER`, `LIBRARIAN`, `ADMIN`).
-2. **Catalog** (`src/books`):
-   - Bibliographic catalog metadata: Books, Authors, Categories, ISBNs, and summary counters.
-3. **Circulation** (`src/circulation/copies`, `src/circulation/holds`):
-   - Physical copy inventory, barcode tracking, copy lifecycle state machine, remote hold requests, member eligibility rules, pickup deadlines, and upcoming loan/waitlist features.
-
-### Boundary Import Rules (CI Enforced)
-
-Cross-domain boundary integrity is strictly enforced at build-time and in CI via ESLint `no-restricted-imports` in [`.eslintrc.js`](.eslintrc.js):
-* **Circulation** must never import Catalog (`src/books/*`) or Identity (`src/users/*`, `src/auth/*`) internal files. All cross-boundary interactions occur strictly via:
-  - Public module interfaces (e.g. `BooksModule`, `UsersModule`)
-  - Shared domain event contracts (`src/contracts/events.ts`)
-  - Plain unconstrained scalar IDs (`userId: Int`, `bookId: Int`)
-  - Inverted ports / interfaces (e.g., `ActiveLoanCountPort`, `UnpaidFinesPort`)
-* **Catalog** and **Identity** must never import Circulation internal files (`src/circulation/*`).
-* Boundary violations cause `npm run lint` to fail with exit code 1, which blocks the CI pipeline in `.github/workflows/ci.yml`.
-
-### Cross-Area Foreign Keys (To Remove When Services Are Split)
-
-During the modular monolith phase, minimal foreign keys maintain relational referential integrity. When decomposed into standalone microservices with independent databases, these constraints will be removed:
-## Physical Inventory & Circulation (Copies)
-
-The Circulation domain manages the lifecycle, tracking, and availability of physical library book copies.
-
-### Copy State Machine
-
-Copies follow strict state transition rules. Transitions are split into **Manual Staff Actions** (Librarians and Admins) and **System-Only Workflows** (automated hold/loan engines).
+The pickup desk flow handles fulfilling a reserved physical copy when the patron arrives at the library desk.
 
 ```mermaid
-stateDiagram-v2
-    [*] --> AVAILABLE: addCopy / addCopies
+sequenceDiagram
+    autonumber
+    actor Patron as Member Patron
+    actor Staff as Desk Staff (Librarian/Admin)
+    participant API as GraphQL API
+    participant Lock as PostgreSQL Advisory Lock
+    participant DB as PostgreSQL DB
+    participant Events as Domain Events
 
-    state "AVAILABLE" as AVAILABLE
-    state "LOST" as LOST
-    state "DAMAGED" as DAMAGED
-    state "ON_HOLD (System Only)" as ON_HOLD
-    state "BORROWED (System Only)" as BORROWED
-    state "RETIRED (Terminal)" as RETIRED
-
-    %% Manual Staff Transitions
-    AVAILABLE --> LOST: Manual (requires reason)
-    AVAILABLE --> DAMAGED: Manual (requires reason)
-    LOST --> AVAILABLE: Manual (Found)
-    DAMAGED --> AVAILABLE: Manual (Repaired)
-    LOST --> DAMAGED: Manual (requires reason)
-    DAMAGED --> LOST: Manual (requires reason)
-
-    %% System-Only Transitions
-    AVAILABLE --> ON_HOLD: System (Hold placed)
-    ON_HOLD --> BORROWED: System (Checkout)
-    BORROWED --> AVAILABLE: System (Return)
-    ON_HOLD --> AVAILABLE: System (Hold cancelled/expired)
-    BORROWED --> LOST: System / Manual (Declared lost)
-
-    %% Soft Retirement
-    AVAILABLE --> RETIRED: retireCopy (soft-retire)
-    LOST --> RETIRED: retireCopy (soft-retire)
-    DAMAGED --> RETIRED: retireCopy (soft-retire)
+    Patron->>Staff: Arrives at desk to collect hold
+    Staff->>API: Query pickupDeskHolds(memberEmail, copyBarcode)
+    API-->>Staff: Active holds list with bookTitle & memberName (batched via DataLoaders)
+    Staff->>API: Mutation confirmPickup(holdId, copyBarcode)
+    API->>DB: Read Hold (unlocked) to discover member userId
+    API->>Lock: Acquire pg_advisory_xact_lock(3000, userId)
+    API->>DB: Re-read Hold FOR UPDATE
+    alt Hold is EXPIRED (expiresAt <= now)
+        API->>DB: Roll back transaction
+        API->>DB: Autonomous transaction: expireHold(holdId) -> EXPIRED, copy -> AVAILABLE
+        API-->>Staff: Error: HOLD_EXPIRED (State converged)
+    else Barcode does not match hold copy
+        API-->>Staff: Error: COPY_MISMATCH (Hold remains ACTIVE)
+    else Member active loans count >= MAX_ACTIVE_LOANS (3)
+        API-->>Staff: Error: LOAN_LIMIT_REACHED (Hold remains ACTIVE for later pickup)
+    else Validation passes
+        API->>DB: HoldsPublicApi.fulfillHold (Hold -> FULFILLED)
+        API->>DB: CopiesService.transitionStatus (Copy ON_HOLD -> BORROWED)
+        API->>DB: Insert Loan (status: ACTIVE, source: PICKUP, dueAt: 14d end-of-day)
+        API->>DB: Commit Transaction
+        API->>Events: Emit hold.fulfilled(holdId, loanId)
+        API->>Events: Emit loan.started(loanId, userId, bookId, copyId, borrowedAt, dueAt, PICKUP)
+        API-->>Staff: Return Loan payload (bookTitle, dueAt, daysRemaining)
+    end
 ```
 
-> [!NOTE]
-> * **Atomic Compare-and-Set (CAS)**: All status changes execute via `transitionStatus(copyId, allowedFrom, to, meta)` with a conditional update (`WHERE id = copyId AND status IN (allowedFrom) AND retiredAt IS NULL`), guaranteeing race-condition safety.
-> * **Soft-Retirement**: Copies are never hard-deleted because historic loans and holds depend on copy records. Retiring a copy sets `retiredAt: Date`. Retired copies are excluded from availability counts and hidden from default queries.
+### 2. Walk-In Checkout Flow (`checkoutCopy`)
+
+The walk-in checkout flow lends an available physical shelf copy directly to a library member without a prior hold.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Patron as Walk-in Member
+    actor Staff as Desk Staff (Librarian/Admin)
+    participant API as GraphQL API
+    participant Lock as PostgreSQL Advisory Lock
+    participant DB as PostgreSQL DB
+    participant Events as Domain Events
+
+    Patron->>Staff: Brings available shelf copy to circulation desk
+    Staff->>API: Mutation checkoutCopy(memberEmail, copyBarcode)
+    API->>API: IdentityPublicApi.findMemberByEmail(memberEmail)
+    API->>Lock: Acquire pg_advisory_xact_lock(3000, memberId)
+    API->>DB: Read Copy FOR UPDATE by barcode
+    alt Member not found
+        API-->>Staff: Error: MEMBER_NOT_FOUND
+    else Copy barcode not found
+        API-->>Staff: Error: COPY_NOT_FOUND
+    else Copy is retired
+        API-->>Staff: Error: COPY_NOT_AVAILABLE
+    else Copy is ON_HOLD for another patron
+        API-->>Staff: Error: COPY_ON_HOLD
+    else Copy is BORROWED, LOST, or DAMAGED
+        API-->>Staff: Error: COPY_NOT_AVAILABLE
+    else Member already has an active hold on this book
+        API-->>Staff: Error: HOLD_EXISTS_USE_PICKUP
+    else Member active loans >= MAX_ACTIVE_LOANS (3)
+        API-->>Staff: Error: LOAN_LIMIT_REACHED
+    else Validation passes
+        API->>DB: CopiesService.transitionStatus (Copy AVAILABLE -> BORROWED)
+        API->>DB: Insert Loan (holdId: null, status: ACTIVE, source: WALK_IN, dueAt: 14d end-of-day)
+        API->>DB: Commit Transaction
+        API->>Events: Emit loan.started(loanId, userId, bookId, copyId, borrowedAt, dueAt, WALK_IN)
+        API-->>Staff: Return Loan payload
+    end
+```
 
 ---
 
-### GraphQL Operations (Physical Inventory)
+## Due-Date Rules & Timezone Configuration
 
-| Operation | Type | Authorization | Description |
-| :--- | :--- | :--- | :--- |
-| `Book.availableCopies` | Field Resolver | **Public** | Count of active, non-retired `AVAILABLE` copies. Batched via `DataLoader` (1 SQL query per batch, eliminating N+1). |
-| `Book.copyCounts` | Field Resolver | **LIBRARIAN, ADMIN** | Full inventory breakdown (`total`, `available`, `onHold`, `borrowed`, `lost`, `damaged`, `retired`). Guarded at field level. |
-| `copies(bookId?, status?, includeRetired?, skip?, take?)` | Query | **LIBRARIAN, ADMIN** | Filtered pagination of copies. Retired copies hidden by default unless `includeRetired: true`. |
-| `copy(id: Int!)` | Query | **LIBRARIAN, ADMIN** | Find copy by numeric primary key. |
-| `copyByBarcode(barcode: String!)` | Query | **LIBRARIAN, ADMIN** | Lookup copy by standardized barcode (e.g., used at the circulation desk scanner). |
-| `copyStatusHistory(copyId: Int!)` | Query | **LIBRARIAN, ADMIN** | Audit trail of all lifecycle changes for a copy in reverse chronological order. |
-| `addCopy(input: AddCopyInput!)` | Mutation | **LIBRARIAN, ADMIN** | Add single copy with custom or auto-generated sequence barcode (`BD-000001`). |
-| `addCopies(bookId: Int!, quantity: Int!, shelfLocation?: String)` | Mutation | **LIBRARIAN, ADMIN** | Batch add 1–50 copies with auto-generated sequence barcodes in a single atomic transaction. |
-| `updateCopy(id: Int!, input: UpdateCopyInput!)` | Mutation | **LIBRARIAN, ADMIN** | Update physical metadata (`shelfLocation`, `notes`). Retired copies cannot be updated. |
-| `changeCopyStatus(id: Int!, to: CopyStatus!, reason?: String)` | Mutation | **LIBRARIAN, ADMIN** | Perform allowed manual transition. Reasons required for `LOST` and `DAMAGED`. |
-| `retireCopy(id: Int!, reason?: String)` | Mutation | **LIBRARIAN, ADMIN** | Permanently soft-retire copy from circulation. |
+### Due-Date Rule
+* **14 Calendar Days**: Loans have a standard lending duration of 14 calendar days from the checkout date.
+* **End-of-Local-Day**: Due dates expire strictly at `23:59:59.999` local time on the 14th calendar day.
+* **Pure Computation**: Implemented via `computeDueDate(borrowedAt, libraryTimezone, loanDays = 14)` in [`src/config/library-rules.ts`](src/config/library-rules.ts) using Luxon:
+  ```typescript
+  DateTime.fromJSDate(borrowedAt, { zone: libraryTimezone })
+    .plus({ days: loanDays })
+    .endOf('day')
+    .toJSDate();
+  ```
+* **DST and Leap Year Safety**: Luxon calendar math handles Daylight Saving Time shifts (e.g., 23-hour or 25-hour days) and leap years deterministically, returning the exact end of local day in UTC.
+
+### Timezone Setting (`LIBRARY_TIMEZONE`)
+* Configured via the `LIBRARY_TIMEZONE` environment variable (e.g., `America/New_York`, `Asia/Colombo`, `Europe/London`).
+* Validated on startup via Joi in [`src/config/env.validation.ts`](src/config/env.validation.ts) using `Intl.DateTimeFormat` validation.
+* Defaults to `UTC` if unset.
+
+---
+
+## GraphQL Operations & RBAC Matrix (Circulation Desk & Loans)
+
+| Operation | Type | Allowed Roles | Rate Limit | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `pickupDeskHolds(memberEmail?, copyBarcode?)` | Query | **LIBRARIAN, ADMIN** | 20 req/min | Look up active holds ready for collection at the desk. Resolves `bookTitle` and `memberName` via batch DataLoaders (1 query each, 0 N+1). |
+| `confirmPickup(holdId: Int!, copyBarcode: String!)` | Mutation | **LIBRARIAN, ADMIN** | 20 req/min | Fulfills an active hold and creates an ACTIVE loan in a single atomic transaction. Self-heals expired holds upon rollback. |
+| `checkoutCopy(memberEmail: String!, copyBarcode: String!)` | Mutation | **LIBRARIAN, ADMIN** | 20 req/min | Lends an available physical copy to a walk-in member (`holdId = null`). Enforces copy status guards and patron quota. |
+| `loans(filter?, pagination?)` | Query | **LIBRARIAN, ADMIN** | Default (100/min) | Staff listing of loans with filters (`status`, `userId`, `bookId`, `overdue`, `dueBefore`) and cursor pagination. |
+| `loan(id: Int!)` | Query | **LIBRARIAN, ADMIN** | Default (100/min) | Staff single-loan lookup by primary key ID. |
+| `myLoans(status?)` | Query | **MEMBER** | Default (100/min) | Patron query returning only their own loans. Physical barcodes are redacted (`copyBarcode = null`). Computes `isOverdue`, `daysRemaining`, and `daysLate`. |
 
 ---
 
-### In-Process Domain Events
+## Stable Error Codes
 
-`CopiesService` publishes strongly-typed domain events via `@nestjs/event-emitter`. Events are dispatched **strictly after** database transactions successfully commit to prevent phantom events.
+All domain errors map to stable, machine-readable codes in GraphQL `error.extensions.code`. Error messages are scrubbed to never leak internal implementation details:
 
-| Event Name | Class | Payload Contract | Trigger |
-| :--- | :--- | :--- | :--- |
-| `copy.created` | `CopyCreatedEvent` | `{ copyId: number, bookId: number, barcode: string, status: CopyStatus, shelfLocation: string \| null, actorId: number \| null, occurredAt: Date }` | Published when a copy is created individually or in batch. |
-| `copy.status_changed` | `CopyStatusChangedEvent` | `{ copyId: number, bookId: number, fromStatus: CopyStatus, toStatus: CopyStatus, reason: string \| null, actorId: number \| null, occurredAt: Date }` | Published on successful atomic status transitions. |
-| `copy.retired` | `CopyRetiredEvent` | `{ copyId: number, bookId: number, reason: string, retiredAt: Date, actorId: number \| null, occurredAt: Date }` | Published when a copy is soft-retired. |
+| Error Code | HTTP Status | Trigger Condition |
+| :--- | :--- | :--- |
+| `HOLD_NOT_FOUND` | 200 (GraphQL error) | Specified hold ID does not exist in the database. |
+| `HOLD_NOT_ACTIVE` | 200 (GraphQL error) | Specified hold is already FULFILLED, CANCELLED, or EXPIRED. |
+| `HOLD_EXPIRED` | 200 (GraphQL error) | Hold pickup deadline (`expiresAt <= now`) has elapsed. Triggers autonomous convergence to EXPIRED. |
+| `COPY_MISMATCH` | 200 (GraphQL error) | Scanned barcode at pickup desk does not match the copy allocated to the hold. |
+| `COPY_NOT_FOUND` | 200 (GraphQL error) | Scanned barcode does not match any physical copy record. |
+| `COPY_NOT_AVAILABLE` | 200 (GraphQL error) | Copy is retired, BORROWED, LOST, or DAMAGED. |
+| `COPY_ON_HOLD` | 200 (GraphQL error) | Walk-in checkout attempted on a copy currently reserved (`ON_HOLD`) for another patron. |
+| `HOLD_EXISTS_USE_PICKUP` | 200 (GraphQL error) | Walk-in checkout attempted by a member who already holds the same book (must use pickup desk). |
+| `MEMBER_NOT_FOUND` | 200 (GraphQL error) | Member email or ID was not found in the Identity area. |
+| `LOAN_LIMIT_REACHED` | 200 (GraphQL error) | Member has reached the maximum quota of 3 active loans (`MAX_ACTIVE_LOANS = 3`). |
+| `UNPAID_FINES` | 200 (GraphQL error) | Member has outstanding unpaid fines (placeholder interface for Stage 7). |
+| `FORBIDDEN` | 200 (GraphQL error) | Authenticated user lacks required role (e.g. MEMBER calling staff mutations). |
+| `UNAUTHENTICATED` | 200 (GraphQL error) | Request lacks a valid JWT bearer token. |
 
 ---
+
+### Sample GraphQL Operations (Desk Circulation)
+
+#### 1. Desk Holds Lookup (Staff)
+```graphql
+query PickupDeskHolds {
+  pickupDeskHolds(memberEmail: "alice@example.com") {
+    id
+    memberName
+    bookTitle
+    copyBarcode
+    pickupDeadline
+  }
+}
+```
+
+#### 2. Confirm Pickup (Staff)
+```graphql
+mutation ConfirmPickup {
+  confirmPickup(holdId: 10, copyBarcode: "BD-000042") {
+    id
+    status
+    borrowedAt
+    dueAt
+    bookTitle
+    daysRemaining
+  }
+}
+```
+
+#### 3. Walk-In Checkout (Staff)
+```graphql
+mutation CheckoutCopy {
+  checkoutCopy(memberEmail: "alice@example.com", copyBarcode: "BD-000055") {
+    id
+    status
+    dueAt
+    copyBarcode
+    isOverdue
+  }
+}
+```
+
+#### 4. Query My Loans (Member)
+```graphql
+query MyLoans {
+  myLoans(status: ACTIVE) {
+    id
+    bookTitle
+    borrowedAt
+    dueAt
+    isOverdue
+    daysRemaining
+    daysLate
+    copyBarcode # Redacted to null for patrons
+  }
+}
+```
 
 ## Architectural Boundaries & Microservice Readiness
 
@@ -890,26 +1011,27 @@ Bookdrop implements an event-driven architecture using asynchronous domain event
 | `hold.created` | `hold` | Active hold created for patron | `{ holdId: number, userId: number, bookId: number, copyId: number, expiresAt: Date, createdAt: Date }` |
 | `hold.cancelled` | `hold` | Hold cancelled by patron or staff | `{ holdId: number, cancelledBy: 'member' \| 'staff', reason: string \| null, userId: number, bookId: number, copyId: number, cancelledById: number \| null, cancelledAt: Date }` |
 | `hold.expired` | `hold` | Pickup deadline expired; copy released | `{ holdId: number, userId: number, bookId: number, copyId: number, expiredAt: Date }` |
+| `hold.fulfilled` | `circulation` | Hold fulfilled upon desk pickup collection | `{ holdId: number, loanId: number }` |
+| `loan.started` | `loan` | Active loan started via pickup or walk-in checkout | `{ loanId: number, userId: number, bookId: number, copyId: number, borrowedAt: Date, dueAt: Date, source: 'PICKUP' \| 'WALK_IN' }` |
 
 ### Observability & Subscriber
 
 A centralized subscriber ([`src/common/events/domain-events.subscriber.ts`](src/common/events/domain-events.subscriber.ts)) listens to domain events using wildcard patterns:
 - `@OnEvent('copy.*')`
 - `@OnEvent('hold.*')`
+- `@OnEvent('loan.*')`
 
 All received events are formatted as structured JSON via [`JsonLogger`](src/common/logger/json-logger.ts) including standard timestamps, log levels, event domain names, and payloads. This provides seamless out-of-the-box ingestion for log aggregation tools (e.g., Datadog, ELK, CloudWatch).
-| `Copy` (Circulation) | `Book` (Catalog) | `Copy.bookId -> Book.id` | **To remove when services are split.** Will become an unconstrained scalar `bookId` validated via Catalog gRPC/API. |
-| `CopyStatusHistory` (Circulation) | `User` (Identity) | `changedById: Int?` | **Already decoupled.** Deliberately designed as a plain scalar integer ID without a database foreign key constraint. |
 
 ---
 
 ## Security Hardening
 
 * **Helmet**: Sets defensive HTTP headers (`X-Content-Type-Options`, `X-Frame-Options`, `Strict-Transport-Security`). In development, Content Security Policy (CSP) is relaxed so the Apollo Sandbox UI loads properly; in production, strict CSP is enforced.
-* **Rate Limiting (`@nestjs/throttler`)**: GraphQL-aware throttling with default quota of 100 requests/minute, and strict throttling (10 requests/minute) on sensitive endpoints (`login`, `register`, `refreshTokens`) to block brute-force credential stuffing.
+* **Rate Limiting (`@nestjs/throttler`)**: GraphQL-aware throttling with default quota of 100 requests/minute, strict throttling (10 requests/minute) on sensitive authentication endpoints (`login`, `register`, `refreshTokens`), and staff desk throttling (20 requests/minute) on circulation mutations (`confirmPickup`, `checkoutCopy`).
 * **Query Depth Limiting**: Protects against denial-of-service query nesting attacks by capping GraphQL AST depth at 5 (`depthLimit(5)`).
 * **Production Protection**: GraphQL Introspection and Playground are automatically disabled when `NODE_ENV=production`.
-* **Field-Level Access Control**: Sensitive fields (`Book.copyCounts`) are guarded independently at the GraphQL field resolver level using `@UseGuards(RolesGuard)` and `fieldResolverEnhancers: ['guards']`.
+* **Field-Level Access Control**: Sensitive fields (`Book.copyCounts`, `Loan.copyBarcode`) are guarded independently at the GraphQL field resolver level using `@UseGuards(RolesGuard)` and field resolvers.
 
 ---
 
@@ -919,22 +1041,19 @@ All received events are formatted as structured JSON via [`JsonLogger`](src/comm
 ```bash
 npm test
 ```
-*Executes 272 unit tests across 21 test suites covering domain state machines, eligibility policies, clock deadlines, services, loaders, guards, and validators.*
-*Executes 187 unit tests across state machines, domain events, services, resolvers, guards, and environment validation schemas.*
+*Executes 333 unit tests across 25 test suites covering pure due-date calculation, domain state machines, eligibility policies, clock deadlines, services, loaders, guards, and validators.*
 
 ### Run End-to-End (E2E) Tests
 ```bash
 npm run test:e2e
 ```
-*Executes 81 integration tests across 7 suites against the real PostgreSQL container (Holds lifecycle, 20-member copy contention, advisory locks, CAS race conditions, database partial unique indexes, Auth, RBAC, Catalog, Security headers, Rate limiting, Depth limits).*
-*Executes 55 integration tests against the real PostgreSQL container (Auth, RBAC, Catalog, Physical Inventory, DataLoader batching, CAS race condition verification, Security headers, Rate limiting).*
+*Executes 101 integration tests across 8 suites sequentially against the real PostgreSQL container (Loans lifecycle, pickup desk, walk-in checkouts, advisory lock concurrency, 50-iteration loop tests, holds lifecycle, 20-member copy contention, CAS race conditions, database partial unique indexes, Auth, RBAC, Catalog, Security headers, Rate limiting, Depth limits).*
 
 ### Run Code Linter & Boundary Check
 ```bash
 npm run lint
 ```
-*Enforces TypeScript formatting, code quality, and cross-boundary architectural import restrictions.*
-*Enforces ESLint domain boundary rules across modules.*
+*Enforces TypeScript formatting, code quality, and strict ESLint domain boundary rules across modules.*
 
 ### Build Production Bundle
 ```bash
