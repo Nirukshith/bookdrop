@@ -29,4 +29,16 @@ export class DomainEventsSubscriber {
       DomainEventsSubscriber.name,
     );
   }
+
+  @OnEvent('loan.*')
+  handleLoanEvent(event: any): void {
+    this.logger.log(
+      {
+        domain: 'loan',
+        eventName: event?.eventName ?? event?.constructor?.name ?? 'loan.*',
+        payload: event,
+      },
+      DomainEventsSubscriber.name,
+    );
+  }
 }

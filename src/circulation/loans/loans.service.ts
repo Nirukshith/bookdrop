@@ -35,7 +35,8 @@ import {
   MemberNotFoundError,
 } from './errors';
 import { PaginationArgs, StaffLoanFilter } from './dto/loan-query.dto';
-import { LoanCreatedEvent } from './events/loan-created.event';
+import { HoldFulfilledEvent } from '../holds/events/hold-fulfilled.event';
+import { LoanStartedEvent } from './events/loan-started.event';
 import { LoansPublicApi } from './loans-public-api.interface';
 
 export const HOLD_ADVISORY_NAMESPACE = 4201;
@@ -229,17 +230,29 @@ export class LoansService implements LoansPublicApi {
       throw error;
     }
 
-    // 9. Emit domain event post-commit
+    // 9. Emit domain events post-commit
     this.eventEmitter.emit(
-      LoanCreatedEvent.EVENT_NAME,
-      new LoanCreatedEvent(
+      HoldFulfilledEvent.EVENT_NAME,
+      new HoldFulfilledEvent(
+        holdId,
+        result.loan.id,
+        result.userId,
+        result.bookId,
+        result.copyId,
+        result.borrowedAt,
+      ),
+    );
+
+    this.eventEmitter.emit(
+      LoanStartedEvent.EVENT_NAME,
+      new LoanStartedEvent(
         result.loan.id,
         result.userId,
         result.copyId,
         result.bookId,
         result.borrowedAt,
         result.dueAt,
-        'HOLD',
+        'PICKUP',
       ),
     );
 
@@ -375,8 +388,8 @@ export class LoansService implements LoansPublicApi {
 
     // Emit domain event post-commit
     this.eventEmitter.emit(
-      LoanCreatedEvent.EVENT_NAME,
-      new LoanCreatedEvent(
+      LoanStartedEvent.EVENT_NAME,
+      new LoanStartedEvent(
         result.loan.id,
         result.userId,
         result.copyId,

@@ -21,7 +21,8 @@ import {
   LoanNotFoundError,
   MemberNotFoundError,
 } from './errors';
-import { LoanCreatedEvent } from './events/loan-created.event';
+import { HoldFulfilledEvent } from '../holds/events/hold-fulfilled.event';
+import { LoanStartedEvent } from './events/loan-started.event';
 
 describe('LoansService (Step 5)', () => {
   let service: LoansService;
@@ -239,15 +240,23 @@ describe('LoansService (Step 5)', () => {
         include: { copy: true },
       });
 
-      // Verify loan.created event emitted post-commit
+      // Verify hold.fulfilled and loan.started events emitted post-commit
       expect(eventEmitterMock.emit).toHaveBeenCalledWith(
-        LoanCreatedEvent.EVENT_NAME,
+        HoldFulfilledEvent.EVENT_NAME,
+        expect.objectContaining({
+          holdId,
+          loanId: 1,
+        }),
+      );
+
+      expect(eventEmitterMock.emit).toHaveBeenCalledWith(
+        LoanStartedEvent.EVENT_NAME,
         expect.objectContaining({
           loanId: 1,
           userId: memberId,
           copyId,
           bookId,
-          source: 'HOLD',
+          source: 'PICKUP',
         }),
       );
     });
@@ -401,9 +410,9 @@ describe('LoansService (Step 5)', () => {
         include: { copy: true },
       });
 
-      // Verify event emitted post-commit with source = 'WALK_IN'
+      // Verify loan.started event emitted post-commit with source = 'WALK_IN'
       expect(eventEmitterMock.emit).toHaveBeenCalledWith(
-        LoanCreatedEvent.EVENT_NAME,
+        LoanStartedEvent.EVENT_NAME,
         expect.objectContaining({
           loanId: 2,
           userId: memberId,
