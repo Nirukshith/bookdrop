@@ -16,6 +16,7 @@ import { AuthModule } from './auth/auth.module';
 import { HealthModule } from './health/health.module';
 import { CopiesModule } from './circulation/copies/copies.module';
 import { HoldsModule } from './circulation/holds/holds.module';
+import { LoansModule } from './circulation/loans/loans.module';
 import { ClockModule } from './common/clock/clock.module';
 import { DomainEventsModule } from './common/events/domain-events.module';
 import { GqlThrottlerGuard } from './auth/guards/gql-throttler.guard';
@@ -108,6 +109,7 @@ import { envValidationSchema } from './config/env.validation';
     AuthModule,
     HealthModule,
     CopiesModule,
+    LoansModule,
   ],
   controllers: [AppController],
   providers: [
