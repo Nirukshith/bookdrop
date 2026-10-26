@@ -136,6 +136,48 @@ input HoldsPaginationInput {
   take: Int = 20
 }
 
+type Loan {
+  bookId: Int!
+  bookTitle: String!
+  borrowedAt: DateTime!
+  checkedOutById: Int!
+  copyBarcode: String
+  copyId: Int!
+  createdAt: DateTime!
+  daysLate: Int!
+  daysRemaining: Int!
+  dueAt: DateTime!
+  holdId: Int
+  id: ID!
+  isOverdue: Boolean!
+  notes: String
+  returnedAt: DateTime
+  returnedById: Int
+  status: LoanStatus!
+  updatedAt: DateTime!
+  userId: Int!
+}
+
+input LoanFilterInput {
+  bookId: Int
+  dueBefore: DateTime
+  overdue: Boolean
+  status: LoanStatus
+  userId: Int
+}
+
+input LoanPaginationInput {
+  skip: Int = 0
+  take: Int = 20
+}
+
+"""Lifecycle statuses for physical copy loans"""
+enum LoanStatus {
+  ACTIVE
+  LOST
+  RETURNED
+}
+
 input LoginInput {
   email: String!
   password: String!
@@ -147,6 +189,8 @@ type Mutation {
   cancelHold(holdId: Int!, reason: String): Hold!
   cancelMyHold(holdId: Int!): Hold!
   changeCopyStatus(id: Int!, reason: String, to: CopyStatus!): Copy!
+  checkoutCopy(copyBarcode: String!, memberEmail: String!): Loan!
+  confirmPickup(copyBarcode: String!, holdId: Int!): Loan!
   createBook(input: CreateBookInput!): Book!
   login(input: LoginInput!): AuthPayload!
   logout(refreshToken: String!): Boolean!
@@ -159,6 +203,26 @@ type Mutation {
   updateUserRole(role: Role!, userId: Int!): User!
 }
 
+type PickupDeskHold {
+  bookId: Int!
+
+  """Book title resolved via Catalog DataLoader"""
+  bookTitle: String!
+
+  """Physical copy barcode to verify at desk"""
+  copyBarcode: String!
+  copyId: Int!
+  createdAt: DateTime!
+  id: ID!
+
+  """Member name resolved via Identity DataLoader"""
+  memberName: String!
+
+  """Pickup deadline in UTC"""
+  pickupDeadline: DateTime!
+  userId: Int!
+}
+
 type Query {
   book(id: Int!): Book
   books(authorId: Int, categoryId: Int, search: String, skip: Int = 0, take: Int = 10): [Book!]!
@@ -168,8 +232,12 @@ type Query {
   copyStatusHistory(copyId: Int!): [CopyStatusHistory!]!
   hold(id: Int!): Hold!
   holds(filter: HoldFilterInput, pagination: HoldsPaginationInput): [Hold!]!
+  loan(id: Int!): Loan!
+  loans(filter: LoanFilterInput, pagination: LoanPaginationInput): [Loan!]!
   me: User!
   myHolds(status: HoldStatus): [Hold!]!
+  myLoans(status: LoanStatus): [Loan!]!
+  pickupDeskHolds(copyBarcode: String, memberEmail: String): [PickupDeskHold!]!
   users: [User!]!
 }
 

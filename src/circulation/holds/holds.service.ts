@@ -488,16 +488,18 @@ export class HoldsService implements HoldsPublicApi {
       include: { copy: true },
     });
 
-    this.eventEmitter.emit(
-      HoldFulfilledEvent.EVENT_NAME,
-      new HoldFulfilledEvent(
-        fulfilledHold.id,
-        fulfilledHold.userId,
-        fulfilledHold.bookId,
-        fulfilledHold.copyId,
-        now,
-      ),
-    );
+    if (!tx) {
+      this.eventEmitter.emit(
+        HoldFulfilledEvent.EVENT_NAME,
+        new HoldFulfilledEvent(
+          fulfilledHold.id,
+          fulfilledHold.userId,
+          fulfilledHold.bookId,
+          fulfilledHold.copyId,
+          now,
+        ),
+      );
+    }
 
     return fulfilledHold;
   }

@@ -47,7 +47,7 @@ export interface HoldExpiredPayload {
 
 export interface HoldFulfilledPayload {
   holdId: number;
-  loanId: number;
+  loanId?: number;
   userId?: number;
   bookId?: number;
   copyId?: number;

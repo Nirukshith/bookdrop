@@ -233,14 +233,7 @@ export class LoansService implements LoansPublicApi {
     // 9. Emit domain events post-commit
     this.eventEmitter.emit(
       HoldFulfilledEvent.EVENT_NAME,
-      new HoldFulfilledEvent(
-        holdId,
-        result.loan.id,
-        result.userId,
-        result.bookId,
-        result.copyId,
-        result.borrowedAt,
-      ),
+      new HoldFulfilledEvent(holdId, result.loan.id),
     );
 
     this.eventEmitter.emit(
@@ -248,8 +241,8 @@ export class LoansService implements LoansPublicApi {
       new LoanStartedEvent(
         result.loan.id,
         result.userId,
-        result.copyId,
         result.bookId,
+        result.copyId,
         result.borrowedAt,
         result.dueAt,
         'PICKUP',
@@ -392,8 +385,8 @@ export class LoansService implements LoansPublicApi {
       new LoanStartedEvent(
         result.loan.id,
         result.userId,
-        result.copyId,
         result.bookId,
+        result.copyId,
         result.borrowedAt,
         result.dueAt,
         'WALK_IN',
