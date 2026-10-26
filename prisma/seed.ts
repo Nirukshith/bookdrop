@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import * as argon2 from 'argon2';
-import { PrismaClient, CopyStatus, Role, HoldStatus, HoldSource } from '@prisma/client';
+import { PrismaClient, CopyStatus, Role, HoldStatus, HoldSource, LoanStatus } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
@@ -23,6 +23,7 @@ async function main() {
 
   if (!isProduction) {
     // Clear existing records in reverse dependency order for repeatability in development/test
+    await prisma.loan.deleteMany();
     await prisma.hold.deleteMany();
     await prisma.copyStatusHistory.deleteMany();
     await prisma.copy.deleteMany();
@@ -713,6 +714,142 @@ async function main() {
       }
 
       console.log('✅ Seeded 3 demo holds (ACTIVE, EXPIRED, CANCELLED) with consistent copy statuses.');
+
+      // 6. Seed Demo Loans for Demo Member (ACTIVE, OVERDUE, RETURNED)
+      console.log('📚 Seeding demo loans for demo member...');
+      const demoLibrarian = await prisma.user.findUnique({
+        where: { email: librarianEmail },
+      });
+      const staffId = demoLibrarian?.id ?? demoMember.id;
+
+      const [bookHobbit, bookFoundation, bookFrankenstein] = await Promise.all([
+        prisma.book.findFirst({
+          where: { title: 'The Hobbit' },
+          include: { copies: { orderBy: { id: 'asc' } } },
+        }),
+        prisma.book.findFirst({
+          where: { title: 'Foundation' },
+          include: { copies: { orderBy: { id: 'asc' } } },
+        }),
+        prisma.book.findFirst({
+          where: { title: 'Frankenstein' },
+          include: { copies: { orderBy: { id: 'asc' } } },
+        }),
+      ]);
+
+      // Loan 1: ACTIVE loan due in ~5 days (Copy marked BORROWED)
+      if (bookHobbit && bookHobbit.copies.length > 0) {
+        const activeCopy = bookHobbit.copies[0];
+        const borrowedAt = new Date(now.getTime() - 9 * 24 * 60 * 60 * 1000); // 9 days ago
+        const dueAt = new Date(now.getTime() + 5 * 24 * 60 * 60 * 1000); // due in 5 days
+
+        await prisma.loan.create({
+          data: {
+            userId: demoMember.id,
+            copyId: activeCopy.id,
+            bookId: bookHobbit.id,
+            status: LoanStatus.ACTIVE,
+            borrowedAt,
+            dueAt,
+            checkedOutById: staffId,
+          },
+        });
+
+        await prisma.copy.update({
+          where: { id: activeCopy.id },
+          data: { status: CopyStatus.BORROWED },
+        });
+
+        await prisma.copyStatusHistory.create({
+          data: {
+            copyId: activeCopy.id,
+            fromStatus: CopyStatus.AVAILABLE,
+            toStatus: CopyStatus.BORROWED,
+            reason: `Loan checkout to demo member #${demoMember.id}`,
+            changedById: staffId,
+            createdAt: borrowedAt,
+          },
+        });
+      }
+
+      // Loan 2: OVERDUE loan (due date in the past, Copy marked BORROWED)
+      if (bookFoundation && bookFoundation.copies.length > 0) {
+        const overdueCopy = bookFoundation.copies[0];
+        const borrowedAt = new Date(now.getTime() - 18 * 24 * 60 * 60 * 1000); // 18 days ago
+        const dueAt = new Date(now.getTime() - 4 * 24 * 60 * 60 * 1000); // due 4 days ago (overdue)
+
+        await prisma.loan.create({
+          data: {
+            userId: demoMember.id,
+            copyId: overdueCopy.id,
+            bookId: bookFoundation.id,
+            status: LoanStatus.ACTIVE,
+            borrowedAt,
+            dueAt,
+            checkedOutById: staffId,
+          },
+        });
+
+        await prisma.copy.update({
+          where: { id: overdueCopy.id },
+          data: { status: CopyStatus.BORROWED },
+        });
+
+        await prisma.copyStatusHistory.create({
+          data: {
+            copyId: overdueCopy.id,
+            fromStatus: CopyStatus.AVAILABLE,
+            toStatus: CopyStatus.BORROWED,
+            reason: `Loan checkout to demo member #${demoMember.id}`,
+            changedById: staffId,
+            createdAt: borrowedAt,
+          },
+        });
+      }
+
+      // Loan 3: RETURNED loan (Copy remains AVAILABLE)
+      if (bookFrankenstein && bookFrankenstein.copies.length > 0) {
+        const returnedCopy = bookFrankenstein.copies[0];
+        const borrowedAt = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000); // 30 days ago
+        const dueAt = new Date(now.getTime() - 16 * 24 * 60 * 60 * 1000);
+        const returnedAt = new Date(now.getTime() - 18 * 24 * 60 * 60 * 1000); // returned on time
+
+        await prisma.loan.create({
+          data: {
+            userId: demoMember.id,
+            copyId: returnedCopy.id,
+            bookId: bookFrankenstein.id,
+            status: LoanStatus.RETURNED,
+            borrowedAt,
+            dueAt,
+            returnedAt,
+            checkedOutById: staffId,
+          },
+        });
+
+        await prisma.copyStatusHistory.createMany({
+          data: [
+            {
+              copyId: returnedCopy.id,
+              fromStatus: CopyStatus.AVAILABLE,
+              toStatus: CopyStatus.BORROWED,
+              reason: `Loan checkout to demo member #${demoMember.id}`,
+              changedById: staffId,
+              createdAt: borrowedAt,
+            },
+            {
+              copyId: returnedCopy.id,
+              fromStatus: CopyStatus.BORROWED,
+              toStatus: CopyStatus.AVAILABLE,
+              reason: `Loan return by demo member #${demoMember.id}`,
+              changedById: staffId,
+              createdAt: returnedAt,
+            },
+          ],
+        });
+      }
+
+      console.log('✅ Seeded 3 demo loans (ACTIVE, OVERDUE, RETURNED) with consistent copy statuses.');
     }
   } else {
     console.log('🔒 Production mode detected: Skipping demo users seed.');
