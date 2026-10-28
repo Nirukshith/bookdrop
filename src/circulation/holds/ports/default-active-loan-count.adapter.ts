@@ -1,17 +1,26 @@
 import { Injectable } from '@nestjs/common';
+import { LoanStatus, Prisma } from '@prisma/client';
+import { PrismaService } from '../../../prisma/prisma.service';
 import { ActiveLoanCountPort } from './active-loan-count.port';
 
 /**
- * Default placeholder implementation of ActiveLoanCountPort.
- * Always returns 0 active loans for any member.
- *
- * NOTE: Stage 6 (Loans Module) will replace this placeholder with real
- * database queries against the Loans table once implemented.
+ * Real implementation of ActiveLoanCountPort for Stage 6.
+ * Counts currently ACTIVE loans for a given member in PostgreSQL.
  */
 @Injectable()
 export class DefaultActiveLoanCountAdapter implements ActiveLoanCountPort {
-  async countActiveLoansForMember(userId: number): Promise<number> {
-    void userId;
-    return 0;
+  constructor(private readonly prisma: PrismaService) {}
+
+  async countActiveLoansForMember(
+    userId: number,
+    tx?: Prisma.TransactionClient,
+  ): Promise<number> {
+    const client = tx ?? this.prisma;
+    return client.loan.count({
+      where: {
+        userId,
+        status: LoanStatus.ACTIVE,
+      },
+    });
   }
 }

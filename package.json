@@ -17,9 +17,10 @@
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
-    "test:e2e": "jest --config ./test/jest-e2e.json",
+    "test:e2e": "jest --config ./test/jest-e2e.json --runInBand",
     "create-admin": "if [ \"$NODE_ENV\" = \"production\" ] || [ -f dist/scripts/create-admin.js ]; then node dist/scripts/create-admin.js; else ts-node src/scripts/create-admin.ts; fi",
-    "holds:expire-due": "if [ \"$NODE_ENV\" = \"production\" ] || [ -f dist/scripts/expire-due-holds.js ]; then node dist/scripts/expire-due-holds.js; else ts-node src/scripts/expire-due-holds.ts; fi"
+    "holds:expire-due": "if [ \"$NODE_ENV\" = \"production\" ] || [ -f dist/scripts/expire-due-holds.js ]; then node dist/scripts/expire-due-holds.js; else ts-node src/scripts/expire-due-holds.ts; fi",
+    "seed": "ts-node prisma/seed.ts"
   },
   "dependencies": {
     "@apollo/server": "^4.13.0",
@@ -42,6 +43,7 @@
     "graphql-depth-limit": "^1.1.0",
     "helmet": "^8.3.0",
     "joi": "^18.2.9",
+    "luxon": "^3.7.2",
     "reflect-metadata": "^0.2.0",
     "rxjs": "^7.8.1"
   },
@@ -53,6 +55,7 @@
     "@types/graphql-depth-limit": "^1.1.6",
     "@types/jest": "^29.5.2",
     "@types/joi": "^17.2.2",
+    "@types/luxon": "^3.7.6",
     "@types/node": "^20.3.1",
     "@types/supertest": "^6.0.0",
     "@typescript-eslint/eslint-plugin": "^8.0.0",

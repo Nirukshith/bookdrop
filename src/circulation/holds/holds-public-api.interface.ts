@@ -13,4 +13,9 @@ export interface HoldsPublicApi {
    * Retrieves a single hold by its unique identifier.
    */
   getHold(id: number): Promise<Hold>;
+
+  /**
+   * Expired hold processing (used when pickup discovers an expired hold).
+   */
+  expireHold(holdId: number): Promise<Hold | null>;
 }

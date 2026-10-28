@@ -213,5 +213,52 @@ describe('DomainEventsSubscriber', () => {
         'DomainEventsSubscriber',
       );
     });
+
+    it('intercepts loan.started via wildcard loan.*', async () => {
+      const now = new Date();
+      const dueAt = new Date(now.getTime() + 14 * 86400000);
+      const event = {
+        eventName: 'loan.started',
+        domain: 'loan',
+        loanId: 1,
+        userId: 10,
+        bookId: 20,
+        copyId: 30,
+        borrowedAt: now,
+        dueAt,
+        source: 'PICKUP',
+      };
+
+      eventEmitter.emit('loan.started', event);
+
+      expect(loggerMock.log).toHaveBeenCalledWith(
+        {
+          domain: 'loan',
+          eventName: 'loan.started',
+          payload: event,
+        },
+        'DomainEventsSubscriber',
+      );
+    });
+
+    it('intercepts hold.fulfilled via wildcard hold.*', async () => {
+      const event = {
+        eventName: 'hold.fulfilled',
+        domain: 'circulation',
+        holdId: 1,
+        loanId: 10,
+      };
+
+      eventEmitter.emit('hold.fulfilled', event);
+
+      expect(loggerMock.log).toHaveBeenCalledWith(
+        {
+          domain: 'hold',
+          eventName: 'hold.fulfilled',
+          payload: event,
+        },
+        'DomainEventsSubscriber',
+      );
+    });
   });
 });

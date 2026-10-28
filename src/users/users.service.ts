@@ -6,6 +6,7 @@ import {
 import { Role, User } from '@prisma/client';
 import * as argon2 from 'argon2';
 import { PrismaService } from '../prisma/prisma.service';
+import { IdentityPublicApi, MemberDto } from './identity-public-api.interface';
 
 export interface CreateUserInput {
   name: string;
@@ -15,8 +16,42 @@ export interface CreateUserInput {
 }
 
 @Injectable()
-export class UsersService {
+export class UsersService implements IdentityPublicApi {
   constructor(private readonly prisma: PrismaService) {}
+
+  // --- IdentityPublicApi Implementation ---
+
+  async findMemberByEmail(email: string): Promise<MemberDto | null> {
+    const normalizedEmail = email.trim().toLowerCase();
+    return this.prisma.user.findUnique({
+      where: { email: normalizedEmail },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+      },
+    });
+  }
+
+  async getMembersByIds(ids: number[]): Promise<MemberDto[]> {
+    if (!ids || ids.length === 0) {
+      return [];
+    }
+    return this.prisma.user.findMany({
+      where: {
+        id: { in: ids },
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+      },
+    });
+  }
+
+  // --- Internal UsersService Methods ---
 
   async findByEmail(email: string): Promise<User | null> {
     const normalizedEmail = email.trim().toLowerCase();

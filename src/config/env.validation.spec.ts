@@ -50,6 +50,32 @@ describe('envValidationSchema', () => {
     );
   });
 
+  it('defaults LIBRARY_TIMEZONE to UTC when omitted', () => {
+    const { error, value } = envValidationSchema.validate(validConfig);
+    expect(error).toBeUndefined();
+    expect(value.LIBRARY_TIMEZONE).toBe('UTC');
+  });
+
+  it('accepts valid IANA timezone names for LIBRARY_TIMEZONE', () => {
+    const { error, value } = envValidationSchema.validate({
+      ...validConfig,
+      LIBRARY_TIMEZONE: 'Asia/Colombo',
+    });
+    expect(error).toBeUndefined();
+    expect(value.LIBRARY_TIMEZONE).toBe('Asia/Colombo');
+  });
+
+  it('fails validation when LIBRARY_TIMEZONE is an invalid timezone name', () => {
+    const { error } = envValidationSchema.validate({
+      ...validConfig,
+      LIBRARY_TIMEZONE: 'Invalid/NonExistent_Zone',
+    });
+    expect(error).toBeDefined();
+    expect(error?.message).toContain(
+      'LIBRARY_TIMEZONE must be a valid IANA timezone name',
+    );
+  });
+
   it('fails validation when DATABASE_URL is missing', () => {
     const { error } = envValidationSchema.validate({
       JWT_ACCESS_SECRET: validConfig.JWT_ACCESS_SECRET,

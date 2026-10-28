@@ -1,12 +1,14 @@
 import { CopyStatus } from '@prisma/client';
 
 export type CancelledBy = 'member' | 'staff';
+export type LoanSource = 'PICKUP' | 'WALK_IN';
 
 export const DOMAIN_EVENT_NAMES = {
   HOLD_CREATED: 'hold.created',
   HOLD_CANCELLED: 'hold.cancelled',
   HOLD_EXPIRED: 'hold.expired',
   HOLD_FULFILLED: 'hold.fulfilled',
+  LOAN_STARTED: 'loan.started',
   COPY_CREATED: 'copy.created',
   COPY_STATUS_CHANGED: 'copy.status_changed',
   COPY_RETIRED: 'copy.retired',
@@ -45,10 +47,22 @@ export interface HoldExpiredPayload {
 
 export interface HoldFulfilledPayload {
   holdId: number;
+  loanId?: number;
+  userId?: number;
+  bookId?: number;
+  copyId?: number;
+  fulfilledAt?: Date;
+}
+
+export interface LoanStartedPayload {
+  loanId: number;
   userId: number;
   bookId: number;
   copyId: number;
-  fulfilledAt?: Date;
+  borrowedAt: Date;
+  dueAt: Date;
+  source: LoanSource;
+  occurredAt?: Date;
 }
 
 export interface CopyCreatedPayload {
