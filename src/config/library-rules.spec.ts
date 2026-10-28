@@ -3,9 +3,20 @@ import {
   computeDueDate,
   computePickupDeadline,
   calculateHoldExpiresAt,
+  computeDaysLate,
+  computeLateFeeMinor,
+  rsToMinor,
+  formatRs,
+  validateAssessedFineRs,
+  validateFineAmountMinor,
   LOAN_DAYS,
   MAX_ACTIVE_LOANS,
   MAX_ACTIVE_HOLDS,
+  LATE_FEE_PER_DAY_RS,
+  LATE_FEE_CAP_RS,
+  MAX_ASSESSED_FINE_RS,
+  MAX_ASSESSED_FINE_MINOR,
+  PAISE_PER_RUPEE,
 } from './library-rules';
 
 describe('library-rules', () => {
@@ -14,6 +25,11 @@ describe('library-rules', () => {
       expect(LOAN_DAYS).toBe(14);
       expect(MAX_ACTIVE_LOANS).toBe(3);
       expect(MAX_ACTIVE_HOLDS).toBe(3);
+      expect(LATE_FEE_PER_DAY_RS).toBe(10);
+      expect(LATE_FEE_CAP_RS).toBeNull();
+      expect(MAX_ASSESSED_FINE_RS).toBe(100000);
+      expect(PAISE_PER_RUPEE).toBe(100);
+      expect(MAX_ASSESSED_FINE_MINOR).toBe(10000000);
     });
 
     it('computes pickup deadline 24 hours later in UTC', () => {
@@ -106,9 +122,6 @@ describe('library-rules', () => {
         expect(localDue.millisecond).toBe(999);
         expect(localDue.offsetNameShort).toBe('EST');
 
-        // If naive 14 * 24 = 336 hours were added from Oct 26 23:59:59.999 EDT (Oct 27 03:59:59.999 UTC),
-        // it would land at 03:59:59.999 UTC Nov 10, which is 22:59:59.999 EST (1 hour early!).
-        // Calendar day arithmetic ensures the member gets the full day until 23:59:59.999.
         const naive336hInUtc = new Date(
           new Date('2026-10-27T03:59:59.999Z').getTime() +
             14 * 24 * 60 * 60 * 1000,
@@ -156,6 +169,267 @@ describe('library-rules', () => {
         const borrowedAt = new Date('2026-10-10T08:00:00.000Z');
         expect(() => computeDueDate(borrowedAt, 'Mars/Olympus_Mons')).toThrow(
           /Invalid timezone or date provided to computeDueDate/,
+        );
+      });
+    });
+  });
+
+  describe('computeDaysLate', () => {
+    describe('Asia/Colombo timezone (fixed UTC+05:30 offset)', () => {
+      // Due: Monday, Oct 26, 2026 at 23:59:59.999 local (18:29:59.999 UTC)
+      const dueAtColombo = new Date('2026-10-26T18:29:59.999Z');
+
+      it('returns 0 days late when returned at 23:59 local on the due day', () => {
+        // Monday, Oct 26, 2026 at 23:59:00.000 local (18:29:00.000 UTC)
+        const returnedAt = new Date('2026-10-26T18:29:00.000Z');
+        expect(computeDaysLate(dueAtColombo, returnedAt, 'Asia/Colombo')).toBe(
+          0,
+        );
+      });
+
+      it('returns 0 days late when returned at 23:59:59.999 local on the due day', () => {
+        const returnedAt = new Date('2026-10-26T18:29:59.999Z');
+        expect(computeDaysLate(dueAtColombo, returnedAt, 'Asia/Colombo')).toBe(
+          0,
+        );
+      });
+
+      it('returns 1 day late when returned at 00:00:00 on the next local day', () => {
+        // Tuesday, Oct 27, 2026 at 00:00:00.000 local (18:30:00.000 UTC on Oct 26)
+        const returnedAt = new Date('2026-10-26T18:30:00.000Z');
+        expect(computeDaysLate(dueAtColombo, returnedAt, 'Asia/Colombo')).toBe(
+          1,
+        );
+      });
+
+      it('returns 1 day late when returned at 00:00:01 on the next local day', () => {
+        // Tuesday, Oct 27, 2026 at 00:00:01.000 local (18:30:01.000 UTC on Oct 26)
+        const returnedAt = new Date('2026-10-26T18:30:01.000Z');
+        expect(computeDaysLate(dueAtColombo, returnedAt, 'Asia/Colombo')).toBe(
+          1,
+        );
+      });
+
+      it('returns 0 days late when returned long before the due date', () => {
+        // Returned 10 days before due date: Oct 16, 2026 at 10:00:00 local (04:30:00 UTC)
+        const returnedAt = new Date('2026-10-16T04:30:00.000Z');
+        expect(computeDaysLate(dueAtColombo, returnedAt, 'Asia/Colombo')).toBe(
+          0,
+        );
+      });
+
+      it('returns exact days late when returned several days late', () => {
+        // Returned on Thursday, Oct 29, 2026 at 15:00:00 local (09:30:00 UTC) -> 3 days late
+        const returnedAt = new Date('2026-10-29T09:30:00.000Z');
+        expect(computeDaysLate(dueAtColombo, returnedAt, 'Asia/Colombo')).toBe(
+          3,
+        );
+      });
+    });
+
+    describe('America/New_York across DST changes', () => {
+      it('calculates calendar days late across Fall DST change (EDT -> EST, 25-hour day)', () => {
+        // In 2026, US DST ends on Sunday, Nov 1, 2026 (clocks turn back 1h at 2:00 AM)
+        // Due on Sunday, Nov 1, 2026 at 23:59:59.999 local (Nov 2, 2026 at 03:59:59.999 UTC)
+        const dueAt = new Date('2026-11-02T03:59:59.999Z');
+
+        // Returned Nov 1 at 23:59:00 EDT (Nov 2 at 03:59:00 UTC) -> 0 days late
+        const returnedOnDueDay = new Date('2026-11-02T03:59:00.000Z');
+        expect(
+          computeDaysLate(dueAt, returnedOnDueDay, 'America/New_York'),
+        ).toBe(0);
+
+        // Returned Nov 2 at 00:00:01 EST (Nov 2 at 05:00:01 UTC) -> 1 day late
+        const returnedNextDay = new Date('2026-11-02T05:00:01.000Z');
+        expect(
+          computeDaysLate(dueAt, returnedNextDay, 'America/New_York'),
+        ).toBe(1);
+
+        // Returned Nov 5 at 12:00 EST (Nov 5 at 17:00 UTC) -> 4 days late
+        const returned4DaysLate = new Date('2026-11-05T17:00:00.000Z');
+        expect(
+          computeDaysLate(dueAt, returned4DaysLate, 'America/New_York'),
+        ).toBe(4);
+      });
+
+      it('calculates calendar days late across Spring DST change (EST -> EDT, 23-hour day)', () => {
+        // In 2026, US DST begins Sunday, Mar 8, 2026 (clocks spring forward 1h at 2:00 AM)
+        // Due on Saturday, Mar 7, 2026 at 23:59:59.999 local EST (Mar 8 at 04:59:59.999 UTC)
+        const dueAt = new Date('2026-03-08T04:59:59.999Z');
+
+        // Returned on Mar 7 at 23:00 EST -> 0 days late
+        const returnedOnDueDay = new Date('2026-03-08T04:00:00.000Z');
+        expect(
+          computeDaysLate(dueAt, returnedOnDueDay, 'America/New_York'),
+        ).toBe(0);
+
+        // Returned on Monday, Mar 9 at 08:00 EDT (after the 23-hour transition day) -> 2 days late
+        // (Mar 8 = 1 day late, Mar 9 = 2 days late)
+        const returnedMar9 = new Date('2026-03-09T12:00:00.000Z');
+        expect(computeDaysLate(dueAt, returnedMar9, 'America/New_York')).toBe(
+          2,
+        );
+      });
+    });
+
+    describe('validation', () => {
+      it('throws when invalid timezone is passed', () => {
+        const now = new Date();
+        expect(() => computeDaysLate(now, now, 'Invalid/Timezone')).toThrow(
+          /Invalid timezone or date provided to computeDaysLate/,
+        );
+      });
+    });
+  });
+
+  describe('computeLateFeeMinor', () => {
+    it('returns 0 when days late is 0 or negative', () => {
+      expect(computeLateFeeMinor(0)).toBe(0);
+      expect(computeLateFeeMinor(-1)).toBe(0);
+      expect(computeLateFeeMinor(-10)).toBe(0);
+    });
+
+    it('calculates fee when cap is not set (capRs is null)', () => {
+      // Default rate: 10 Rs / day = 1000 minor / day
+      expect(computeLateFeeMinor(1, 10, null)).toBe(1000);
+      expect(computeLateFeeMinor(3, 10, null)).toBe(3000);
+      expect(computeLateFeeMinor(10, 10, null)).toBe(10000);
+    });
+
+    it('caps the fee when uncapped fee exceeds capRs', () => {
+      // 10 days late * 10 Rs = 100 Rs = 10000 minor. Cap = 50 Rs (5000 minor).
+      expect(computeLateFeeMinor(10, 10, 50)).toBe(5000);
+    });
+
+    it('does not cap the fee when uncapped fee is lower than capRs', () => {
+      // 2 days late * 10 Rs = 20 Rs = 2000 minor. Cap = 50 Rs (5000 minor).
+      expect(computeLateFeeMinor(2, 10, 50)).toBe(2000);
+    });
+
+    it('returns exact cap when uncapped fee equals capRs', () => {
+      // 5 days late * 10 Rs = 50 Rs = 5000 minor. Cap = 50 Rs.
+      expect(computeLateFeeMinor(5, 10, 50)).toBe(5000);
+    });
+
+    it('supports custom daily rate', () => {
+      // 3 days * 25 Rs = 75 Rs = 7500 minor.
+      expect(computeLateFeeMinor(3, 25, null)).toBe(7500);
+    });
+
+    it('throws when daysLate is a non-integer', () => {
+      expect(() => computeLateFeeMinor(2.5, 10, null)).toThrow(
+        /daysLate must be an integer/,
+      );
+    });
+
+    it('throws when ratePerDayRs is non-positive or non-integer', () => {
+      expect(() => computeLateFeeMinor(2, 0, null)).toThrow(
+        /ratePerDayRs must be a positive integer/,
+      );
+      expect(() => computeLateFeeMinor(2, -5, null)).toThrow(
+        /ratePerDayRs must be a positive integer/,
+      );
+      expect(() => computeLateFeeMinor(2, 5.5, null)).toThrow(
+        /ratePerDayRs must be a positive integer/,
+      );
+    });
+
+    it('throws when capRs is negative or non-integer', () => {
+      expect(() => computeLateFeeMinor(2, 10, -10)).toThrow(
+        /capRs must be a non-negative integer or null/,
+      );
+      expect(() => computeLateFeeMinor(2, 10, 15.5)).toThrow(
+        /capRs must be a non-negative integer or null/,
+      );
+    });
+  });
+
+  describe('Money helpers & validators', () => {
+    describe('rsToMinor', () => {
+      it('converts integer Rupees to minor units (paise)', () => {
+        expect(rsToMinor(0)).toBe(0);
+        expect(rsToMinor(1)).toBe(100);
+        expect(rsToMinor(10)).toBe(1000);
+        expect(rsToMinor(500)).toBe(50000);
+      });
+
+      it('throws when Rupee amount is not an integer', () => {
+        expect(() => rsToMinor(10.5)).toThrow(
+          /Rupee amount must be an integer/,
+        );
+        expect(() => rsToMinor(NaN)).toThrow(/Rupee amount must be an integer/);
+      });
+    });
+
+    describe('formatRs', () => {
+      it('formats minor units to standard decimal Rupee strings', () => {
+        expect(formatRs(0)).toBe('0.00');
+        expect(formatRs(5)).toBe('0.05');
+        expect(formatRs(50)).toBe('0.50');
+        expect(formatRs(100)).toBe('1.00');
+        expect(formatRs(1050)).toBe('10.50');
+        expect(formatRs(50000)).toBe('500.00');
+      });
+
+      it('supports custom currency prefixes', () => {
+        expect(formatRs(1000, '₹')).toBe('₹10.00');
+        expect(formatRs(1000, 'Rs ')).toBe('Rs 10.00');
+      });
+
+      it('handles negative minor amounts gracefully', () => {
+        expect(formatRs(-1050)).toBe('-10.50');
+        expect(formatRs(-1050, '₹')).toBe('-₹10.50');
+      });
+
+      it('throws when minor amount is not an integer', () => {
+        expect(() => formatRs(10.5)).toThrow(
+          /Minor units amount must be an integer/,
+        );
+      });
+    });
+
+    describe('validateAssessedFineRs', () => {
+      it('accepts valid positive integer Rupee amounts within limit', () => {
+        expect(() => validateAssessedFineRs(1)).not.toThrow();
+        expect(() => validateAssessedFineRs(500)).not.toThrow();
+        expect(() => validateAssessedFineRs(100000)).not.toThrow();
+      });
+
+      it('rejects zero, negative amounts, non-integers, and amounts above maximum', () => {
+        expect(() => validateAssessedFineRs(0)).toThrow(
+          /must be greater than zero/,
+        );
+        expect(() => validateAssessedFineRs(-10)).toThrow(
+          /must be greater than zero/,
+        );
+        expect(() => validateAssessedFineRs(15.75)).toThrow(
+          /must be an integer/,
+        );
+        expect(() => validateAssessedFineRs(100001)).toThrow(
+          /exceeds the maximum allowed fine/,
+        );
+      });
+    });
+
+    describe('validateFineAmountMinor', () => {
+      it('accepts valid positive integer minor amounts within limit', () => {
+        expect(() => validateFineAmountMinor(100)).not.toThrow();
+        expect(() => validateFineAmountMinor(50000)).not.toThrow();
+        expect(() => validateFineAmountMinor(10000000)).not.toThrow();
+      });
+
+      it('rejects zero, negative amounts, non-integers, and amounts above maximum', () => {
+        expect(() => validateFineAmountMinor(0)).toThrow(
+          /must be greater than zero/,
+        );
+        expect(() => validateFineAmountMinor(-100)).toThrow(
+          /must be greater than zero/,
+        );
+        expect(() => validateFineAmountMinor(100.5)).toThrow(
+          /must be an integer/,
+        );
+        expect(() => validateFineAmountMinor(10000001)).toThrow(
+          /exceeds the maximum allowed fine/,
         );
       });
     });
