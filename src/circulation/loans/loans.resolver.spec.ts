@@ -1,5 +1,12 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { HoldStatus, Loan, LoanStatus, Role } from '@prisma/client';
+import { BadRequestException } from '@nestjs/common';
+import {
+  HoldStatus,
+  Loan,
+  LoanStatus,
+  Role,
+  ReturnCondition,
+} from '@prisma/client';
 import { AuthenticatedUser } from '../../auth';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ClockService } from '../../common/clock/clock.service';
@@ -8,7 +15,8 @@ import { IDENTITY_PUBLIC_API } from '../../users';
 import { LoansService } from './loans.service';
 import { LoansDataLoader } from './loans.loader';
 import { LoansResolver } from './loans.resolver';
-import { MemberNotFoundError } from './errors';
+import { ConditionNoteRequiredError, MemberNotFoundError } from './errors';
+import { InvalidAmountError } from '../fines/errors/invalid-amount.error';
 
 describe('LoansResolver (Step 6)', () => {
   let resolver: LoansResolver;
@@ -35,10 +43,14 @@ describe('LoansResolver (Step 6)', () => {
     loansServiceMock = {
       confirmPickup: jest.fn(),
       checkoutCopy: jest.fn(),
+      returnLoan: jest.fn(),
+      markLoanLost: jest.fn(),
       listStaffLoans: jest.fn(),
       listMemberLoans: jest.fn(),
       getLoan: jest.fn(),
       isOverdue: jest.fn(),
+      getLibraryTimezone: jest.fn().mockReturnValue('UTC'),
+      getGlobalLateFeeCapRs: jest.fn().mockReturnValue(null),
     };
 
     copiesServiceMock = {
@@ -66,6 +78,7 @@ describe('LoansResolver (Step 6)', () => {
     loansDataLoaderMock = {
       loadBookTitle: jest.fn().mockResolvedValue('The Great Gatsby'),
       loadMemberName: jest.fn().mockResolvedValue('Alice Member'),
+      loadBookPriceMinor: jest.fn().mockResolvedValue(null),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -344,6 +357,202 @@ describe('LoansResolver (Step 6)', () => {
         dueAt: new Date('2026-10-25T10:00:00.000Z'),
       };
       expect(resolver.resolveDaysLate(returnedLoan)).toBe(0);
+    });
+
+    it('resolveAccruedLateFeeRs returns 0 when loan is on-time or returned, and computes rate when active and overdue', async () => {
+      // On-time
+      expect(await resolver.resolveAccruedLateFeeRs(loan)).toBe(0);
+
+      // Returned
+      const returnedLoan = {
+        ...loan,
+        status: LoanStatus.RETURNED,
+        dueAt: new Date('2026-10-25T10:00:00.000Z'),
+      };
+      expect(await resolver.resolveAccruedLateFeeRs(returnedLoan)).toBe(0);
+
+      // Overdue by 1 day (10 Rs = 1000 minor)
+      const overdueLoan = {
+        ...loan,
+        dueAt: new Date('2026-10-25T10:00:00.000Z'),
+      };
+      expect(await resolver.resolveAccruedLateFeeRs(overdueLoan)).toBe(10);
+    });
+
+    it('resolveAccruedLateFeeRs caps fee at loan price snapshot', async () => {
+      // 10 days late * 10 Rs = 100 Rs; price snapshot = 50 Rs (5000 minor)
+      const overdueCappedLoan = {
+        ...loan,
+        dueAt: new Date('2026-10-16T10:00:00.000Z'),
+        priceMinorAtBorrow: 5000,
+      };
+      expect(await resolver.resolveAccruedLateFeeRs(overdueCappedLoan)).toBe(
+        50,
+      );
+    });
+
+    it('resolveAccruedLateFeeRs falls back to book current price via DataLoader when snapshot is null', async () => {
+      loansDataLoaderMock.loadBookPriceMinor.mockResolvedValueOnce(3500); // Rs 35 cap
+      const overdueNoSnapshotLoan = {
+        ...loan,
+        dueAt: new Date('2026-10-16T10:00:00.000Z'),
+        priceMinorAtBorrow: null,
+      };
+      expect(
+        await resolver.resolveAccruedLateFeeRs(overdueNoSnapshotLoan),
+      ).toBe(35);
+      expect(loansDataLoaderMock.loadBookPriceMinor).toHaveBeenCalledWith(
+        overdueNoSnapshotLoan.bookId,
+      );
+    });
+  });
+
+  describe('returnLoan mutation (Step 7)', () => {
+    it('returns a loan in GOOD condition without damage fee', async () => {
+      const returnedLoan = { id: 1, status: LoanStatus.RETURNED };
+      loansServiceMock.returnLoan.mockResolvedValueOnce(returnedLoan);
+
+      const result = await resolver.returnLoan(
+        'BD-000001',
+        ReturnCondition.GOOD,
+        undefined,
+        undefined,
+        staffUser,
+      );
+
+      expect(loansServiceMock.returnLoan).toHaveBeenCalledWith({
+        copyBarcode: 'BD-000001',
+        condition: ReturnCondition.GOOD,
+        conditionNote: undefined,
+        damageFeeMinor: undefined,
+        staffId: 999,
+      });
+      expect(result).toEqual(returnedLoan);
+    });
+
+    it('returns a loan in DAMAGED condition with note and valid damageFeeRs converted to minor', async () => {
+      const returnedLoan = { id: 1, status: LoanStatus.RETURNED };
+      loansServiceMock.returnLoan.mockResolvedValueOnce(returnedLoan);
+
+      const result = await resolver.returnLoan(
+        'BD-000001',
+        ReturnCondition.DAMAGED,
+        'Water damage on back cover',
+        15.5,
+        staffUser,
+      );
+
+      expect(loansServiceMock.returnLoan).toHaveBeenCalledWith({
+        copyBarcode: 'BD-000001',
+        condition: ReturnCondition.DAMAGED,
+        conditionNote: 'Water damage on back cover',
+        damageFeeMinor: 1550,
+        staffId: 999,
+      });
+      expect(result).toEqual(returnedLoan);
+    });
+
+    it('throws ConditionNoteRequiredError when DAMAGED without conditionNote', async () => {
+      await expect(
+        resolver.returnLoan(
+          'BD-000001',
+          ReturnCondition.DAMAGED,
+          '   ',
+          10,
+          staffUser,
+        ),
+      ).rejects.toThrow(ConditionNoteRequiredError);
+
+      expect(loansServiceMock.returnLoan).not.toHaveBeenCalled();
+    });
+
+    it('rejects damageFeeRs with sub-cent precision (> 2 decimal places)', async () => {
+      await expect(
+        resolver.returnLoan(
+          'BD-000001',
+          ReturnCondition.DAMAGED,
+          'Torn pages',
+          15.555,
+          staffUser,
+        ),
+      ).rejects.toThrow(InvalidAmountError);
+
+      expect(loansServiceMock.returnLoan).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('markLoanLost mutation (Step 7)', () => {
+    it('marks active loan as lost with assessed fee converted to minor', async () => {
+      const lostLoan = { id: 5, status: LoanStatus.LOST };
+      loansServiceMock.markLoanLost.mockResolvedValueOnce(lostLoan);
+
+      const result = await resolver.markLoanLost(
+        5,
+        50.25,
+        'Member reported lost during move',
+        staffUser,
+      );
+
+      expect(loansServiceMock.markLoanLost).toHaveBeenCalledWith({
+        loanId: 5,
+        assessedFeeMinor: 5025,
+        note: 'Member reported lost during move',
+        staffId: 999,
+      });
+      expect(result).toEqual(lostLoan);
+    });
+
+    it('throws BadRequestException when note is missing or empty', async () => {
+      await expect(
+        resolver.markLoanLost(5, 50, '   ', staffUser),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(loansServiceMock.markLoanLost).not.toHaveBeenCalled();
+    });
+
+    it('rejects assessedFeeRs with sub-cent precision (> 2 decimal places)', async () => {
+      await expect(
+        resolver.markLoanLost(5, 50.123, 'Lost book', staffUser),
+      ).rejects.toThrow(InvalidAmountError);
+
+      expect(loansServiceMock.markLoanLost).not.toHaveBeenCalled();
+    });
+
+    it('allows omitting assessedFeeRs to default to book price snapshot/current price in service', async () => {
+      const lostLoan = { id: 5, status: LoanStatus.LOST };
+      loansServiceMock.markLoanLost.mockResolvedValueOnce(lostLoan);
+
+      const result = await resolver.markLoanLost(
+        5,
+        undefined,
+        'Lost without fee argument',
+        staffUser,
+      );
+
+      expect(loansServiceMock.markLoanLost).toHaveBeenCalledWith({
+        loanId: 5,
+        assessedFeeMinor: undefined,
+        note: 'Lost without fee argument',
+        staffId: 999,
+      });
+      expect(result).toEqual(lostLoan);
+    });
+  });
+
+  describe('overdueLoans query (Step 7)', () => {
+    it('is a shortcut over listStaffLoans with overdue: true', async () => {
+      loansServiceMock.listStaffLoans.mockResolvedValueOnce({
+        items: [{ id: 10 }, { id: 20 }],
+        total: 2,
+      });
+
+      const items = await resolver.overdueLoans({ skip: 0, take: 5 });
+
+      expect(loansServiceMock.listStaffLoans).toHaveBeenCalledWith(
+        { overdue: true },
+        { skip: 0, take: 5 },
+      );
+      expect(items).toHaveLength(2);
     });
   });
 });

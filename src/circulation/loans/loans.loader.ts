@@ -7,6 +7,7 @@ import { IDENTITY_PUBLIC_API, IdentityPublicApi } from '../../users';
 export class LoansDataLoader {
   private readonly bookTitleLoader: DataLoader<number, string>;
   private readonly memberNameLoader: DataLoader<number, string>;
+  private readonly bookPriceLoader: DataLoader<number, number | null>;
 
   constructor(
     private readonly booksService: BooksService,
@@ -33,6 +34,16 @@ export class LoansDataLoader {
       },
       { cache: true },
     );
+
+    this.bookPriceLoader = new DataLoader<number, number | null>(
+      async (bookIds: readonly number[]) => {
+        const pricesMap = await this.booksService.getBookPricesMinor([
+          ...bookIds,
+        ]);
+        return bookIds.map((id) => pricesMap.get(id) ?? null);
+      },
+      { cache: true },
+    );
   }
 
   loadBookTitle(bookId: number): Promise<string> {
@@ -41,5 +52,9 @@ export class LoansDataLoader {
 
   loadMemberName(userId: number): Promise<string> {
     return this.memberNameLoader.load(userId);
+  }
+
+  loadBookPriceMinor(bookId: number): Promise<number | null> {
+    return this.bookPriceLoader.load(bookId);
   }
 }

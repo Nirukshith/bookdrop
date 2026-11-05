@@ -1,10 +1,13 @@
 import { CopyStatus } from '@prisma/client';
 import {
   ALLOWED_MANUAL_TRANSITIONS,
+  ALLOWED_SYSTEM_TRANSITIONS,
   assertCanRetireCopy,
   assertValidManualTransition,
+  assertValidSystemTransition,
   canRetireCopy,
   canTransitionManually,
+  canTransitionSystem,
 } from './copy-state-machine';
 import { InvalidCopyStateTransitionError } from './errors/invalid-copy-state-transition.error';
 
@@ -205,6 +208,163 @@ describe('Copy State Machine (Unit Tests)', () => {
       expect(() =>
         assertCanRetireCopy({ status: CopyStatus.AVAILABLE, isRetired: true }),
       ).toThrow(InvalidCopyStateTransitionError);
+    });
+  });
+
+  describe('System-Only Transitions (Stage 7)', () => {
+    describe('ALLOWED_SYSTEM_TRANSITIONS table', () => {
+      it('should define allowed system transitions accurately', () => {
+        expect(ALLOWED_SYSTEM_TRANSITIONS[CopyStatus.BORROWED]).toEqual([
+          CopyStatus.AVAILABLE,
+          CopyStatus.DAMAGED,
+          CopyStatus.LOST,
+        ]);
+        expect(ALLOWED_SYSTEM_TRANSITIONS[CopyStatus.AVAILABLE]).toEqual([]);
+        expect(ALLOWED_SYSTEM_TRANSITIONS[CopyStatus.LOST]).toEqual([]);
+        expect(ALLOWED_SYSTEM_TRANSITIONS[CopyStatus.DAMAGED]).toEqual([]);
+        expect(ALLOWED_SYSTEM_TRANSITIONS[CopyStatus.ON_HOLD]).toEqual([]);
+      });
+    });
+
+    describe('Allowed system transitions from BORROWED (isRetired: false)', () => {
+      const allowedSystemTargets = [
+        CopyStatus.AVAILABLE,
+        CopyStatus.DAMAGED,
+        CopyStatus.LOST,
+      ];
+
+      test.each(allowedSystemTargets)(
+        'allows system transition from BORROWED to %s',
+        (targetStatus) => {
+          const result = canTransitionSystem(
+            { status: CopyStatus.BORROWED, isRetired: false },
+            targetStatus,
+          );
+          expect(result.allowed).toBe(true);
+          expect(result.reason).toBeUndefined();
+
+          expect(() =>
+            assertValidSystemTransition(
+              { status: CopyStatus.BORROWED, isRetired: false },
+              targetStatus,
+            ),
+          ).not.toThrow();
+        },
+      );
+    });
+
+    describe('Forbidden system transitions', () => {
+      it('forbids self-transition (BORROWED -> BORROWED)', () => {
+        const result = canTransitionSystem(
+          { status: CopyStatus.BORROWED, isRetired: false },
+          CopyStatus.BORROWED,
+        );
+        expect(result.allowed).toBe(false);
+        expect(result.reason).toContain('already in status');
+        expect(() =>
+          assertValidSystemTransition(
+            { status: CopyStatus.BORROWED, isRetired: false },
+            CopyStatus.BORROWED,
+          ),
+        ).toThrow(InvalidCopyStateTransitionError);
+      });
+
+      it('forbids system transition from BORROWED to ON_HOLD', () => {
+        const result = canTransitionSystem(
+          { status: CopyStatus.BORROWED, isRetired: false },
+          CopyStatus.ON_HOLD,
+        );
+        expect(result.allowed).toBe(false);
+        expect(result.reason).toContain('not allowed');
+        expect(() =>
+          assertValidSystemTransition(
+            { status: CopyStatus.BORROWED, isRetired: false },
+            CopyStatus.ON_HOLD,
+          ),
+        ).toThrow(InvalidCopyStateTransitionError);
+      });
+
+      it.each([
+        CopyStatus.AVAILABLE,
+        CopyStatus.LOST,
+        CopyStatus.DAMAGED,
+        CopyStatus.ON_HOLD,
+      ])(
+        'forbids system transition originating from non-BORROWED status %s',
+        (fromStatus) => {
+          const result = canTransitionSystem(
+            { status: fromStatus, isRetired: false },
+            CopyStatus.AVAILABLE,
+          );
+          expect(result.allowed).toBe(false);
+          expect(() =>
+            assertValidSystemTransition(
+              { status: fromStatus, isRetired: false },
+              CopyStatus.AVAILABLE,
+            ),
+          ).toThrow(InvalidCopyStateTransitionError);
+        },
+      );
+
+      it('forbids system transition when copy is retired', () => {
+        const result = canTransitionSystem(
+          { status: CopyStatus.BORROWED, isRetired: true },
+          CopyStatus.AVAILABLE,
+        );
+        expect(result.allowed).toBe(false);
+        expect(result.reason).toBe('Retired copies accept no status changes.');
+        expect(() =>
+          assertValidSystemTransition(
+            { status: CopyStatus.BORROWED, isRetired: true },
+            CopyStatus.AVAILABLE,
+          ),
+        ).toThrow(InvalidCopyStateTransitionError);
+      });
+    });
+
+    describe('Manual path still strictly rejects BORROWED transitions', () => {
+      test.each([
+        CopyStatus.AVAILABLE,
+        CopyStatus.DAMAGED,
+        CopyStatus.LOST,
+        CopyStatus.ON_HOLD,
+      ])(
+        'canTransitionManually strictly rejects BORROWED -> %s',
+        (targetStatus) => {
+          const result = canTransitionManually(
+            { status: CopyStatus.BORROWED, isRetired: false },
+            targetStatus,
+          );
+          expect(result.allowed).toBe(false);
+          expect(result.reason).toContain(
+            'cannot be manually changed or retired',
+          );
+          expect(() =>
+            assertValidManualTransition(
+              { status: CopyStatus.BORROWED, isRetired: false },
+              targetStatus,
+            ),
+          ).toThrow(InvalidCopyStateTransitionError);
+        },
+      );
+
+      test.each([CopyStatus.AVAILABLE, CopyStatus.DAMAGED, CopyStatus.LOST])(
+        'canTransitionManually strictly rejects transitioning into BORROWED from %s',
+        (fromStatus) => {
+          const result = canTransitionManually(
+            { status: fromStatus, isRetired: false },
+            CopyStatus.BORROWED,
+          );
+          expect(result.allowed).toBe(false);
+          expect(result.reason).toContain('cannot be set manually');
+          expect(() =>
+            assertValidManualTransition(
+              { status: fromStatus, isRetired: false },
+              CopyStatus.BORROWED,
+            ),
+          ).toThrow(InvalidCopyStateTransitionError);
+        },
+      );
     });
   });
 });

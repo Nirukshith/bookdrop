@@ -11,6 +11,7 @@ import {
   MaxActiveHoldsReachedError,
   MaxActiveLoansReachedError,
   UnpaidFinesError,
+  OverdueLoansError,
   DuplicateActiveHoldError,
 } from './errors';
 
@@ -62,10 +63,18 @@ export class MemberEligibilityPolicy {
       throw new MaxActiveLoansReachedError(MAX_ACTIVE_LOANS);
     }
 
-    // 3. Unpaid fines check (via UnpaidFinesPort)
-    const hasFines = await this.unpaidFinesPort.hasUnpaidFines(userId, tx);
+    // 3. Unpaid fines and overdue loans check (via UnpaidFinesPort)
+    const finesCheck = this.unpaidFinesPort.checkMemberFines
+      ? await this.unpaidFinesPort.checkMemberFines(userId, tx)
+      : {
+          blocked: await this.unpaidFinesPort.hasUnpaidFines(userId, tx),
+          reason: 'UNPAID_FINES' as const,
+        };
 
-    if (hasFines) {
+    if (finesCheck.blocked) {
+      if (finesCheck.reason === 'OVERDUE_LOANS') {
+        throw new OverdueLoansError();
+      }
       throw new UnpaidFinesError();
     }
 
@@ -105,10 +114,18 @@ export class MemberEligibilityPolicy {
       throw new MaxActiveLoansReachedError(MAX_ACTIVE_LOANS);
     }
 
-    // 2. Unpaid fines check (via UnpaidFinesPort)
-    const hasFines = await this.unpaidFinesPort.hasUnpaidFines(userId, tx);
+    // 2. Unpaid fines and overdue loans check (via UnpaidFinesPort)
+    const finesCheck = this.unpaidFinesPort.checkMemberFines
+      ? await this.unpaidFinesPort.checkMemberFines(userId, tx)
+      : {
+          blocked: await this.unpaidFinesPort.hasUnpaidFines(userId, tx),
+          reason: 'UNPAID_FINES' as const,
+        };
 
-    if (hasFines) {
+    if (finesCheck.blocked) {
+      if (finesCheck.reason === 'OVERDUE_LOANS') {
+        throw new OverdueLoansError();
+      }
       throw new UnpaidFinesError();
     }
   }

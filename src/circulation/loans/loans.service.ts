@@ -1,28 +1,49 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
+  Copy,
   CopyStatus,
+  FineReason,
   HoldStatus,
   Loan,
   LoanStatus,
   Prisma,
+  ReturnCondition,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ClockService } from '../../common/clock/clock.service';
 import {
   DEFAULT_LIBRARY_TIMEZONE,
   LOAN_DAYS,
+  LATE_FEE_PER_DAY_RS,
+  LATE_FEE_CAP_RS,
+  assertValidAssessedFineRs,
+  validateFineAmountMinor,
+  calculateLateFee,
+  computeDaysLate,
   computeDueDate,
+  resolveLateFeeCapMinor,
+  rsToMinor,
 } from '../../config/library-rules';
 import { CopiesService } from '../copies/copies.service';
+import { FinesService } from '../fines/fines.service';
 import {
   HOLDS_PUBLIC_API,
   HoldsPublicApi,
 } from '../holds/holds-public-api.interface';
 import { IDENTITY_PUBLIC_API, IdentityPublicApi } from '../../users';
+import { CATALOG_PUBLIC_API, CatalogPublicApi } from '../../books';
 import { MemberEligibilityPolicy } from '../holds/member-eligibility.policy';
 import {
+  AmountRequiredError,
+  ConditionNoteRequiredError,
   CopyMismatchError,
   CopyNotAvailableError,
   CopyNotFoundError,
@@ -31,13 +52,22 @@ import {
   HoldExpiredError,
   HoldNotActiveError,
   HoldNotFoundError,
+  LoanNotActiveError,
   LoanNotFoundError,
   MemberNotFoundError,
+  NoActiveLoanForCopyError,
 } from './errors';
 import { PaginationArgs, StaffLoanFilter } from './dto/loan-query.dto';
 import { HoldFulfilledEvent } from '../holds/events/hold-fulfilled.event';
-import { LoanStartedEvent } from './events/loan-started.event';
-import { LoansPublicApi } from './loans-public-api.interface';
+import { LoanStartedEvent, LoanReturnedEvent, LoanLostEvent } from './events';
+import { FineCreatedEvent } from '../fines/events';
+import { DOMAIN_EVENT_NAMES } from '../../contracts/events';
+import {
+  LoansPublicApi,
+  MarkLoanLostInput,
+  ReturnLoanInput,
+} from './loans-public-api.interface';
+import { COPY_RELEASE_PORT, CopyReleasePort } from './ports';
 
 export const HOLD_ADVISORY_NAMESPACE = 4201;
 
@@ -50,16 +80,22 @@ const INTERACTIVE_TX_OPTIONS = {
 export class LoansService implements LoansPublicApi {
   private readonly logger = new Logger(LoansService.name);
   private readonly libraryTimezone: string;
+  private readonly globalLateFeeCapRs: number | null;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly clockService: ClockService,
     private readonly configService: ConfigService,
     private readonly copiesService: CopiesService,
+    private readonly finesService: FinesService,
+    @Inject(COPY_RELEASE_PORT)
+    private readonly copyReleasePort: CopyReleasePort,
     @Inject(HOLDS_PUBLIC_API)
     private readonly holdsPublicApi: HoldsPublicApi,
     @Inject(IDENTITY_PUBLIC_API)
     private readonly identityPublicApi: IdentityPublicApi,
+    @Inject(CATALOG_PUBLIC_API)
+    private readonly catalogPublicApi: CatalogPublicApi,
     private readonly eligibilityPolicy: MemberEligibilityPolicy,
     private readonly eventEmitter: EventEmitter2,
   ) {
@@ -67,6 +103,24 @@ export class LoansService implements LoansPublicApi {
       'LIBRARY_TIMEZONE',
       DEFAULT_LIBRARY_TIMEZONE,
     );
+    const configuredCap = this.configService.get<number | string | null>(
+      'LATE_FEE_CAP_RS',
+      null,
+    );
+    this.globalLateFeeCapRs =
+      configuredCap !== null &&
+      configuredCap !== undefined &&
+      configuredCap !== ''
+        ? Number(configuredCap)
+        : LATE_FEE_CAP_RS;
+  }
+
+  public getLibraryTimezone(): string {
+    return this.libraryTimezone;
+  }
+
+  public getGlobalLateFeeCapRs(): number | null {
+    return this.globalLateFeeCapRs;
   }
 
   /**
@@ -191,7 +245,13 @@ export class LoansService implements LoansPublicApi {
           tx,
         );
 
-        // 8. Insert Loan record
+        // 8. Snapshot book replacement price via Catalog public API
+        const bookPriceMap = await this.catalogPublicApi.getBookPricesMinor([
+          lockedCopy.bookId,
+        ]);
+        const priceMinorAtBorrow = bookPriceMap.get(lockedCopy.bookId) ?? null;
+
+        // Insert Loan record
         const dueAt = computeDueDate(now, this.libraryTimezone, LOAN_DAYS);
         const createdLoan = await tx.loan.create({
           data: {
@@ -203,6 +263,7 @@ export class LoansService implements LoansPublicApi {
             borrowedAt: now,
             dueAt,
             checkedOutById: staffId,
+            priceMinorAtBorrow,
           },
           include: { copy: true },
         });
@@ -351,7 +412,13 @@ export class LoansService implements LoansPublicApi {
         tx,
       );
 
-      // 7. Insert Loan with holdId = null
+      // 7. Snapshot book replacement price via Catalog public API
+      const bookPriceMap = await this.catalogPublicApi.getBookPricesMinor([
+        copy.bookId,
+      ]);
+      const priceMinorAtBorrow = bookPriceMap.get(copy.bookId) ?? null;
+
+      // Insert Loan with holdId = null
       const now = this.clockService.now();
       const dueAt = computeDueDate(now, this.libraryTimezone, LOAN_DAYS);
 
@@ -365,6 +432,7 @@ export class LoansService implements LoansPublicApi {
           borrowedAt: now,
           dueAt,
           checkedOutById: staffId,
+          priceMinorAtBorrow,
         },
         include: { copy: true },
       });
@@ -516,5 +584,400 @@ export class LoansService implements LoansPublicApi {
     return (
       loan.status === LoanStatus.ACTIVE && this.clockService.now() > loan.dueAt
     );
+  }
+
+  /**
+   * returnLoan: Processes the physical return of a borrowed copy in ONE transaction.
+   *
+   * Locking order:
+   * 1. Read copy by barcode (COPY_NOT_FOUND).
+   * 2. Find ACTIVE loan for copy without locking (NO_ACTIVE_LOAN_FOR_COPY) to learn the member.
+   * 3. Take member advisory lock (HOLD_ADVISORY_NAMESPACE, userId).
+   * 4. Lock loan row FOR UPDATE (fails with LOAN_NOT_ACTIVE if status != ACTIVE).
+   * 5. Lock copy row FOR UPDATE.
+   * 6. returnedAt = clock.now(); compute daysLate in library timezone.
+   * 7. Update loan ACTIVE -> RETURNED with returnCondition, conditionNote, returnedById.
+   * 8. If daysLate > 0, createFine LATE_RETURN with dedupeKey 'late-return:<loanId>'.
+   * 9. Condition:
+   *    - GOOD: release copy via CopyReleasePort.
+   *    - DAMAGED: requires note (CONDITION_NOTE_REQUIRED). Move copy BORROWED -> DAMAGED.
+   *      If damageFeeRs > 0, validate and createFine DAMAGED_BOOK with key 'damaged:<loanId>'.
+   */
+  async returnLoan(input: ReturnLoanInput): Promise<Loan> {
+    const copy = await this.prisma.copy.findUnique({
+      where: { barcode: input.copyBarcode.trim() },
+    });
+
+    if (!copy) {
+      throw new CopyNotFoundError(input.copyBarcode.trim());
+    }
+
+    const activeLoan = await this.prisma.loan.findFirst({
+      where: {
+        copyId: copy.id,
+        status: LoanStatus.ACTIVE,
+      },
+    });
+
+    if (!activeLoan) {
+      throw new NoActiveLoanForCopyError(input.copyBarcode.trim());
+    }
+
+    const memberId = activeLoan.userId;
+
+    let damageFeeMinor: number | undefined = input.damageFeeMinor;
+    if (input.condition === ReturnCondition.DAMAGED) {
+      if (!input.conditionNote || !input.conditionNote.trim()) {
+        throw new ConditionNoteRequiredError();
+      }
+      if (
+        damageFeeMinor === undefined &&
+        input.damageFeeRs !== undefined &&
+        input.damageFeeRs > 0
+      ) {
+        if (Number.isInteger(input.damageFeeRs)) {
+          assertValidAssessedFineRs(input.damageFeeRs);
+          damageFeeMinor = rsToMinor(input.damageFeeRs);
+        } else {
+          damageFeeMinor = Math.round(input.damageFeeRs * 100);
+        }
+      }
+    }
+
+    const txResult = await this.prisma.$transaction(async (tx) => {
+      // Step 1: Member advisory lock
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(${HOLD_ADVISORY_NAMESPACE}::int, ${memberId}::int)`;
+
+      // Step 2: Lock loan row FOR UPDATE
+      const lockedLoans = await tx.$queryRaw<Loan[]>`
+          SELECT * FROM "Loan" WHERE id = ${activeLoan.id} FOR UPDATE
+        `;
+      const loan = lockedLoans[0];
+
+      if (!loan || loan.status !== LoanStatus.ACTIVE) {
+        throw new LoanNotActiveError(activeLoan.id, loan?.status);
+      }
+
+      // Step 3: Lock copy row FOR UPDATE
+      const lockedCopies = await tx.$queryRaw<Copy[]>`
+          SELECT * FROM "Copy" WHERE id = ${copy.id} FOR UPDATE
+        `;
+      const lockedCopy = lockedCopies[0];
+
+      if (!lockedCopy) {
+        throw new CopyNotFoundError(input.copyBarcode.trim());
+      }
+
+      const returnedAt = this.clockService.now();
+      const daysLate = computeDaysLate(
+        loan.dueAt,
+        returnedAt,
+        this.libraryTimezone,
+      );
+
+      // Step 4: Update loan record
+      const updatedLoan = await tx.loan.update({
+        where: { id: loan.id },
+        data: {
+          status: LoanStatus.RETURNED,
+          returnedAt,
+          returnCondition: input.condition,
+          conditionNote: input.conditionNote?.trim() || null,
+          returnedById: input.staffId,
+        },
+      });
+
+      // Step 5: If overdue, assess late fee fine
+      let lateFine: any = null;
+      if (daysLate > 0) {
+        let bookCurrentPriceMinor: number | null = null;
+        if (
+          loan.priceMinorAtBorrow === null ||
+          loan.priceMinorAtBorrow === undefined
+        ) {
+          const bookPrices = await this.catalogPublicApi.getBookPricesMinor([
+            loan.bookId,
+          ]);
+          bookCurrentPriceMinor = bookPrices.get(loan.bookId) ?? null;
+        }
+
+        const capMinor = resolveLateFeeCapMinor({
+          loanSnapshotMinor: loan.priceMinorAtBorrow,
+          bookCurrentPriceMinor,
+          globalCapRs: this.globalLateFeeCapRs,
+        });
+
+        const calculation = calculateLateFee({
+          daysLate,
+          ratePerDayRs: LATE_FEE_PER_DAY_RS,
+          capMinor,
+        });
+
+        if (calculation.amountMinor > 0) {
+          lateFine = await this.finesService.createFine(
+            {
+              userId: loan.userId,
+              reason: FineReason.LATE_RETURN,
+              amountMinor: calculation.amountMinor,
+              uncappedAmountMinor: calculation.uncappedAmountMinor,
+              capMinor: calculation.capMinor,
+              loanId: loan.id,
+              daysLate,
+              dedupeKey: FinesService.buildLateReturnDedupeKey(loan.id),
+              createdById: input.staffId,
+            },
+            tx,
+          );
+        }
+      }
+
+      // Step 6: Condition handling
+      let damagedFine: any = null;
+      if (input.condition === ReturnCondition.GOOD) {
+        await this.copyReleasePort.release(lockedCopy.id, tx);
+      } else if (input.condition === ReturnCondition.DAMAGED) {
+        const note = input.conditionNote!.trim();
+        await this.copiesService.transitionStatus(
+          lockedCopy.id,
+          [CopyStatus.BORROWED],
+          CopyStatus.DAMAGED,
+          {
+            reason: note,
+            changedById: input.staffId,
+          },
+          tx,
+        );
+
+        if (damageFeeMinor !== undefined && damageFeeMinor > 0) {
+          damagedFine = await this.finesService.createFine(
+            {
+              userId: loan.userId,
+              reason: FineReason.DAMAGED_BOOK,
+              amountMinor: damageFeeMinor,
+              loanId: loan.id,
+              note,
+              dedupeKey: FinesService.buildDamagedDedupeKey(loan.id),
+              createdById: input.staffId,
+            },
+            tx,
+          );
+        }
+      }
+
+      return {
+        updatedLoan,
+        loan,
+        returnedAt,
+        daysLate,
+        lateFine,
+        damagedFine,
+      };
+    }, INTERACTIVE_TX_OPTIONS);
+
+    // Step 7: Emit domain events post-commit
+    this.eventEmitter.emit(
+      DOMAIN_EVENT_NAMES.LOAN_RETURNED,
+      new LoanReturnedEvent(
+        txResult.updatedLoan.id,
+        txResult.loan.userId,
+        txResult.loan.bookId,
+        txResult.loan.copyId,
+        txResult.returnedAt,
+        txResult.daysLate,
+        input.condition,
+        txResult.returnedAt,
+      ),
+    );
+
+    if (txResult.lateFine && (txResult.lateFine as any).isNew) {
+      this.eventEmitter.emit(
+        DOMAIN_EVENT_NAMES.FINE_CREATED,
+        new FineCreatedEvent(
+          txResult.lateFine.id,
+          txResult.lateFine.userId,
+          txResult.lateFine.reason,
+          txResult.lateFine.amountMinor,
+          txResult.lateFine.loanId,
+          txResult.returnedAt,
+        ),
+      );
+    }
+
+    if (txResult.damagedFine && (txResult.damagedFine as any).isNew) {
+      this.eventEmitter.emit(
+        DOMAIN_EVENT_NAMES.FINE_CREATED,
+        new FineCreatedEvent(
+          txResult.damagedFine.id,
+          txResult.damagedFine.userId,
+          txResult.damagedFine.reason,
+          txResult.damagedFine.amountMinor,
+          txResult.damagedFine.loanId,
+          txResult.returnedAt,
+        ),
+      );
+    }
+
+    return Object.assign(txResult.updatedLoan, {
+      daysLate: txResult.daysLate,
+    });
+  }
+
+  /**
+   * markLoanLost: Marks an active loan as lost in ONE transaction.
+   *
+   * Same locking order:
+   * 1. Read loan without locking to find member (LOAN_NOT_FOUND).
+   * 2. Take member advisory lock, lock loan FOR UPDATE (LOAN_NOT_ACTIVE), lock copy FOR UPDATE.
+   * 3. Fee is required and must be positive; note is required.
+   * 4. Loan ACTIVE -> LOST with lostAt = now.
+   * 5. Copy BORROWED -> LOST with transitionStatus (history row with note).
+   * 6. createFine LOST_BOOK with key 'lost:<loanId>', and no late fee.
+   */
+  async markLoanLost(input: MarkLoanLostInput): Promise<Loan> {
+    if (!input.note || !input.note.trim()) {
+      throw new BadRequestException(
+        'A note is required when declaring a loan lost',
+      );
+    }
+
+    if (input.assessedFeeRs !== undefined && input.assessedFeeRs !== null) {
+      assertValidAssessedFineRs(input.assessedFeeRs);
+    }
+    if (
+      input.assessedFeeMinor !== undefined &&
+      input.assessedFeeMinor !== null
+    ) {
+      validateFineAmountMinor(input.assessedFeeMinor);
+    }
+
+    const loan = await this.prisma.loan.findUnique({
+      where: { id: input.loanId },
+    });
+
+    if (!loan) {
+      throw new LoanNotFoundError(input.loanId);
+    }
+
+    let assessedMinor: number;
+    if (
+      input.assessedFeeMinor !== undefined &&
+      input.assessedFeeMinor !== null
+    ) {
+      assessedMinor = input.assessedFeeMinor;
+    } else if (
+      input.assessedFeeRs !== undefined &&
+      input.assessedFeeRs !== null
+    ) {
+      assessedMinor = rsToMinor(input.assessedFeeRs);
+    } else {
+      // Default to the book's price snapshot (or current price if no snapshot)
+      let resolvedPriceMinor: number | null = loan.priceMinorAtBorrow ?? null;
+      if (resolvedPriceMinor === null) {
+        const bookPrices = await this.catalogPublicApi.getBookPricesMinor([
+          loan.bookId,
+        ]);
+        resolvedPriceMinor = bookPrices.get(loan.bookId) ?? null;
+      }
+
+      if (resolvedPriceMinor === null) {
+        throw new AmountRequiredError();
+      }
+      assessedMinor = resolvedPriceMinor;
+    }
+
+    const memberId = loan.userId;
+
+    const txResult = await this.prisma.$transaction(async (tx) => {
+      // Step 1: Member advisory lock
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(${HOLD_ADVISORY_NAMESPACE}::int, ${memberId}::int)`;
+
+      // Step 2: Lock loan row FOR UPDATE
+      const lockedLoans = await tx.$queryRaw<Loan[]>`
+          SELECT * FROM "Loan" WHERE id = ${loan.id} FOR UPDATE
+        `;
+      const currentLoan = lockedLoans[0];
+
+      if (!currentLoan || currentLoan.status !== LoanStatus.ACTIVE) {
+        throw new LoanNotActiveError(loan.id, currentLoan?.status);
+      }
+
+      // Step 3: Lock copy row FOR UPDATE
+      const lockedCopies = await tx.$queryRaw<Copy[]>`
+          SELECT * FROM "Copy" WHERE id = ${currentLoan.copyId} FOR UPDATE
+        `;
+      const lockedCopy = lockedCopies[0];
+
+      if (!lockedCopy) {
+        throw new NotFoundException(`Copy #${currentLoan.copyId} not found`);
+      }
+
+      const now = this.clockService.now();
+      const note = input.note.trim();
+
+      // Step 4: Update loan to LOST
+      const updatedLoan = await tx.loan.update({
+        where: { id: currentLoan.id },
+        data: {
+          status: LoanStatus.LOST,
+          lostAt: now,
+        },
+      });
+
+      // Step 5: Transition copy BORROWED -> LOST
+      await this.copiesService.transitionStatus(
+        lockedCopy.id,
+        [CopyStatus.BORROWED],
+        CopyStatus.LOST,
+        {
+          reason: note,
+          changedById: input.staffId,
+        },
+        tx,
+      );
+
+      // Step 6: Create LOST_BOOK fine (no late fee is charged!)
+      const lostFine = await this.finesService.createFine(
+        {
+          userId: currentLoan.userId,
+          reason: FineReason.LOST_BOOK,
+          amountMinor: assessedMinor,
+          loanId: currentLoan.id,
+          note,
+          dedupeKey: FinesService.buildLostDedupeKey(currentLoan.id),
+          createdById: input.staffId,
+        },
+        tx,
+      );
+
+      return { updatedLoan, currentLoan, lostFine, now };
+    }, INTERACTIVE_TX_OPTIONS);
+
+    // Step 7: Emit domain events post-commit
+    this.eventEmitter.emit(
+      DOMAIN_EVENT_NAMES.LOAN_LOST,
+      new LoanLostEvent(
+        txResult.updatedLoan.id,
+        txResult.currentLoan.userId,
+        txResult.currentLoan.bookId,
+        txResult.currentLoan.copyId,
+        txResult.now,
+      ),
+    );
+
+    if (txResult.lostFine && (txResult.lostFine as any).isNew) {
+      this.eventEmitter.emit(
+        DOMAIN_EVENT_NAMES.FINE_CREATED,
+        new FineCreatedEvent(
+          txResult.lostFine.id,
+          txResult.lostFine.userId,
+          txResult.lostFine.reason,
+          txResult.lostFine.amountMinor,
+          txResult.lostFine.loanId,
+          txResult.now,
+        ),
+      );
+    }
+
+    return txResult.updatedLoan;
   }
 }

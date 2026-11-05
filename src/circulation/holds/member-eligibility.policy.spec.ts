@@ -11,6 +11,7 @@ import {
   MaxActiveHoldsReachedError,
   MaxActiveLoansReachedError,
   UnpaidFinesError,
+  OverdueLoansError,
   DuplicateActiveHoldError,
   HoldErrorCode,
 } from './errors';
@@ -32,6 +33,7 @@ describe('MemberEligibilityPolicy (Step 4)', () => {
   };
   let finePortMock: {
     hasUnpaidFines: jest.Mock;
+    checkMemberFines: jest.Mock;
   };
 
   const userId = 42;
@@ -55,6 +57,7 @@ describe('MemberEligibilityPolicy (Step 4)', () => {
 
     finePortMock = {
       hasUnpaidFines: jest.fn().mockResolvedValue(false),
+      checkMemberFines: jest.fn().mockResolvedValue({ blocked: false }),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -83,7 +86,7 @@ describe('MemberEligibilityPolicy (Step 4)', () => {
           userId,
           undefined,
         );
-        expect(finePortMock.hasUnpaidFines).toHaveBeenCalledWith(
+        expect(finePortMock.checkMemberFines).toHaveBeenCalledWith(
           userId,
           undefined,
         );
@@ -162,9 +165,12 @@ describe('MemberEligibilityPolicy (Step 4)', () => {
       });
     });
 
-    describe('Rule 3: Unpaid fines (UnpaidFinesPort)', () => {
+    describe('Rule 3: Unpaid fines and overdue loans (UnpaidFinesPort)', () => {
       it('throws UnpaidFinesError when member has unpaid fines', async () => {
-        finePortMock.hasUnpaidFines.mockResolvedValue(true);
+        finePortMock.checkMemberFines.mockResolvedValue({
+          blocked: true,
+          reason: 'UNPAID_FINES',
+        });
 
         await expect(
           policy.checkRequestEligibility(userId, bookId),
@@ -179,6 +185,37 @@ describe('MemberEligibilityPolicy (Step 4)', () => {
 
         // Short-circuit: duplicate hold query must not be executed
         expect(prismaMock.hold.findFirst).not.toHaveBeenCalled();
+      });
+
+      it('throws OverdueLoansError when member has overdue loans', async () => {
+        finePortMock.checkMemberFines.mockResolvedValue({
+          blocked: true,
+          reason: 'OVERDUE_LOANS',
+        });
+
+        await expect(
+          policy.checkRequestEligibility(userId, bookId),
+        ).rejects.toThrow(OverdueLoansError);
+
+        try {
+          await policy.checkRequestEligibility(userId, bookId);
+        } catch (err: any) {
+          expect(err.code).toBe(HoldErrorCode.OVERDUE_LOANS);
+          expect(err.getStatus()).toBe(400);
+        }
+
+        expect(prismaMock.hold.findFirst).not.toHaveBeenCalled();
+      });
+
+      it('throws UnpaidFinesError when both reasons are present with UNPAID_FINES precedence', async () => {
+        finePortMock.checkMemberFines.mockResolvedValue({
+          blocked: true,
+          reason: 'UNPAID_FINES',
+        });
+
+        await expect(
+          policy.checkRequestEligibility(userId, bookId),
+        ).rejects.toThrow(UnpaidFinesError);
       });
     });
 
@@ -220,7 +257,7 @@ describe('MemberEligibilityPolicy (Step 4)', () => {
         userId,
         undefined,
       );
-      expect(finePortMock.hasUnpaidFines).toHaveBeenCalledWith(
+      expect(finePortMock.checkMemberFines).toHaveBeenCalledWith(
         userId,
         undefined,
       );
@@ -249,7 +286,10 @@ describe('MemberEligibilityPolicy (Step 4)', () => {
 
     it('throws UnpaidFinesError when member has unpaid fines', async () => {
       loanPortMock.countActiveLoansForMember.mockResolvedValue(1);
-      finePortMock.hasUnpaidFines.mockResolvedValue(true);
+      finePortMock.checkMemberFines.mockResolvedValue({
+        blocked: true,
+        reason: 'UNPAID_FINES',
+      });
 
       await expect(policy.checkCheckoutEligibility(userId)).rejects.toThrow(
         UnpaidFinesError,
@@ -259,6 +299,25 @@ describe('MemberEligibilityPolicy (Step 4)', () => {
         await policy.checkCheckoutEligibility(userId);
       } catch (err: any) {
         expect(err.code).toBe(HoldErrorCode.UNPAID_FINES);
+        expect(err.getStatus()).toBe(400);
+      }
+    });
+
+    it('throws OverdueLoansError when member has overdue loans during checkout', async () => {
+      loanPortMock.countActiveLoansForMember.mockResolvedValue(1);
+      finePortMock.checkMemberFines.mockResolvedValue({
+        blocked: true,
+        reason: 'OVERDUE_LOANS',
+      });
+
+      await expect(policy.checkCheckoutEligibility(userId)).rejects.toThrow(
+        OverdueLoansError,
+      );
+
+      try {
+        await policy.checkCheckoutEligibility(userId);
+      } catch (err: any) {
+        expect(err.code).toBe(HoldErrorCode.OVERDUE_LOANS);
         expect(err.getStatus()).toBe(400);
       }
     });
@@ -338,8 +397,14 @@ describe('MemberEligibilityPolicy (Step 4)', () => {
     });
 
     describe('DefaultUnpaidFinesAdapter', () => {
-      it('returns false (no unpaid fines placeholder for Stage 6)', async () => {
-        const adapter = new DefaultUnpaidFinesAdapter();
+      it('returns false when neither unpaid fines nor overdue loans exist', async () => {
+        const mockPrisma = {
+          fine: { findFirst: jest.fn().mockResolvedValue(null) },
+          loan: { findFirst: jest.fn().mockResolvedValue(null) },
+        } as unknown as PrismaService;
+        const mockClock = { now: jest.fn().mockReturnValue(new Date()) } as any;
+
+        const adapter = new DefaultUnpaidFinesAdapter(mockPrisma, mockClock);
         await expect(adapter.hasUnpaidFines(userId)).resolves.toBe(false);
       });
     });

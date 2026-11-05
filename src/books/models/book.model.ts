@@ -1,4 +1,4 @@
-import { Field, ID, Int, ObjectType } from '@nestjs/graphql';
+import { Field, Float, ID, Int, ObjectType } from '@nestjs/graphql';
 import { AuthorModel } from './author.model';
 import { CategoryModel } from './category.model';
 
@@ -18,6 +18,14 @@ export class BookModel {
 
   @Field(() => Int, { nullable: true })
   publishedYear?: number;
+
+  @Field(() => Float, {
+    nullable: true,
+    description: 'Replacement price in Rupees (null if not set)',
+  })
+  replacementPriceRs?: number | null;
+
+  priceMinor?: number | null;
 
   @Field(() => [AuthorModel])
   authors: AuthorModel[];

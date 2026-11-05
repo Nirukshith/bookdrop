@@ -16,6 +16,7 @@ model Book {
   isbn          String     @unique
   description   String?
   publishedYear Int?
+  priceMinor    Int?
   authors       Author[]
   categories    Category[]
   copies        Copy[]
@@ -68,14 +69,14 @@ enum HoldStatus {
 }
 
 enum HoldSource {
-  REQUEST          // member requested it
-  QUEUE_PROMOTION  // used by Stage 8
+  REQUEST // member requested it
+  QUEUE_PROMOTION // used by Stage 8
 }
 
 model Hold {
   id           Int        @id @default(autoincrement())
-  userId       Int        // plain user id, deliberately NOT a foreign key
-  bookId       Int        // plain book id, deliberately NOT a foreign key
+  userId       Int // plain user id, deliberately NOT a foreign key
+  bookId       Int // plain book id, deliberately NOT a foreign key
   copyId       Int
   copy         Copy       @relation(fields: [copyId], references: [id])
   loan         Loan?
@@ -84,11 +85,30 @@ model Hold {
   expiresAt    DateTime
   createdAt    DateTime   @default(now())
   resolvedAt   DateTime?
-  resolvedNote String?    // for example the cancellation reason or who cancelled
+  resolvedNote String? // for example the cancellation reason or who cancelled
 
   @@index([userId, status])
   @@index([status, expiresAt])
   @@index([bookId])
+}
+
+enum ReturnCondition {
+  GOOD
+  DAMAGED
+}
+
+enum FineReason {
+  LATE_RETURN
+  MISSED_PICKUPS
+  LOST_BOOK
+  DAMAGED_BOOK
+}
+
+enum FineStatus {
+  UNPAID
+  PARTIALLY_PAID
+  PAID
+  WAIVED
 }
 
 enum LoanStatus {
@@ -98,26 +118,68 @@ enum LoanStatus {
 }
 
 model Loan {
-  id             Int        @id @default(autoincrement())
-  userId         Int        // plain user id, deliberately NOT a foreign key
-  bookId         Int        // plain book id, deliberately NOT a foreign key
-  copyId         Int
-  copy           Copy       @relation(fields: [copyId], references: [id])
-  holdId         Int?       @unique
-  hold           Hold?      @relation(fields: [holdId], references: [id])
-  status         LoanStatus @default(ACTIVE)
-  borrowedAt     DateTime
-  dueAt          DateTime
-  returnedAt     DateTime?
-  checkedOutById Int        // plain staff user id, NOT a foreign key
-  createdAt      DateTime   @default(now())
-  updatedAt      DateTime   @updatedAt
+  id              Int              @id @default(autoincrement())
+  userId          Int // plain user id, deliberately NOT a foreign key
+  bookId          Int // plain book id, deliberately NOT a foreign key
+  copyId          Int
+  copy            Copy             @relation(fields: [copyId], references: [id])
+  holdId          Int?             @unique
+  hold            Hold?            @relation(fields: [holdId], references: [id])
+  status          LoanStatus       @default(ACTIVE)
+  borrowedAt      DateTime
+  dueAt           DateTime
+  returnedAt      DateTime?
+  checkedOutById  Int // plain staff user id, NOT a foreign key
+  returnCondition ReturnCondition?
+  conditionNote   String?
+  returnedById       Int? // plain staff user id, NOT a foreign key
+  lostAt             DateTime?
+  priceMinorAtBorrow Int?
+  fines              Fine[]
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
 
   @@index([userId, status])
   @@index([status, dueAt])
   @@index([copyId])
 }
 
+model Fine {
+  id           Int           @id @default(autoincrement())
+  userId       Int // plain user id, deliberately NOT a foreign key
+  reason       FineReason
+  amountMinor  Int
+  paidMinor    Int           @default(0)
+  status       FineStatus    @default(UNPAID)
+  loanId       Int?
+  loan         Loan?         @relation(fields: [loanId], references: [id])
+  daysLate     Int?
+  note         String?
+  dedupeKey    String?       @unique
+  createdById  Int? // plain staff user id, null when created by the system
+  createdAt    DateTime      @default(now())
+  settledAt    DateTime?
+  waivedById          Int? // plain admin user id
+  waivedReason        String?
+  uncappedAmountMinor Int?
+  capMinor            Int?
+  payments            FinePayment[]
+
+  @@index([userId, status])
+  @@index([loanId])
+}
+
+model FinePayment {
+  id           Int      @id @default(autoincrement())
+  fineId       Int
+  fine         Fine     @relation(fields: [fineId], references: [id])
+  amountMinor  Int
+  receivedById Int // plain staff user id, NOT a foreign key
+  note         String?
+  createdAt    DateTime @default(now())
+
+  @@index([fineId])
+}
 
 model CopyStatusHistory {
   id          Int         @id @default(autoincrement())
@@ -126,7 +188,7 @@ model CopyStatusHistory {
   fromStatus  CopyStatus?
   toStatus    CopyStatus
   reason      String?
-  changedById Int?        // plain user id, deliberately NOT a foreign key
+  changedById Int? // plain user id, deliberately NOT a foreign key
   createdAt   DateTime    @default(now())
 
   @@index([copyId])

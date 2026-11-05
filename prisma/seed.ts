@@ -1,6 +1,16 @@
 import 'dotenv/config';
 import * as argon2 from 'argon2';
-import { PrismaClient, CopyStatus, Role, HoldStatus, HoldSource, LoanStatus } from '@prisma/client';
+import {
+  PrismaClient,
+  CopyStatus,
+  Role,
+  HoldStatus,
+  HoldSource,
+  LoanStatus,
+  FineReason,
+  FineStatus,
+  ReturnCondition,
+} from '@prisma/client';
 
 const prisma = new PrismaClient();
 
@@ -23,6 +33,8 @@ async function main() {
 
   if (!isProduction) {
     // Clear existing records in reverse dependency order for repeatability in development/test
+    await prisma.finePayment.deleteMany();
+    await prisma.fine.deleteMany();
     await prisma.loan.deleteMany();
     await prisma.hold.deleteMany();
     await prisma.copyStatusHistory.deleteMany();
@@ -94,6 +106,7 @@ async function main() {
       isbn: '978-0451524935',
       description: 'A chilling prophecy about the future and totalitarian rule.',
       publishedYear: 1949,
+      priceMinor: 39900, // Paperback Rs 399
       authorNames: ['George Orwell'],
       categoryNames: ['Dystopian', 'Classic Fiction'],
       copiesCount: 4,
@@ -103,6 +116,7 @@ async function main() {
       isbn: '978-0451526342',
       description: 'A satire on the Russian Revolution and corruption of power.',
       publishedYear: 1945,
+      priceMinor: 25000, // Paperback Rs 250 (used for capped late return scenario)
       authorNames: ['George Orwell'],
       categoryNames: ['Classic Fiction', 'Dystopian'],
       copiesCount: 3,
@@ -112,6 +126,7 @@ async function main() {
       isbn: '978-0141439518',
       description: 'A witty romantic tale of manners and marriage in 19th-century England.',
       publishedYear: 1813,
+      priceMinor: 49900, // Paperback Rs 499
       authorNames: ['Jane Austen'],
       categoryNames: ['Classic Fiction', 'Historical Fiction'],
       copiesCount: 4,
@@ -121,6 +136,7 @@ async function main() {
       isbn: '978-0141439662',
       description: 'The story of two sisters of opposing temperaments finding love.',
       publishedYear: 1811,
+      priceMinor: 39900,
       authorNames: ['Jane Austen'],
       categoryNames: ['Classic Fiction'],
       copiesCount: 2,
@@ -130,6 +146,7 @@ async function main() {
       isbn: '978-0141439587',
       description: 'The comedic escapades of a well-meaning matchmaker in Regency England.',
       publishedYear: 1815,
+      priceMinor: 44900,
       authorNames: ['Jane Austen'],
       categoryNames: ['Classic Fiction'],
       copiesCount: 1,
@@ -139,6 +156,7 @@ async function main() {
       isbn: '978-0547928227',
       description: 'Bilbo Baggins embarks on a grand journey to reclaim the Lonely Mountain.',
       publishedYear: 1937,
+      priceMinor: 79900, // Hardcover Rs 799
       authorNames: ['J.R.R. Tolkien'],
       categoryNames: ['Fantasy', 'Adventure'],
       copiesCount: 4,
@@ -148,6 +166,7 @@ async function main() {
       isbn: '978-0547928210',
       description: 'The first volume of the legendary epic fantasy saga.',
       publishedYear: 1954,
+      priceMinor: 99900, // Hardcover Rs 999
       authorNames: ['J.R.R. Tolkien'],
       categoryNames: ['Fantasy', 'Adventure'],
       copiesCount: 3,
@@ -157,6 +176,7 @@ async function main() {
       isbn: '978-0547928203',
       description: 'The fellowship is broken as the shadows of Mordor grow deeper.',
       publishedYear: 1954,
+      priceMinor: 99900,
       authorNames: ['J.R.R. Tolkien'],
       categoryNames: ['Fantasy', 'Adventure'],
       copiesCount: 2,
@@ -166,6 +186,7 @@ async function main() {
       isbn: '978-0547928197',
       description: 'The epic climax of the War of the Ring and the quest to destroy Sauron.',
       publishedYear: 1955,
+      priceMinor: 119900, // Premium Hardcover Rs 1199
       authorNames: ['J.R.R. Tolkien'],
       categoryNames: ['Fantasy', 'Adventure'],
       copiesCount: 3,
@@ -175,6 +196,7 @@ async function main() {
       isbn: '978-0553293357',
       description: 'Hari Seldon uses psychohistory to preserve knowledge across the Galactic Empire.',
       publishedYear: 1951,
+      priceMinor: 59900,
       authorNames: ['Isaac Asimov'],
       categoryNames: ['Science Fiction'],
       copiesCount: 3,
@@ -184,6 +206,7 @@ async function main() {
       isbn: '978-0553293371',
       description: 'The Foundation faces threats from the remnants of the Empire and the Mule.',
       publishedYear: 1952,
+      priceMinor: 59900,
       authorNames: ['Isaac Asimov'],
       categoryNames: ['Science Fiction'],
       copiesCount: 2,
@@ -193,6 +216,7 @@ async function main() {
       isbn: '978-0553293364',
       description: 'The elusive telepathic sanctuary seeks to guide humanity back toward prosperity.',
       publishedYear: 1953,
+      priceMinor: 59900,
       authorNames: ['Isaac Asimov'],
       categoryNames: ['Science Fiction'],
       copiesCount: 2,
@@ -202,6 +226,7 @@ async function main() {
       isbn: '978-0553382563',
       description: 'A collection of interconnected stories introducing the Three Laws of Robotics.',
       publishedYear: 1950,
+      priceMinor: 49900,
       authorNames: ['Isaac Asimov'],
       categoryNames: ['Science Fiction', 'Philosophy & Psychology'],
       copiesCount: 3,
@@ -211,6 +236,7 @@ async function main() {
       isbn: '978-0486282114',
       description: 'Victor Frankenstein creates life with unexpected and tragic consequences.',
       publishedYear: 1818,
+      priceMinor: 35000,
       authorNames: ['Mary Shelley'],
       categoryNames: ['Science Fiction', 'Classic Fiction'],
       copiesCount: 4,
@@ -220,6 +246,7 @@ async function main() {
       isbn: '978-0199552412',
       description: 'An apocalyptic vision of humanity struggling against an unstoppable plague.',
       publishedYear: 1826,
+      priceMinor: 45000,
       authorNames: ['Mary Shelley'],
       categoryNames: ['Science Fiction', 'Dystopian'],
       copiesCount: 1,
@@ -229,6 +256,7 @@ async function main() {
       isbn: '978-0140449136',
       description: 'Raskolnikov commits a murder and grapples with crushing psychological guilt.',
       publishedYear: 1866,
+      priceMinor: 89900,
       authorNames: ['Fyodor Dostoevsky'],
       categoryNames: ['Classic Fiction', 'Philosophy & Psychology'],
       copiesCount: 3,
@@ -238,6 +266,7 @@ async function main() {
       isbn: '978-0374528379',
       description: 'A passionate philosophical drama exploring faith, free will, and family betrayal.',
       publishedYear: 1880,
+      priceMinor: 129900, // Premium Hardcover Rs 1299
       authorNames: ['Fyodor Dostoevsky'],
       categoryNames: ['Classic Fiction', 'Philosophy & Psychology'],
       copiesCount: 2,
@@ -247,6 +276,7 @@ async function main() {
       isbn: '978-0679734529',
       description: 'A searing existential examination of alienation and human spite.',
       publishedYear: 1864,
+      priceMinor: 35000,
       authorNames: ['Fyodor Dostoevsky'],
       categoryNames: ['Philosophy & Psychology', 'Classic Fiction'],
       copiesCount: 2,
@@ -256,6 +286,7 @@ async function main() {
       isbn: '978-0375702242',
       description: 'Prince Myshkin arrives in St. Petersburg as a paragon of goodness.',
       publishedYear: 1869,
+      priceMinor: 69900,
       authorNames: ['Fyodor Dostoevsky'],
       categoryNames: ['Classic Fiction'],
       copiesCount: 1,
@@ -265,6 +296,7 @@ async function main() {
       isbn: '978-0060883287',
       description: 'The multi-generational saga of the Buendía family in the town of Macondo.',
       publishedYear: 1967,
+      priceMinor: 79900,
       authorNames: ['Gabriel García Márquez'],
       categoryNames: ['Classic Fiction', 'Historical Fiction'],
       copiesCount: 4,
@@ -274,6 +306,7 @@ async function main() {
       isbn: '978-0307389732',
       description: 'An unyielding love persists across more than half a century.',
       publishedYear: 1985,
+      priceMinor: 65000,
       authorNames: ['Gabriel García Márquez'],
       categoryNames: ['Classic Fiction'],
       copiesCount: 3,
@@ -283,6 +316,7 @@ async function main() {
       isbn: '978-1400034710',
       description: 'A compelling forensic reconstruction of a murder everyone knew was coming.',
       publishedYear: 1981,
+      priceMinor: 39900,
       authorNames: ['Gabriel García Márquez'],
       categoryNames: ['Mystery & Detective', 'Classic Fiction'],
       copiesCount: 2,
@@ -292,6 +326,7 @@ async function main() {
       isbn: '978-0140439083',
       description: 'The first appearance of Sherlock Holmes and Dr. John Watson.',
       publishedYear: 1887,
+      priceMinor: 29900,
       authorNames: ['Arthur Conan Doyle'],
       categoryNames: ['Mystery & Detective', 'Adventure'],
       copiesCount: 3,
@@ -301,6 +336,7 @@ async function main() {
       isbn: '978-0140439076',
       description: 'Sherlock Holmes investigates a missing treasure and a deadly poison dart.',
       publishedYear: 1890,
+      priceMinor: 29900,
       authorNames: ['Arthur Conan Doyle'],
       categoryNames: ['Mystery & Detective'],
       copiesCount: 2,
@@ -310,6 +346,7 @@ async function main() {
       isbn: '978-0141439211',
       description: 'A ghostly hound terrorizes the Dartmoor moors in Holmes\' most famous mystery.',
       publishedYear: 1902,
+      priceMinor: 39900,
       authorNames: ['Arthur Conan Doyle'],
       categoryNames: ['Mystery & Detective'],
       copiesCount: 4,
@@ -319,6 +356,7 @@ async function main() {
       isbn: '978-0062073488',
       description: 'Ten strangers are lured to an isolated island and accused of past crimes.',
       publishedYear: 1939,
+      priceMinor: 49900,
       authorNames: ['Agatha Christie'],
       categoryNames: ['Mystery & Detective'],
       copiesCount: 4,
@@ -328,6 +366,7 @@ async function main() {
       isbn: '978-0062693662',
       description: 'Hercule Poirot must solve a homicide aboard an exotic snowbound train.',
       publishedYear: 1934,
+      priceMinor: 49900,
       authorNames: ['Agatha Christie'],
       categoryNames: ['Mystery & Detective'],
       copiesCount: 3,
@@ -337,6 +376,7 @@ async function main() {
       isbn: '978-0062073563',
       description: 'A groundbreaking mystery featuring Poirot and an unforgettable twist.',
       publishedYear: 1926,
+      priceMinor: 45000,
       authorNames: ['Agatha Christie'],
       categoryNames: ['Mystery & Detective'],
       copiesCount: 2,
@@ -346,6 +386,7 @@ async function main() {
       isbn: '978-0441478125',
       description: 'An envoy travels to the winter planet Gethen to foster interstellar union.',
       publishedYear: 1969,
+      priceMinor: 55000,
       authorNames: ['Ursula K. Le Guin'],
       categoryNames: ['Science Fiction', 'Philosophy & Psychology'],
       copiesCount: 3,
@@ -355,6 +396,7 @@ async function main() {
       isbn: '978-0061054884',
       description: 'A physicist travels between an anarchist moon and a capitalist homeworld.',
       publishedYear: 1974,
+      priceMinor: 55000,
       authorNames: ['Ursula K. Le Guin'],
       categoryNames: ['Science Fiction', 'Dystopian'],
       copiesCount: 2,
@@ -364,6 +406,7 @@ async function main() {
       isbn: '978-0060850524',
       description: 'A terrifying vision of a dystopian, technologically controlled, and commodified future society.',
       publishedYear: 1932,
+      priceMinor: null, // Left without price to exercise fallback paths
       authorNames: ['Aldous Huxley'],
       categoryNames: ['Dystopian', 'Science Fiction', 'Classic Fiction'],
       copiesCount: 3,
@@ -385,6 +428,7 @@ async function main() {
           isbn: book.isbn,
           description: book.description,
           publishedYear: book.publishedYear,
+          priceMinor: book.priceMinor ?? null,
           authors: {
             connect: book.authorNames.map((name) => ({ id: authorsMap[name].id })),
           },
@@ -417,6 +461,12 @@ async function main() {
         });
       }
     } else {
+      await prisma.book.update({
+        where: { id: targetBook.id },
+        data: {
+          priceMinor: book.priceMinor ?? null,
+        },
+      });
       // Book already exists (e.g. in production): insert any missing copies
       const existingCopiesCount = targetBook.copies.length;
       const missingCopies = Math.max(0, book.copiesCount - existingCopiesCount);
@@ -752,6 +802,7 @@ async function main() {
             borrowedAt,
             dueAt,
             checkedOutById: staffId,
+            priceMinorAtBorrow: bookHobbit.priceMinor,
           },
         });
 
@@ -787,6 +838,7 @@ async function main() {
             borrowedAt,
             dueAt,
             checkedOutById: staffId,
+            priceMinorAtBorrow: bookFoundation.priceMinor,
           },
         });
 
@@ -824,6 +876,7 @@ async function main() {
             dueAt,
             returnedAt,
             checkedOutById: staffId,
+            priceMinorAtBorrow: bookFrankenstein.priceMinor,
           },
         });
 
@@ -850,6 +903,313 @@ async function main() {
       }
 
       console.log('✅ Seeded 3 demo loans (ACTIVE, OVERDUE, RETURNED) with consistent copy statuses.');
+
+      // 7. Seed Demo Loans & Fines for Step 9 (PAID, UNPAID, PARTIALLY_PAID, WAIVED, LOST)
+      console.log('💰 Seeding demo fines and loans for Step 9...');
+
+      const demoAdmin = await prisma.user.findUnique({
+        where: { email: adminEmail },
+      });
+      const adminId = demoAdmin?.id ?? staffId;
+
+      const [
+        bookTwoTowers,
+        bookReturnKing,
+        bookIRobot,
+        bookSecondFoundation,
+      ] = await Promise.all([
+        prisma.book.findFirst({
+          where: { title: 'The Two Towers' },
+          include: { copies: { orderBy: { id: 'asc' } } },
+        }),
+        prisma.book.findFirst({
+          where: { title: 'The Return of the King' },
+          include: { copies: { orderBy: { id: 'asc' } } },
+        }),
+        prisma.book.findFirst({
+          where: { title: 'I, Robot' },
+          include: { copies: { orderBy: { id: 'asc' } } },
+        }),
+        prisma.book.findFirst({
+          where: { title: 'Second Foundation' },
+          include: { copies: { orderBy: { id: 'asc' } } },
+        }),
+      ]);
+
+      // 7a. RETURNED late loan with a PAID LATE_RETURN fine
+      if (bookTwoTowers && bookTwoTowers.copies.length > 0) {
+        const returnedLateCopy = bookTwoTowers.copies[0];
+        const borrowedAt = new Date(now.getTime() - 25 * 24 * 60 * 60 * 1000); // 25 days ago
+        const dueAt = new Date(now.getTime() - 11 * 24 * 60 * 60 * 1000); // due 11 days ago
+        const returnedAt = new Date(now.getTime() - 8 * 24 * 60 * 60 * 1000); // returned 8 days ago (3 days late!)
+
+        const lateLoan = await prisma.loan.create({
+          data: {
+            userId: demoMember.id,
+            copyId: returnedLateCopy.id,
+            bookId: bookTwoTowers.id,
+            status: LoanStatus.RETURNED,
+            borrowedAt,
+            dueAt,
+            returnedAt,
+            returnCondition: ReturnCondition.GOOD,
+            returnedById: staffId,
+            checkedOutById: staffId,
+            priceMinorAtBorrow: bookTwoTowers.priceMinor,
+          },
+        });
+
+        // Copy was BORROWED then returned to AVAILABLE
+        await prisma.copy.update({
+          where: { id: returnedLateCopy.id },
+          data: { status: CopyStatus.AVAILABLE },
+        });
+
+        await prisma.copyStatusHistory.createMany({
+          data: [
+            {
+              copyId: returnedLateCopy.id,
+              fromStatus: CopyStatus.AVAILABLE,
+              toStatus: CopyStatus.BORROWED,
+              reason: `Loan checkout to demo member #${demoMember.id}`,
+              changedById: staffId,
+              createdAt: borrowedAt,
+            },
+            {
+              copyId: returnedLateCopy.id,
+              fromStatus: CopyStatus.BORROWED,
+              toStatus: CopyStatus.AVAILABLE,
+              reason: `Late return (3 days) in good condition`,
+              changedById: staffId,
+              createdAt: returnedAt,
+            },
+          ],
+        });
+
+        // Create PAID LATE_RETURN fine (Rs 30 = 3000 minor, uncapped = 3000, cap = 99900)
+        const paidFine = await prisma.fine.create({
+          data: {
+            userId: demoMember.id,
+            reason: FineReason.LATE_RETURN,
+            amountMinor: 3000,
+            uncappedAmountMinor: 3000,
+            capMinor: bookTwoTowers.priceMinor,
+            paidMinor: 3000,
+            status: FineStatus.PAID,
+            loanId: lateLoan.id,
+            daysLate: 3,
+            dedupeKey: `late-return:${lateLoan.id}`,
+            createdById: staffId,
+            createdAt: returnedAt,
+            settledAt: returnedAt,
+          },
+        });
+
+        await prisma.finePayment.create({
+          data: {
+            fineId: paidFine.id,
+            amountMinor: 3000,
+            receivedById: staffId,
+            note: 'Paid in full at desk',
+            createdAt: returnedAt,
+          },
+        });
+      }
+
+      // 7b. LOST loan with its LOST_BOOK fine (copy status is LOST)
+      if (bookReturnKing && bookReturnKing.copies.length > 0) {
+        const lostCopy = bookReturnKing.copies[0];
+        const borrowedAt = new Date(now.getTime() - 20 * 24 * 60 * 60 * 1000); // 20 days ago
+        const dueAt = new Date(now.getTime() - 6 * 24 * 60 * 60 * 1000); // 6 days ago
+        const lostAt = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000); // declared lost 2 days ago
+
+        const lostLoan = await prisma.loan.create({
+          data: {
+            userId: demoMember.id,
+            copyId: lostCopy.id,
+            bookId: bookReturnKing.id,
+            status: LoanStatus.LOST,
+            borrowedAt,
+            dueAt,
+            lostAt,
+            checkedOutById: staffId,
+            priceMinorAtBorrow: bookReturnKing.priceMinor,
+          },
+        });
+
+        // Copy MUST be in LOST status
+        await prisma.copy.update({
+          where: { id: lostCopy.id },
+          data: { status: CopyStatus.LOST },
+        });
+
+        await prisma.copyStatusHistory.createMany({
+          data: [
+            {
+              copyId: lostCopy.id,
+              fromStatus: CopyStatus.AVAILABLE,
+              toStatus: CopyStatus.BORROWED,
+              reason: `Loan checkout to demo member #${demoMember.id}`,
+              changedById: staffId,
+              createdAt: borrowedAt,
+            },
+            {
+              copyId: lostCopy.id,
+              fromStatus: CopyStatus.BORROWED,
+              toStatus: CopyStatus.LOST,
+              reason: 'Patron declared book lost during travel',
+              changedById: staffId,
+              createdAt: lostAt,
+            },
+          ],
+        });
+
+        // LOST_BOOK fine (defaults to book price snapshot Rs 1199 = 119900 minor, UNPAID)
+        await prisma.fine.create({
+          data: {
+            userId: demoMember.id,
+            reason: FineReason.LOST_BOOK,
+            amountMinor: bookReturnKing.priceMinor ?? 50000,
+            paidMinor: 0,
+            status: FineStatus.UNPAID,
+            loanId: lostLoan.id,
+            note: 'Replacement fee assessed for lost book',
+            dedupeKey: `lost:${lostLoan.id}`,
+            createdById: staffId,
+            createdAt: lostAt,
+          },
+        });
+      }
+
+      // 7c. PARTIALLY_PAID fine for demo member (Rs 200 assessed, Rs 80 paid)
+      const partialFine = await prisma.fine.create({
+        data: {
+          userId: demoMember.id,
+          reason: FineReason.DAMAGED_BOOK,
+          amountMinor: 20000, // Rs 200
+          paidMinor: 8000, // Rs 80
+          status: FineStatus.PARTIALLY_PAID,
+          note: 'Cover water damage assessment',
+          dedupeKey: `damaged:demo-partial-${demoMember.id}`,
+          createdById: staffId,
+          createdAt: new Date(now.getTime() - 5 * 24 * 60 * 60 * 1000),
+        },
+      });
+
+      await prisma.finePayment.create({
+        data: {
+          fineId: partialFine.id,
+          amountMinor: 8000,
+          receivedById: staffId,
+          note: 'Initial installment paid at circulation desk',
+          createdAt: new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000),
+        },
+      });
+
+      // 7d. WAIVED fine for demo member (Rs 50 assessed, Rs 20 earlier payment kept, waived by Admin)
+      const waivedFine = await prisma.fine.create({
+        data: {
+          userId: demoMember.id,
+          reason: FineReason.LATE_RETURN,
+          amountMinor: 5000, // Rs 50
+          paidMinor: 2000, // Rs 20
+          status: FineStatus.WAIVED,
+          daysLate: 5,
+          note: 'Late return fine waived due to medical emergency',
+          dedupeKey: `waived:demo-${demoMember.id}`,
+          createdById: staffId,
+          waivedById: adminId,
+          waivedReason: 'Medical emergency with submitted documentation',
+          settledAt: new Date(now.getTime() - 1 * 24 * 60 * 60 * 1000),
+          createdAt: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000),
+        },
+      });
+
+      await prisma.finePayment.create({
+        data: {
+          fineId: waivedFine.id,
+          amountMinor: 2000,
+          receivedById: staffId,
+          note: 'Partial payment before emergency',
+          createdAt: new Date(now.getTime() - 4 * 24 * 60 * 60 * 1000),
+        },
+      });
+
+      // 7e. CAPPED late return loan and fine (Animal Farm, price Rs 250 = 25000 minor)
+      // Returned 40 days late: uncapped = 40 * Rs 10 = Rs 400 (40000 minor).
+      // Capped at book replacement price of Rs 250 (25000 minor).
+      // wasCapped evaluates to true (25000 < 40000).
+      if (bookAnimalFarm && bookAnimalFarm.copies.length > 1) {
+        const cappedCopy = bookAnimalFarm.copies[1];
+        const borrowedAt = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000); // 60 days ago
+        const dueAt = new Date(now.getTime() - 46 * 24 * 60 * 60 * 1000); // 46 days ago
+        const returnedAt = new Date(now.getTime() - 6 * 24 * 60 * 60 * 1000); // returned 6 days ago (40 days late!)
+
+        const cappedLoan = await prisma.loan.create({
+          data: {
+            userId: demoMember.id,
+            copyId: cappedCopy.id,
+            bookId: bookAnimalFarm.id,
+            status: LoanStatus.RETURNED,
+            borrowedAt,
+            dueAt,
+            returnedAt,
+            returnCondition: ReturnCondition.GOOD,
+            returnedById: staffId,
+            checkedOutById: staffId,
+            priceMinorAtBorrow: bookAnimalFarm.priceMinor, // 25000 paise
+          },
+        });
+
+        // Copy was BORROWED then returned to AVAILABLE
+        await prisma.copy.update({
+          where: { id: cappedCopy.id },
+          data: { status: CopyStatus.AVAILABLE },
+        });
+
+        await prisma.copyStatusHistory.createMany({
+          data: [
+            {
+              copyId: cappedCopy.id,
+              fromStatus: CopyStatus.AVAILABLE,
+              toStatus: CopyStatus.BORROWED,
+              reason: `Loan checkout to demo member #${demoMember.id}`,
+              changedById: staffId,
+              createdAt: borrowedAt,
+            },
+            {
+              copyId: cappedCopy.id,
+              fromStatus: CopyStatus.BORROWED,
+              toStatus: CopyStatus.AVAILABLE,
+              reason: `Late return (40 days late, capped at book price Rs 250)`,
+              changedById: staffId,
+              createdAt: returnedAt,
+            },
+          ],
+        });
+
+        // Create UNPAID LATE_RETURN fine capped at book price
+        await prisma.fine.create({
+          data: {
+            userId: demoMember.id,
+            reason: FineReason.LATE_RETURN,
+            amountMinor: 25000, // Capped at Rs 250
+            uncappedAmountMinor: 40000, // 40 days * 10 Rs = 400 Rs
+            capMinor: 25000, // Book price Rs 250
+            paidMinor: 0,
+            status: FineStatus.UNPAID,
+            loanId: cappedLoan.id,
+            daysLate: 40,
+            dedupeKey: `late-return:${cappedLoan.id}`,
+            createdById: staffId,
+            createdAt: returnedAt,
+          },
+        });
+      }
+
+      console.log(
+        '✅ Seeded demo fines: 1 PAID (late loan), 1 UNPAID (lost loan), 1 PARTIALLY_PAID, 1 WAIVED, 1 CAPPED UNPAID (late loan capped at book price).',
+      );
     }
   } else {
     console.log('🔒 Production mode detected: Skipping demo users seed.');

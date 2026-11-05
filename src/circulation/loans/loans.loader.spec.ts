@@ -6,7 +6,10 @@ import { LoansDataLoader } from './loans.loader';
 
 describe('LoansDataLoader (Step 6)', () => {
   let loader: LoansDataLoader;
-  let booksServiceMock: { findTitlesByIds: jest.Mock };
+  let booksServiceMock: {
+    findTitlesByIds: jest.Mock;
+    getBookPricesMinor: jest.Mock;
+  };
   let identityPublicApiMock: { getMembersByIds: jest.Mock };
 
   beforeEach(async () => {
@@ -16,6 +19,13 @@ describe('LoansDataLoader (Step 6)', () => {
         ids.forEach((id) => map.set(id, `Book Title ${id}`));
         return map;
       }),
+      getBookPricesMinor: jest
+        .fn()
+        .mockImplementation(async (ids: number[]) => {
+          const map = new Map<number, number | null>();
+          ids.forEach((id) => map.set(id, id * 1000));
+          return map;
+        }),
     };
 
     identityPublicApiMock = {
@@ -78,5 +88,18 @@ describe('LoansDataLoader (Step 6)', () => {
     expect(titleB).toBe('Book Title 10');
     expect(booksServiceMock.findTitlesByIds).toHaveBeenCalledTimes(1);
     expect(booksServiceMock.findTitlesByIds).toHaveBeenCalledWith([10]);
+  });
+
+  it('batches multiple loadBookPriceMinor calls into a single database query', async () => {
+    const [price1, price2] = await Promise.all([
+      loader.loadBookPriceMinor(10),
+      loader.loadBookPriceMinor(20),
+    ]);
+
+    expect(price1).toBe(10000);
+    expect(price2).toBe(20000);
+
+    expect(booksServiceMock.getBookPricesMinor).toHaveBeenCalledTimes(1);
+    expect(booksServiceMock.getBookPricesMinor).toHaveBeenCalledWith([10, 20]);
   });
 });

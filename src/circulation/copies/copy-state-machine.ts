@@ -35,6 +35,77 @@ export const ALLOWED_MANUAL_TRANSITIONS: Readonly<
 });
 
 /**
+ * Transition Table for System-Only Status Changes (Stage 7).
+ *
+ * Never available through the manual changeStatus mutation.
+ * Allowed exclusively via automated circulation workflows:
+ * - BORROWED -> AVAILABLE (book returned in good condition)
+ * - BORROWED -> DAMAGED (book returned damaged)
+ * - BORROWED -> LOST (book declared lost by patron or overdue process)
+ */
+export const ALLOWED_SYSTEM_TRANSITIONS: Readonly<
+  Record<CopyStatus, readonly CopyStatus[]>
+> = Object.freeze({
+  [CopyStatus.BORROWED]: Object.freeze([
+    CopyStatus.AVAILABLE,
+    CopyStatus.DAMAGED,
+    CopyStatus.LOST,
+  ]),
+  [CopyStatus.AVAILABLE]: Object.freeze([]),
+  [CopyStatus.LOST]: Object.freeze([]),
+  [CopyStatus.DAMAGED]: Object.freeze([]),
+  [CopyStatus.ON_HOLD]: Object.freeze([]),
+});
+
+/**
+ * Evaluates whether a system-only transition from the current state to the target status is allowed.
+ * Pure function with no side effects or database access.
+ */
+export function canTransitionSystem(
+  current: CopyState,
+  targetStatus: CopyStatus,
+): TransitionResult {
+  if (current.isRetired) {
+    return {
+      allowed: false,
+      reason: 'Retired copies accept no status changes.',
+    };
+  }
+
+  if (current.status === targetStatus) {
+    return {
+      allowed: false,
+      reason: `Copy is already in status '${targetStatus}'.`,
+    };
+  }
+
+  const allowedTargets = ALLOWED_SYSTEM_TRANSITIONS[current.status] ?? [];
+  if (allowedTargets.includes(targetStatus)) {
+    return { allowed: true };
+  }
+
+  return {
+    allowed: false,
+    reason: `System transition from '${current.status}' to '${targetStatus}' is not allowed.`,
+  };
+}
+
+/**
+ * Asserts that a system transition is valid, throwing an InvalidCopyStateTransitionError if not.
+ */
+export function assertValidSystemTransition(
+  current: CopyState,
+  targetStatus: CopyStatus,
+): void {
+  const result = canTransitionSystem(current, targetStatus);
+  if (!result.allowed) {
+    throw new InvalidCopyStateTransitionError(
+      result.reason ?? 'Invalid system copy status transition.',
+    );
+  }
+}
+
+/**
  * Evaluates whether a manual transition from the current state to the target status is allowed.
  * Pure function with no side effects or database access.
  */

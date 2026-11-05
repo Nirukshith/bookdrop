@@ -6,10 +6,13 @@ export {
 } from './copies-public-api.interface';
 export {
   ALLOWED_MANUAL_TRANSITIONS,
+  ALLOWED_SYSTEM_TRANSITIONS,
   CopyState,
   TransitionResult,
   canTransitionManually,
   assertValidManualTransition,
+  canTransitionSystem,
+  assertValidSystemTransition,
   canRetireCopy,
   assertCanRetireCopy,
 } from './copy-state-machine';

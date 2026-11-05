@@ -1,7 +1,15 @@
-import { Args, Int, Mutation, Query, Resolver } from '@nestjs/graphql';
+import {
+  Args,
+  Float,
+  Int,
+  Mutation,
+  Parent,
+  Query,
+  ResolveField,
+  Resolver,
+} from '@nestjs/graphql';
 import { Role } from '@prisma/client';
-import { Public } from '../auth/decorators/public.decorator';
-import { Roles } from '../auth/decorators/roles.decorator';
+import { AuthenticatedUser, CurrentUser, Public, Roles } from '../auth';
 import { BooksService } from './books.service';
 import { CreateBookInput } from './dto/create-book.input';
 import { GetBooksArgs } from './dto/get-books.args';
@@ -28,8 +36,11 @@ export class BooksResolver {
 
   @Mutation(() => BookModel, { name: 'createBook' })
   @Roles(Role.LIBRARIAN, Role.ADMIN)
-  async createBook(@Args('input') input: CreateBookInput): Promise<BookModel> {
-    return this.booksService.create(input);
+  async createBook(
+    @Args('input') input: CreateBookInput,
+    @CurrentUser() user?: AuthenticatedUser,
+  ): Promise<BookModel> {
+    return this.booksService.create(input, user?.sub ?? null);
   }
 
   @Mutation(() => BookModel, { name: 'updateBook' })
@@ -37,7 +48,22 @@ export class BooksResolver {
   async updateBook(
     @Args('id', { type: () => Int }) id: number,
     @Args('input') input: UpdateBookInput,
+    @CurrentUser() user?: AuthenticatedUser,
   ): Promise<BookModel> {
-    return this.booksService.update(id, input);
+    return this.booksService.update(id, input, user?.sub ?? null);
+  }
+
+  @ResolveField(() => Float, {
+    nullable: true,
+    description: 'Replacement price in Rupees (null if not set)',
+  })
+  replacementPriceRs(@Parent() book: BookModel): number | null {
+    if (book.replacementPriceRs !== undefined) {
+      return book.replacementPriceRs;
+    }
+    if (book.priceMinor !== undefined && book.priceMinor !== null) {
+      return book.priceMinor / 100;
+    }
+    return null;
   }
 }
