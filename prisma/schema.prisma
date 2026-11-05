@@ -80,6 +80,7 @@ model Hold {
   copyId       Int
   copy         Copy       @relation(fields: [copyId], references: [id])
   loan         Loan?
+  reservation  Reservation?
   status       HoldStatus @default(ACTIVE)
   source       HoldSource @default(REQUEST)
   expiresAt    DateTime
@@ -221,4 +222,33 @@ model RefreshToken {
   createdAt DateTime  @default(now())
 
   @@index([userId])
+}
+
+enum ReservationStatus {
+  WAITING
+  PROMOTED
+  CANCELLED
+}
+
+enum ReservationCancelReason {
+  MEMBER
+  STAFF
+  SUPERSEDED
+}
+
+model Reservation {
+  id            Int                      @id @default(autoincrement())
+  userId        Int                      // plain user id, deliberately NOT a foreign key
+  bookId        Int                      // plain book id, deliberately NOT a foreign key
+  status        ReservationStatus        @default(WAITING)
+  createdAt     DateTime                 @default(now())
+  promotedAt    DateTime?
+  holdId        Int?                     @unique
+  hold          Hold?                    @relation(fields: [holdId], references: [id])
+  cancelledAt   DateTime?
+  cancelReason  ReservationCancelReason?
+  cancelledById Int?                     // plain user id, NOT a foreign key
+
+  @@index([bookId, status, id])
+  @@index([userId, status])
 }
