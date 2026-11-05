@@ -15,11 +15,13 @@ import {
   Loan,
   LoanStatus,
   Prisma,
+  ReservationCancelReason,
   ReturnCondition,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ClockService } from '../../common/clock/clock.service';
 import { withTransactionRetry } from '../../common/database';
+import { cancelWaitingForUserAndBook } from '../reservations/utils/supersede-reservation.helper';
 import {
   DEFAULT_LIBRARY_TIMEZONE,
   LOAN_DAYS,
@@ -333,7 +335,7 @@ export class LoansService implements LoansPublicApi {
     copyBarcode: string,
     staffId: number,
   ): Promise<Loan> {
-    const result = await withTransactionRetry(() =>
+    const result = await withTransactionRetry(({ onCommit }) =>
       this.prisma.$transaction(async (tx) => {
         // 1. Take member lock first
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(${HOLD_ADVISORY_NAMESPACE}::int, ${memberId}::int)`;
@@ -443,6 +445,18 @@ export class LoansService implements LoansPublicApi {
           },
           include: { copy: true },
         });
+
+        // Cancel any active WAITING reservation for this user and book (SUPERSEDED)
+        await cancelWaitingForUserAndBook(
+          tx,
+          memberId,
+          copy.bookId,
+          this.clockService,
+          this.eventEmitter,
+          ReservationCancelReason.SUPERSEDED,
+          staffId,
+          onCommit,
+        );
 
         return {
           loan: createdLoan,

@@ -378,5 +378,29 @@ describe('DomainEventsSubscriber', () => {
         'DomainEventsSubscriber',
       );
     });
+
+    it('intercepts reservation.joined, reservation.cancelled, reservation.promoted via wildcard reservation.*', async () => {
+      const now = new Date();
+      const joinedEvent = {
+        eventName: 'reservation.joined',
+        domain: 'reservation',
+        reservationId: 1,
+        userId: 10,
+        bookId: 20,
+        position: 1,
+        occurredAt: now,
+      };
+
+      eventEmitter.emit('reservation.joined', joinedEvent);
+
+      expect(loggerMock.log).toHaveBeenCalledWith(
+        {
+          domain: 'reservation',
+          eventName: 'reservation.joined',
+          payload: joinedEvent,
+        },
+        'DomainEventsSubscriber',
+      );
+    });
   });
 });

@@ -65,4 +65,17 @@ export class DomainEventsSubscriber {
       DomainEventsSubscriber.name,
     );
   }
+
+  @OnEvent('reservation.*')
+  handleReservationEvent(event: any): void {
+    this.logger.log(
+      {
+        domain: 'reservation',
+        eventName:
+          event?.eventName ?? event?.constructor?.name ?? 'reservation.*',
+        payload: event,
+      },
+      DomainEventsSubscriber.name,
+    );
+  }
 }

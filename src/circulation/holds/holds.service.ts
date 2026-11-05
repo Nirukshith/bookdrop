@@ -11,6 +11,7 @@ import {
   HoldSource,
   HoldStatus,
   Prisma,
+  ReservationCancelReason,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { withTransactionRetry } from '../../common/database';
@@ -18,6 +19,7 @@ import { BooksService } from '../../books';
 import { CopiesService } from '../copies/copies.service';
 import { ClockService } from '../../common/clock';
 import { computePickupDeadline } from '../../config/library-rules';
+import { cancelWaitingForUserAndBook } from '../reservations/utils/supersede-reservation.helper';
 import { MemberEligibilityPolicy } from './member-eligibility.policy';
 import { HoldsPublicApi } from './holds-public-api.interface';
 import { PaginationArgs, StaffHoldFilter } from './dto/hold-query.dto';
@@ -67,26 +69,27 @@ export class HoldsService implements HoldsPublicApi {
    * 7. Post-commit event emission (hold.created)
    */
   async requestHold(userId: number, bookId: number): Promise<Hold> {
-    const { hold, now, expiresAt } = await withTransactionRetry(() =>
-      this.prisma.$transaction(async (tx) => {
-        // 1. Per-member advisory lock to serialize simultaneous requests by the same user
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(${HOLD_ADVISORY_NAMESPACE}::int, ${userId}::int)`;
+    const { hold, now, expiresAt } = await withTransactionRetry(
+      ({ onCommit }) =>
+        this.prisma.$transaction(async (tx) => {
+          // 1. Per-member advisory lock to serialize simultaneous requests by the same user
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(${HOLD_ADVISORY_NAMESPACE}::int, ${userId}::int)`;
 
-        // 2. Verify book exists in the Catalog public interface
-        const bookExists = await this.booksService.exists(bookId);
-        if (!bookExists) {
-          throw new BookNotFoundError(bookId);
-        }
+          // 2. Verify book exists in the Catalog public interface
+          const bookExists = await this.booksService.exists(bookId);
+          if (!bookExists) {
+            throw new BookNotFoundError(bookId);
+          }
 
-        // 3. Run eligibility policy inside the transaction
-        await this.eligibilityPolicy.checkRequestEligibility(
-          userId,
-          bookId,
-          tx,
-        );
+          // 3. Run eligibility policy inside the transaction
+          await this.eligibilityPolicy.checkRequestEligibility(
+            userId,
+            bookId,
+            tx,
+          );
 
-        // 4. Select one available copy using FOR UPDATE SKIP LOCKED
-        const candidates = await tx.$queryRaw<{ id: number }[]>`
+          // 4. Select one available copy using FOR UPDATE SKIP LOCKED
+          const candidates = await tx.$queryRaw<{ id: number }[]>`
           SELECT id FROM "Copy"
           WHERE "bookId" = ${bookId}
             AND status = 'AVAILABLE'
@@ -96,47 +99,59 @@ export class HoldsService implements HoldsPublicApi {
           FOR UPDATE SKIP LOCKED
         `;
 
-        if (!candidates || candidates.length === 0) {
-          throw new NoCopiesAvailableError(bookId);
-        }
+          if (!candidates || candidates.length === 0) {
+            throw new NoCopiesAvailableError(bookId);
+          }
 
-        const copyId = candidates[0].id;
+          const copyId = candidates[0].id;
 
-        // 5. Move copy AVAILABLE -> ON_HOLD within this transaction
-        await this.copiesService.transitionStatus(
-          copyId,
-          [CopyStatus.AVAILABLE],
-          CopyStatus.ON_HOLD,
-          {
-            reason: `Hold requested by member #${userId}`,
-            changedById: userId,
-          },
-          tx,
-        );
+          // 5. Move copy AVAILABLE -> ON_HOLD within this transaction
+          await this.copiesService.transitionStatus(
+            copyId,
+            [CopyStatus.AVAILABLE],
+            CopyStatus.ON_HOLD,
+            {
+              reason: `Hold requested by member #${userId}`,
+              changedById: userId,
+            },
+            tx,
+          );
 
-        // 6. Create Hold record with calculated deadline
-        const currentTime = this.clockService.now();
-        const calculatedExpiresAt = computePickupDeadline(currentTime);
+          // 6. Create Hold record with calculated deadline
+          const currentTime = this.clockService.now();
+          const calculatedExpiresAt = computePickupDeadline(currentTime);
 
-        const createdHold = await tx.hold.create({
-          data: {
+          const createdHold = await tx.hold.create({
+            data: {
+              userId,
+              bookId,
+              copyId,
+              status: HoldStatus.ACTIVE,
+              source: HoldSource.REQUEST,
+              expiresAt: calculatedExpiresAt,
+              createdAt: currentTime,
+            },
+            include: { copy: true },
+          });
+
+          // 7. Cancel any active WAITING reservation for this user and book (SUPERSEDED)
+          await cancelWaitingForUserAndBook(
+            tx,
             userId,
             bookId,
-            copyId,
-            status: HoldStatus.ACTIVE,
-            source: HoldSource.REQUEST,
-            expiresAt: calculatedExpiresAt,
-            createdAt: currentTime,
-          },
-          include: { copy: true },
-        });
+            this.clockService,
+            this.eventEmitter,
+            ReservationCancelReason.SUPERSEDED,
+            userId,
+            onCommit,
+          );
 
-        return {
-          hold: createdHold,
-          now: currentTime,
-          expiresAt: calculatedExpiresAt,
-        };
-      }, INTERACTIVE_TX_OPTIONS),
+          return {
+            hold: createdHold,
+            now: currentTime,
+            expiresAt: calculatedExpiresAt,
+          };
+        }, INTERACTIVE_TX_OPTIONS),
     );
 
     // 7. Emit domain event strictly after transaction successfully commits

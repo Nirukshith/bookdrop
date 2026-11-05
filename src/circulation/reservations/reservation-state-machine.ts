@@ -1,24 +1,7 @@
+import { ReservationStatus, ReservationCancelReason } from '@prisma/client';
 import { InvalidReservationStateTransitionError } from './errors/invalid-reservation-state-transition.error';
 
-/**
- * Lifecycle statuses for a patron book reservation (queue entry).
- * Matches Prisma's ReservationStatus enum.
- */
-export enum ReservationStatus {
-  WAITING = 'WAITING',
-  PROMOTED = 'PROMOTED',
-  CANCELLED = 'CANCELLED',
-}
-
-/**
- * Reason a waiting reservation was cancelled.
- * Matches Prisma's ReservationCancelReason enum.
- */
-export enum ReservationCancelReason {
-  MEMBER = 'MEMBER',
-  STAFF = 'STAFF',
-  SUPERSEDED = 'SUPERSEDED',
-}
+export { ReservationStatus, ReservationCancelReason };
 
 /**
  * Transition Table for Reservation Lifecycle States.
@@ -76,4 +59,3 @@ export function assertValidReservationTransition(
     );
   }
 }
-

@@ -13,4 +13,3 @@ export class InvalidReservationStateTransitionError extends BadRequestException 
     this.name = 'InvalidReservationStateTransitionError';
   }
 }
-

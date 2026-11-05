@@ -5,7 +5,12 @@ import {
   ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
-import { CopyStatus, HoldSource, HoldStatus } from '@prisma/client';
+import {
+  CopyStatus,
+  HoldSource,
+  HoldStatus,
+  ReservationCancelReason,
+} from '@prisma/client';
 import { HoldsService } from './holds.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { BooksService } from '../../books';
@@ -78,6 +83,10 @@ describe('HoldsService (Step 5)', () => {
         findUniqueOrThrow: jest.fn(),
         update: jest.fn(),
         updateMany: jest.fn(),
+      },
+      reservation: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        update: jest.fn(),
       },
     };
 
@@ -161,6 +170,56 @@ describe('HoldsService (Step 5)', () => {
       expect(eventEmitterMock.emit).toHaveBeenCalledWith(
         HoldCreatedEvent.EVENT_NAME,
         expect.any(HoldCreatedEvent),
+      );
+    });
+
+    it('supersedes any active WAITING reservation for the member on the same book', async () => {
+      const mockCreatedHold = {
+        id: 99,
+        userId,
+        bookId,
+        copyId: 10,
+        status: HoldStatus.ACTIVE,
+        source: HoldSource.REQUEST,
+        expiresAt: new Date(fixedNow.getTime() + 2 * 86400000),
+        createdAt: fixedNow,
+      };
+      prismaMock.hold.create.mockResolvedValue(mockCreatedHold);
+
+      prismaMock.reservation.findFirst.mockResolvedValueOnce({
+        id: 77,
+        userId,
+        bookId,
+        status: 'WAITING',
+      });
+      prismaMock.reservation.update.mockResolvedValueOnce({
+        id: 77,
+        userId,
+        bookId,
+        status: 'CANCELLED',
+        cancelReason: ReservationCancelReason.SUPERSEDED,
+        cancelledById: userId,
+        cancelledAt: fixedNow,
+      });
+
+      await service.requestHold(userId, bookId);
+
+      expect(prismaMock.reservation.update).toHaveBeenCalledWith({
+        where: { id: 77 },
+        data: {
+          status: 'CANCELLED',
+          cancelledAt: fixedNow,
+          cancelReason: ReservationCancelReason.SUPERSEDED,
+          cancelledById: userId,
+        },
+      });
+
+      expect(eventEmitterMock.emit).toHaveBeenCalledWith(
+        'reservation.cancelled',
+        expect.objectContaining({
+          reservationId: 77,
+          reason: ReservationCancelReason.SUPERSEDED,
+        }),
       );
     });
 

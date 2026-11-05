@@ -2,6 +2,7 @@ import {
   CopyStatus,
   FineReason,
   FineStatus,
+  ReservationCancelReason,
   ReturnCondition,
 } from '@prisma/client';
 
@@ -23,6 +24,9 @@ export const DOMAIN_EVENT_NAMES = {
   FINE_PAYMENT_RECORDED: 'fine.payment_recorded',
   FINE_SETTLED: 'fine.settled',
   BOOK_PRICE_CHANGED: 'book.price_changed',
+  RESERVATION_JOINED: 'reservation.joined',
+  RESERVATION_CANCELLED: 'reservation.cancelled',
+  RESERVATION_PROMOTED: 'reservation.promoted',
 } as const;
 
 export type DomainEventName =
@@ -166,5 +170,37 @@ export interface BookPriceChangedPayload {
   from?: number | null;
   to?: number | null;
   actorId?: number | null;
+  occurredAt?: Date;
+}
+
+export interface ReservationJoinedPayload {
+  eventName?: string;
+  domain?: string;
+  reservationId: number;
+  userId: number;
+  bookId: number;
+  position: number;
+  occurredAt?: Date;
+}
+
+export interface ReservationCancelledPayload {
+  eventName?: string;
+  domain?: string;
+  reservationId: number;
+  userId: number;
+  bookId: number;
+  reason: ReservationCancelReason | string;
+  cancelledById?: number | null;
+  occurredAt?: Date;
+}
+
+export interface ReservationPromotedPayload {
+  eventName?: string;
+  domain?: string;
+  reservationId: number;
+  userId: number;
+  bookId: number;
+  holdId: number;
+  copyId: number;
   occurredAt?: Date;
 }
