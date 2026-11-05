@@ -1,7 +1,14 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { CopyStatus, HoldStatus, LoanStatus, Role } from '@prisma/client';
+import {
+  CopyStatus,
+  FineReason,
+  HoldStatus,
+  LoanStatus,
+  ReturnCondition,
+  Role,
+} from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ClockService } from '../../common/clock/clock.service';
 import { CopiesService } from '../copies/copies.service';
@@ -9,7 +16,10 @@ import { HOLDS_PUBLIC_API } from '../holds/holds-public-api.interface';
 import { IDENTITY_PUBLIC_API } from '../../users';
 import { MemberEligibilityPolicy } from '../holds/member-eligibility.policy';
 import { LoansService } from './loans.service';
+import { FinesService } from '../fines/fines.service';
+import { COPY_RELEASE_PORT, CopyReleasePort } from './ports';
 import {
+  ConditionNoteRequiredError,
   CopyMismatchError,
   CopyNotAvailableError,
   CopyNotFoundError,
@@ -18,8 +28,10 @@ import {
   HoldExpiredError,
   HoldNotActiveError,
   HoldNotFoundError,
+  LoanNotActiveError,
   LoanNotFoundError,
   MemberNotFoundError,
+  NoActiveLoanForCopyError,
 } from './errors';
 import { HoldFulfilledEvent } from '../holds/events/hold-fulfilled.event';
 import { LoanStartedEvent } from './events/loan-started.event';
@@ -31,6 +43,8 @@ describe('LoansService (Step 5)', () => {
   let clockServiceMock: { now: jest.Mock };
   let configServiceMock: { get: jest.Mock };
   let copiesServiceMock: { transitionStatus: jest.Mock };
+  let finesServiceMock: { createFine: jest.Mock };
+  let copyReleasePortMock: { release: jest.Mock };
   let holdsPublicApiMock: {
     fulfillHold: jest.Mock;
     getHold: jest.Mock;
@@ -66,6 +80,7 @@ describe('LoansService (Step 5)', () => {
       },
       loan: {
         create: jest.fn(),
+        update: jest.fn(),
       },
     };
 
@@ -129,6 +144,14 @@ describe('LoansService (Step 5)', () => {
       emit: jest.fn(),
     };
 
+    finesServiceMock = {
+      createFine: jest.fn().mockResolvedValue({ id: 1 }),
+    };
+
+    copyReleasePortMock = {
+      release: jest.fn().mockResolvedValue(undefined),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         LoansService,
@@ -136,6 +159,8 @@ describe('LoansService (Step 5)', () => {
         { provide: ClockService, useValue: clockServiceMock },
         { provide: ConfigService, useValue: configServiceMock },
         { provide: CopiesService, useValue: copiesServiceMock },
+        { provide: FinesService, useValue: finesServiceMock },
+        { provide: COPY_RELEASE_PORT, useValue: copyReleasePortMock },
         { provide: HOLDS_PUBLIC_API, useValue: holdsPublicApiMock },
         { provide: IDENTITY_PUBLIC_API, useValue: identityPublicApiMock },
         { provide: MemberEligibilityPolicy, useValue: eligibilityPolicyMock },
@@ -593,6 +618,387 @@ describe('LoansService (Step 5)', () => {
         dueAt: new Date(fixedNow.getTime() - 1000),
       };
       expect(service.isOverdue(returnedPastDue)).toBe(false);
+    });
+  });
+
+  describe('returnLoan (Step 5)', () => {
+    it('throws CopyNotFoundError if copy barcode does not exist', async () => {
+      prismaMock.copy.findUnique.mockResolvedValueOnce(null);
+
+      await expect(
+        service.returnLoan({
+          copyBarcode: 'INVALID-BARCODE',
+          condition: ReturnCondition.GOOD,
+          staffId: 1,
+        }),
+      ).rejects.toThrow(CopyNotFoundError);
+    });
+
+    it('throws NoActiveLoanForCopyError if copy has no ACTIVE loan', async () => {
+      prismaMock.copy.findUnique.mockResolvedValueOnce({
+        id: copyId,
+        barcode: validBarcode,
+      });
+      prismaMock.loan.findFirst.mockResolvedValueOnce(null);
+
+      await expect(
+        service.returnLoan({
+          copyBarcode: validBarcode,
+          condition: ReturnCondition.GOOD,
+          staffId: 1,
+        }),
+      ).rejects.toThrow(NoActiveLoanForCopyError);
+    });
+
+    it('throws ConditionNoteRequiredError if condition is DAMAGED and conditionNote is missing or empty', async () => {
+      prismaMock.copy.findUnique.mockResolvedValueOnce({
+        id: copyId,
+        barcode: validBarcode,
+      });
+      prismaMock.loan.findFirst.mockResolvedValueOnce({
+        id: 1,
+        copyId,
+        userId: memberId,
+        status: LoanStatus.ACTIVE,
+      });
+
+      await expect(
+        service.returnLoan({
+          copyBarcode: validBarcode,
+          condition: ReturnCondition.DAMAGED,
+          conditionNote: '   ',
+          staffId: 1,
+        }),
+      ).rejects.toThrow(ConditionNoteRequiredError);
+    });
+
+    it('throws LoanNotActiveError if loan is already RETURNED when locked FOR UPDATE', async () => {
+      prismaMock.copy.findUnique.mockResolvedValueOnce({
+        id: copyId,
+        barcode: validBarcode,
+      });
+      prismaMock.loan.findFirst.mockResolvedValueOnce({
+        id: 1,
+        copyId,
+        userId: memberId,
+        status: LoanStatus.ACTIVE,
+      });
+
+      txMock.$queryRaw.mockResolvedValueOnce([
+        { id: 1, status: LoanStatus.RETURNED },
+      ]);
+
+      await expect(
+        service.returnLoan({
+          copyBarcode: validBarcode,
+          condition: ReturnCondition.GOOD,
+          staffId: 1,
+        }),
+      ).rejects.toThrow(LoanNotActiveError);
+    });
+
+    it('returns an on-time loan in GOOD condition (no fine, calls copyReleasePort.release)', async () => {
+      prismaMock.copy.findUnique.mockResolvedValueOnce({
+        id: copyId,
+        barcode: validBarcode,
+      });
+      prismaMock.loan.findFirst.mockResolvedValueOnce({
+        id: 1,
+        copyId,
+        userId: memberId,
+        status: LoanStatus.ACTIVE,
+      });
+
+      // Locked loan: due date in the future (on-time)
+      const dueAt = new Date(fixedNow.getTime() + 2 * 86400000);
+      txMock.$queryRaw
+        .mockResolvedValueOnce([
+          {
+            id: 1,
+            userId: memberId,
+            copyId,
+            status: LoanStatus.ACTIVE,
+            dueAt,
+          },
+        ]) // locked loan
+        .mockResolvedValueOnce([{ id: copyId, status: CopyStatus.BORROWED }]); // locked copy
+
+      const updatedLoan = {
+        id: 1,
+        status: LoanStatus.RETURNED,
+        returnCondition: ReturnCondition.GOOD,
+        returnedAt: fixedNow,
+        returnedById: 5,
+      };
+      txMock.loan.update.mockResolvedValueOnce(updatedLoan);
+
+      const result = await service.returnLoan({
+        copyBarcode: validBarcode,
+        condition: ReturnCondition.GOOD,
+        staffId: 5,
+      });
+
+      expect(result).toEqual(updatedLoan);
+      expect(txMock.$executeRaw).toHaveBeenCalled();
+      expect(copyReleasePortMock.release).toHaveBeenCalledWith(
+        copyId,
+        expect.anything(),
+      );
+      expect(finesServiceMock.createFine).not.toHaveBeenCalled();
+      expect(eventEmitterMock.emit).toHaveBeenCalledWith(
+        'loan.returned',
+        expect.objectContaining({
+          loanId: 1,
+          condition: ReturnCondition.GOOD,
+        }),
+      );
+    });
+
+    it('returns an overdue loan in GOOD condition (creates LATE_RETURN fine and calls copyReleasePort.release)', async () => {
+      prismaMock.copy.findUnique.mockResolvedValueOnce({
+        id: copyId,
+        barcode: validBarcode,
+      });
+      prismaMock.loan.findFirst.mockResolvedValueOnce({
+        id: 1,
+        copyId,
+        userId: memberId,
+        status: LoanStatus.ACTIVE,
+      });
+
+      // Locked loan: due date 3 days in the past (overdue)
+      const dueAt = new Date(fixedNow.getTime() - 3 * 86400000);
+      txMock.$queryRaw
+        .mockResolvedValueOnce([
+          {
+            id: 1,
+            userId: memberId,
+            copyId,
+            status: LoanStatus.ACTIVE,
+            dueAt,
+          },
+        ]) // locked loan
+        .mockResolvedValueOnce([{ id: copyId, status: CopyStatus.BORROWED }]); // locked copy
+
+      const updatedLoan = {
+        id: 1,
+        status: LoanStatus.RETURNED,
+        returnCondition: ReturnCondition.GOOD,
+        returnedAt: fixedNow,
+        returnedById: 5,
+      };
+      txMock.loan.update.mockResolvedValueOnce(updatedLoan);
+
+      const result = await service.returnLoan({
+        copyBarcode: validBarcode,
+        condition: ReturnCondition.GOOD,
+        staffId: 5,
+      });
+
+      expect(result).toEqual(updatedLoan);
+      expect(copyReleasePortMock.release).toHaveBeenCalledWith(
+        copyId,
+        expect.anything(),
+      );
+      expect(finesServiceMock.createFine).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: memberId,
+          reason: FineReason.LATE_RETURN,
+          loanId: 1,
+          dedupeKey: 'late-return:1',
+          createdById: 5,
+        }),
+        expect.anything(),
+      );
+    });
+
+    it('returns a DAMAGED copy with assessed damage fee (transitions copy to DAMAGED, creates DAMAGED_BOOK fine, skips copyReleasePort)', async () => {
+      prismaMock.copy.findUnique.mockResolvedValueOnce({
+        id: copyId,
+        barcode: validBarcode,
+      });
+      prismaMock.loan.findFirst.mockResolvedValueOnce({
+        id: 1,
+        copyId,
+        userId: memberId,
+        status: LoanStatus.ACTIVE,
+      });
+
+      // On-time return, but damaged
+      const dueAt = new Date(fixedNow.getTime() + 86400000);
+      txMock.$queryRaw
+        .mockResolvedValueOnce([
+          {
+            id: 1,
+            userId: memberId,
+            copyId,
+            status: LoanStatus.ACTIVE,
+            dueAt,
+          },
+        ])
+        .mockResolvedValueOnce([{ id: copyId, status: CopyStatus.BORROWED }]);
+
+      const updatedLoan = {
+        id: 1,
+        status: LoanStatus.RETURNED,
+        returnCondition: ReturnCondition.DAMAGED,
+        conditionNote: 'Water damage on pages 10-25',
+        returnedAt: fixedNow,
+        returnedById: 5,
+      };
+      txMock.loan.update.mockResolvedValueOnce(updatedLoan);
+
+      const result = await service.returnLoan({
+        copyBarcode: validBarcode,
+        condition: ReturnCondition.DAMAGED,
+        conditionNote: 'Water damage on pages 10-25',
+        damageFeeRs: 50,
+        staffId: 5,
+      });
+
+      expect(result).toEqual(updatedLoan);
+      expect(copyReleasePortMock.release).not.toHaveBeenCalled();
+      expect(copiesServiceMock.transitionStatus).toHaveBeenCalledWith(
+        copyId,
+        [CopyStatus.BORROWED],
+        CopyStatus.DAMAGED,
+        {
+          reason: 'Water damage on pages 10-25',
+          changedById: 5,
+        },
+        expect.anything(),
+      );
+      expect(finesServiceMock.createFine).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: memberId,
+          reason: FineReason.DAMAGED_BOOK,
+          amountMinor: 5000, // Rs. 50 in paise
+          loanId: 1,
+          note: 'Water damage on pages 10-25',
+          dedupeKey: 'damaged:1',
+          createdById: 5,
+        }),
+        expect.anything(),
+      );
+    });
+  });
+
+  describe('markLoanLost (Step 5)', () => {
+    it('throws LoanNotFoundError if loan does not exist', async () => {
+      prismaMock.loan.findUnique.mockResolvedValueOnce(null);
+
+      await expect(
+        service.markLoanLost({
+          loanId: 999,
+          assessedFeeRs: 100,
+          note: 'Patron lost it on the train',
+          staffId: 5,
+        }),
+      ).rejects.toThrow(LoanNotFoundError);
+    });
+
+    it('throws BadRequestException if note is missing or whitespace', async () => {
+      await expect(
+        service.markLoanLost({
+          loanId: 1,
+          assessedFeeRs: 100,
+          note: '   ',
+          staffId: 5,
+        }),
+      ).rejects.toThrow('A note is required when declaring a loan lost');
+    });
+
+    it('throws error if assessed fee is not a positive integer', async () => {
+      await expect(
+        service.markLoanLost({
+          loanId: 1,
+          assessedFeeRs: 0,
+          note: 'Lost book',
+          staffId: 5,
+        }),
+      ).rejects.toThrow('Fine amount must be greater than zero');
+    });
+
+    it('throws LoanNotActiveError if locked loan is not ACTIVE', async () => {
+      prismaMock.loan.findUnique.mockResolvedValueOnce({
+        id: 1,
+        userId: memberId,
+        copyId,
+        status: LoanStatus.ACTIVE,
+      });
+
+      txMock.$queryRaw.mockResolvedValueOnce([
+        { id: 1, status: LoanStatus.RETURNED },
+      ]);
+
+      await expect(
+        service.markLoanLost({
+          loanId: 1,
+          assessedFeeRs: 150,
+          note: 'Lost on transit',
+          staffId: 5,
+        }),
+      ).rejects.toThrow(LoanNotActiveError);
+    });
+
+    it('successfully marks loan as LOST (updates loan, transitions copy to LOST, creates LOST_BOOK fine, no late fee)', async () => {
+      prismaMock.loan.findUnique.mockResolvedValueOnce({
+        id: 1,
+        userId: memberId,
+        copyId,
+        status: LoanStatus.ACTIVE,
+      });
+
+      txMock.$queryRaw
+        .mockResolvedValueOnce([
+          { id: 1, userId: memberId, copyId, status: LoanStatus.ACTIVE },
+        ])
+        .mockResolvedValueOnce([{ id: copyId, status: CopyStatus.BORROWED }]);
+
+      const updatedLoan = {
+        id: 1,
+        status: LoanStatus.LOST,
+        lostAt: fixedNow,
+      };
+      txMock.loan.update.mockResolvedValueOnce(updatedLoan);
+
+      const result = await service.markLoanLost({
+        loanId: 1,
+        assessedFeeRs: 250,
+        note: 'Dog chewed book beyond recognition',
+        staffId: 5,
+      });
+
+      expect(result).toEqual(updatedLoan);
+      expect(txMock.$executeRaw).toHaveBeenCalled();
+      expect(copiesServiceMock.transitionStatus).toHaveBeenCalledWith(
+        copyId,
+        [CopyStatus.BORROWED],
+        CopyStatus.LOST,
+        {
+          reason: 'Dog chewed book beyond recognition',
+          changedById: 5,
+        },
+        expect.anything(),
+      );
+      expect(finesServiceMock.createFine).toHaveBeenCalledWith(
+        {
+          userId: memberId,
+          reason: FineReason.LOST_BOOK,
+          amountMinor: 25000, // Rs. 250 in paise
+          loanId: 1,
+          note: 'Dog chewed book beyond recognition',
+          dedupeKey: 'lost:1',
+          createdById: 5,
+        },
+        expect.anything(),
+      );
+      expect(eventEmitterMock.emit).toHaveBeenCalledWith(
+        'loan.lost',
+        expect.objectContaining({
+          loanId: 1,
+        }),
+      );
     });
   });
 });

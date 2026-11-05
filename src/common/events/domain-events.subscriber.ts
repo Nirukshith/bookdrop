@@ -41,4 +41,16 @@ export class DomainEventsSubscriber {
       DomainEventsSubscriber.name,
     );
   }
+
+  @OnEvent('fine.*')
+  handleFineEvent(event: any): void {
+    this.logger.log(
+      {
+        domain: 'fine',
+        eventName: event?.eventName ?? event?.constructor?.name ?? 'fine.*',
+        payload: event,
+      },
+      DomainEventsSubscriber.name,
+    );
+  }
 }

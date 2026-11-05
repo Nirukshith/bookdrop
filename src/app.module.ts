@@ -17,6 +17,7 @@ import { HealthModule } from './health/health.module';
 import { CopiesModule } from './circulation/copies/copies.module';
 import { HoldsModule } from './circulation/holds/holds.module';
 import { LoansModule } from './circulation/loans/loans.module';
+import { FinesModule } from './circulation/fines/fines.module';
 import { ClockModule } from './common/clock/clock.module';
 import { DomainEventsModule } from './common/events/domain-events.module';
 import { GqlThrottlerGuard } from './auth/guards/gql-throttler.guard';
@@ -29,6 +30,7 @@ import { envValidationSchema } from './config/env.validation';
     ClockModule,
     DomainEventsModule,
     HoldsModule,
+    FinesModule,
     EventEmitterModule.forRoot({ wildcard: true }),
     ConfigModule.forRoot({
       isGlobal: true,
@@ -110,6 +112,7 @@ import { envValidationSchema } from './config/env.validation';
     HealthModule,
     CopiesModule,
     LoansModule,
+    FinesModule,
   ],
   controllers: [AppController],
   providers: [

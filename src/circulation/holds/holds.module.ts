@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { PrismaModule } from '../../prisma/prisma.module';
 import { BooksModule } from '../../books';
 import { CopiesModule } from '../copies/copies.module';
+import { ClockModule } from '../../common/clock/clock.module';
 import { HoldsService } from './holds.service';
 import { MemberEligibilityPolicy } from './member-eligibility.policy';
 import {
@@ -16,7 +17,7 @@ import { HoldsResolver } from './holds.resolver';
 import { HoldsDataLoader } from './holds.loader';
 
 @Module({
-  imports: [PrismaModule, BooksModule, CopiesModule],
+  imports: [PrismaModule, BooksModule, CopiesModule, ClockModule],
   providers: [
     HoldsService,
     HoldsResolver,

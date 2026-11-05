@@ -260,5 +260,124 @@ describe('DomainEventsSubscriber', () => {
         'DomainEventsSubscriber',
       );
     });
+
+    it('intercepts fine.payment_recorded and fine.settled via wildcard fine.*', async () => {
+      const now = new Date();
+      const paymentEvent = {
+        eventName: 'fine.payment_recorded',
+        domain: 'fine',
+        fineId: 101,
+        paymentId: 1,
+        userId: 42,
+        amountMinor: 200,
+        paidMinor: 200,
+        remainingMinor: 300,
+        receivedById: 5,
+        occurredAt: now,
+      };
+
+      eventEmitter.emit('fine.payment_recorded', paymentEvent);
+
+      expect(loggerMock.log).toHaveBeenCalledWith(
+        {
+          domain: 'fine',
+          eventName: 'fine.payment_recorded',
+          payload: paymentEvent,
+        },
+        'DomainEventsSubscriber',
+      );
+
+      const settledEvent = {
+        eventName: 'fine.settled',
+        domain: 'fine',
+        fineId: 101,
+        userId: 42,
+        reason: 'LATE_RETURN',
+        status: 'PAID',
+        settledAt: now,
+        occurredAt: now,
+      };
+
+      eventEmitter.emit('fine.settled', settledEvent);
+
+      expect(loggerMock.log).toHaveBeenCalledWith(
+        {
+          domain: 'fine',
+          eventName: 'fine.settled',
+          payload: settledEvent,
+        },
+        'DomainEventsSubscriber',
+      );
+    });
+
+    it('intercepts loan.returned and loan.lost via wildcard loan.*', async () => {
+      const now = new Date();
+      const returnedEvent = {
+        eventName: 'loan.returned',
+        domain: 'loan',
+        loanId: 10,
+        userId: 20,
+        bookId: 30,
+        copyId: 40,
+        returnedAt: now,
+        daysLate: 2,
+        condition: 'GOOD',
+      };
+
+      eventEmitter.emit('loan.returned', returnedEvent);
+
+      expect(loggerMock.log).toHaveBeenCalledWith(
+        {
+          domain: 'loan',
+          eventName: 'loan.returned',
+          payload: returnedEvent,
+        },
+        'DomainEventsSubscriber',
+      );
+
+      const lostEvent = {
+        eventName: 'loan.lost',
+        domain: 'loan',
+        loanId: 10,
+        userId: 20,
+        bookId: 30,
+        copyId: 40,
+      };
+
+      eventEmitter.emit('loan.lost', lostEvent);
+
+      expect(loggerMock.log).toHaveBeenCalledWith(
+        {
+          domain: 'loan',
+          eventName: 'loan.lost',
+          payload: lostEvent,
+        },
+        'DomainEventsSubscriber',
+      );
+    });
+
+    it('intercepts fine.created via wildcard fine.*', async () => {
+      const now = new Date();
+      const fineEvent = {
+        eventName: 'fine.created',
+        domain: 'fine',
+        fineId: 50,
+        userId: 20,
+        reason: 'LATE_RETURN',
+        amountMinor: 2000,
+        loanId: 10,
+      };
+
+      eventEmitter.emit('fine.created', fineEvent);
+
+      expect(loggerMock.log).toHaveBeenCalledWith(
+        {
+          domain: 'fine',
+          eventName: 'fine.created',
+          payload: fineEvent,
+        },
+        'DomainEventsSubscriber',
+      );
+    });
   });
 });

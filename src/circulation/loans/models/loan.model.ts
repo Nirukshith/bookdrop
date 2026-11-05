@@ -1,9 +1,21 @@
-import { Field, ID, Int, ObjectType, registerEnumType } from '@nestjs/graphql';
-import { LoanStatus } from '@prisma/client';
+import {
+  Field,
+  Float,
+  ID,
+  Int,
+  ObjectType,
+  registerEnumType,
+} from '@nestjs/graphql';
+import { LoanStatus, ReturnCondition } from '@prisma/client';
 
 registerEnumType(LoanStatus, {
   name: 'LoanStatus',
   description: 'Lifecycle statuses for physical copy loans',
+});
+
+registerEnumType(ReturnCondition, {
+  name: 'ReturnCondition',
+  description: 'Condition of physical copy upon return',
 });
 
 @ObjectType('Loan')
@@ -62,6 +74,22 @@ export class LoanModel {
     description: 'Days late past dueAt if overdue, or 0 if on-time/returned',
   })
   daysLate?: number;
+
+  @Field(() => Float, {
+    nullable: true,
+    description:
+      'Accrued late fee in Rupees for ACTIVE overdue loans (computed, not stored)',
+  })
+  accruedLateFeeRs?: number;
+
+  @Field(() => ReturnCondition, { nullable: true })
+  returnCondition?: ReturnCondition | null;
+
+  @Field(() => String, { nullable: true })
+  conditionNote?: string | null;
+
+  @Field(() => Date, { nullable: true })
+  lostAt?: Date | null;
 
   @Field(() => Int)
   checkedOutById: number;

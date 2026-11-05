@@ -93,6 +93,70 @@ A date-time string at UTC, such as 2019-12-03T09:54:33Z, compliant with the date
 """
 scalar DateTime
 
+type Fine {
+  amountMinor: Int!
+  amountRs: Float!
+  createdAt: DateTime!
+  createdById: Int
+  daysLate: Int
+  dedupeKey: String
+  id: ID!
+  loanId: Int
+  note: String
+  outstandingMinor: Int!
+  outstandingRs: Float!
+  paidMinor: Int!
+  paidRs: Float!
+  payments: [FinePayment!]!
+  reason: FineReason!
+  settledAt: DateTime
+  status: FineStatus!
+  userId: Int!
+  waivedById: Int
+  waivedReason: String
+}
+
+input FineFilterInput {
+  reason: FineReason
+  status: FineStatus
+  userId: Int
+}
+
+input FinePaginationInput {
+  skip: Int = 0
+  take: Int = 20
+}
+
+type FinePayment {
+  amountMinor: Int!
+
+  """Payment amount in Rupees"""
+  amountRs: Float!
+  createdAt: DateTime!
+  fineId: Int!
+  id: ID!
+  note: String
+
+  """Staff user ID who received the payment"""
+  receivedById: Int!
+}
+
+"""Reason for the assessment of a circulation fine"""
+enum FineReason {
+  DAMAGED_BOOK
+  LATE_RETURN
+  LOST_BOOK
+  MISSED_PICKUPS
+}
+
+"""Lifecycle statuses of a circulation fine"""
+enum FineStatus {
+  PAID
+  PARTIALLY_PAID
+  UNPAID
+  WAIVED
+}
+
 type Hold {
   bookId: Int!
   bookTitle: String!
@@ -137,10 +201,12 @@ input HoldsPaginationInput {
 }
 
 type Loan {
+  accruedLateFeeRs: Float!
   bookId: Int!
   bookTitle: String!
   borrowedAt: DateTime!
   checkedOutById: Int!
+  conditionNote: String
   copyBarcode: String
   copyId: Int!
   createdAt: DateTime!
@@ -150,7 +216,9 @@ type Loan {
   holdId: Int
   id: ID!
   isOverdue: Boolean!
+  lostAt: DateTime
   notes: String
+  returnCondition: ReturnCondition
   returnedAt: DateTime
   returnedById: Int
   status: LoanStatus!
@@ -194,13 +262,42 @@ type Mutation {
   createBook(input: CreateBookInput!): Book!
   login(input: LoginInput!): AuthPayload!
   logout(refreshToken: String!): Boolean!
+  markLoanLost(assessedFeeRs: Float!, loanId: ID!, note: String!): Loan!
+  recordFinePayment(amountRs: Float!, fineId: ID!, note: String): Fine!
   refreshTokens(refreshToken: String!): AuthPayload!
   register(input: RegisterInput!): AuthPayload!
   requestHold(bookId: Int!): Hold!
   retireCopy(id: Int!, reason: String): Copy!
+  returnLoan(condition: ReturnCondition!, conditionNote: String, copyBarcode: String!, damageFeeRs: Float): Loan!
   updateBook(id: Int!, input: UpdateBookInput!): Book!
   updateCopy(id: Int!, input: UpdateCopyInput!): Copy!
   updateUserRole(role: Role!, userId: Int!): User!
+  waiveFine(fineId: ID!, reason: String!): Fine!
+}
+
+type MyFine {
+  """Alias for originalAmountRs"""
+  amountRs: Float
+  bookTitle: String
+  createdAt: DateTime
+  id: ID!
+
+  """Original fine amount in Rupees"""
+  originalAmountRs: Float!
+
+  """Outstanding balance in Rupees"""
+  outstandingAmountRs: Float!
+
+  """Alias for outstandingAmountRs"""
+  outstandingRs: Float
+
+  """Paid amount in Rupees"""
+  paidAmountRs: Float!
+
+  """Alias for paidAmountRs"""
+  paidRs: Float
+  reason: FineReason!
+  status: FineStatus!
 }
 
 type PickupDeskHold {
@@ -230,13 +327,18 @@ type Query {
   copy(id: Int!): Copy!
   copyByBarcode(barcode: String!): Copy!
   copyStatusHistory(copyId: Int!): [CopyStatusHistory!]!
+  fine(id: ID!): Fine!
+  fines(filter: FineFilterInput, pagination: FinePaginationInput): [Fine!]!
   hold(id: Int!): Hold!
   holds(filter: HoldFilterInput, pagination: HoldsPaginationInput): [Hold!]!
   loan(id: Int!): Loan!
   loans(filter: LoanFilterInput, pagination: LoanPaginationInput): [Loan!]!
   me: User!
+  memberFines(memberEmail: String!, status: FineStatus): [Fine!]!
+  myFines(status: FineStatus): [MyFine!]!
   myHolds(status: HoldStatus): [Hold!]!
   myLoans(status: LoanStatus): [Loan!]!
+  overdueLoans(pagination: LoanPaginationInput): [Loan!]!
   pickupDeskHolds(copyBarcode: String, memberEmail: String): [PickupDeskHold!]!
   users: [User!]!
 }
@@ -245,6 +347,12 @@ input RegisterInput {
   email: String!
   name: String!
   password: String!
+}
+
+"""Condition of physical copy upon return"""
+enum ReturnCondition {
+  DAMAGED
+  GOOD
 }
 
 """User access roles within Bookdrop"""

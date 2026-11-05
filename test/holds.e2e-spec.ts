@@ -46,6 +46,10 @@ describe('Holds (Circulation Remote Requests E2E - Step 9 Comprehensive Suite)',
 
   const testFinesPort: UnpaidFinesPort = {
     hasUnpaidFines: async (userId: number) => mockUnpaidFines.has(userId),
+    checkMemberFines: async (userId: number) => ({
+      blocked: mockUnpaidFines.has(userId),
+      reason: mockUnpaidFines.has(userId) ? 'UNPAID_FINES' : undefined,
+    }),
   };
 
   let member1Token: string;

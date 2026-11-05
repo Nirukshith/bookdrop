@@ -994,6 +994,11 @@ Bookdrop is structured into distinct bounded contexts designed for seamless deco
 >
 > `prisma migrate dev` and `prisma migrate deploy` track these indexes through the migration history. Because Prisma only alters indexes declared in `schema.prisma`, it safely ignores these unmanaged partial indexes without generating drift or dropping them.
 
+> [!IMPORTANT]
+> **Lost Book Lifecycle & Limitations (Stage 7)**:
+> Once an active loan is declared lost via `markLoanLost`, its status transitions to `LOST`, its copy transitions to `LOST`, and an assessed replacement fee (`LOST_BOOK`) is generated without late fee penalties.
+> A loan marked `LOST` is terminal and cannot be returned through `returnLoan`. Handling a lost book that is later found or recovered is out of scope for the current circulation lifecycle.
+
 
 ---
 
