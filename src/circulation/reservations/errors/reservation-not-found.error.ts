@@ -13,4 +13,3 @@ export class ReservationNotFoundError extends NotFoundException {
     this.name = 'ReservationNotFoundError';
   }
 }
-

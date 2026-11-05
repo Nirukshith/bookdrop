@@ -18,4 +18,3 @@ export class ReservationCancelledEvent implements ReservationCancelledPayload {
     public readonly occurredAt: Date = new Date(),
   ) {}
 }
-

@@ -839,6 +839,7 @@ describe('LoansService (Step 5)', () => {
       expect(copyReleasePortMock.release).toHaveBeenCalledWith(
         copyId,
         expect.anything(),
+        expect.any(Function),
       );
       expect(finesServiceMock.createFine).not.toHaveBeenCalled();
       expect(eventEmitterMock.emit).toHaveBeenCalledWith(
@@ -895,6 +896,7 @@ describe('LoansService (Step 5)', () => {
       expect(copyReleasePortMock.release).toHaveBeenCalledWith(
         copyId,
         expect.anything(),
+        expect.any(Function),
       );
       expect(finesServiceMock.createFine).toHaveBeenCalledWith(
         expect.objectContaining({

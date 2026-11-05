@@ -14,4 +14,3 @@ export class CopyAvailableError extends BadRequestException {
     this.name = 'CopyAvailableError';
   }
 }
-

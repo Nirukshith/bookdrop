@@ -12,5 +12,9 @@ export const COPY_RELEASE_PORT = Symbol('COPY_RELEASE_PORT');
  * otherwise make the copy available".
  */
 export interface CopyReleasePort {
-  release(copyId: number, tx: Prisma.TransactionClient): Promise<void>;
+  release(
+    copyId: number,
+    tx: Prisma.TransactionClient,
+    onCommit?: (cb: () => void) => void,
+  ): Promise<void>;
 }

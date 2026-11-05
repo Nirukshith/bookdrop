@@ -201,7 +201,7 @@ export class HoldsService implements HoldsPublicApi {
       reason?.trim() || `Cancelled by ${actor.role} #${actor.id}`;
     const now = this.clockService.now();
 
-    const cancelledHold = await withTransactionRetry(() =>
+    const cancelledHold = await withTransactionRetry(({ onCommit }) =>
       this.prisma.$transaction(async (tx) => {
         // Conditional update: only update if still ACTIVE
         const updateResult = await tx.hold.updateMany({
@@ -244,6 +244,7 @@ export class HoldsService implements HoldsPublicApi {
           {
             reason: `Hold #${holdId} cancelled: ${cancellationNote}`,
             changedById: actor.id,
+            onCommit,
           },
           tx,
         );
@@ -283,7 +284,7 @@ export class HoldsService implements HoldsPublicApi {
   async expireHold(holdId: number): Promise<Hold | null> {
     const now = this.clockService.now();
 
-    const result = await withTransactionRetry(() =>
+    const result = await withTransactionRetry(({ onCommit }) =>
       this.prisma.$transaction(async (tx) => {
         const existing = await tx.hold.findUnique({
           where: { id: holdId },
@@ -320,6 +321,7 @@ export class HoldsService implements HoldsPublicApi {
           CopyStatus.AVAILABLE,
           {
             reason: `Hold #${holdId} expired at pickup deadline`,
+            onCommit,
           },
           tx,
         );
@@ -399,7 +401,7 @@ export class HoldsService implements HoldsPublicApi {
     holdId: number,
     now: Date,
   ): Promise<Hold | null> {
-    const expired = await withTransactionRetry(() =>
+    const expired = await withTransactionRetry(({ onCommit }) =>
       this.prisma.$transaction(async (tx) => {
         const locked = await tx.$queryRaw<{ id: number; copyId: number }[]>`
         SELECT id, "copyId" FROM "Hold"
@@ -428,6 +430,7 @@ export class HoldsService implements HoldsPublicApi {
           CopyStatus.AVAILABLE,
           {
             reason: `Hold #${holdId} expired at pickup deadline`,
+            onCommit,
           },
           tx,
         );

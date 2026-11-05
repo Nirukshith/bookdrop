@@ -16,4 +16,3 @@ export class ReservationJoinedEvent implements ReservationJoinedPayload {
     public readonly occurredAt: Date = new Date(),
   ) {}
 }
-

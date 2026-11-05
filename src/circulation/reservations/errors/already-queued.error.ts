@@ -13,4 +13,3 @@ export class AlreadyQueuedError extends BadRequestException {
     this.name = 'AlreadyQueuedError';
   }
 }
-

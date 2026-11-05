@@ -13,4 +13,3 @@ export class QueueLimitReachedError extends BadRequestException {
     this.name = 'QueueLimitReachedError';
   }
 }
-

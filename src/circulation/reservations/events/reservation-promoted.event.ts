@@ -17,4 +17,3 @@ export class ReservationPromotedEvent implements ReservationPromotedPayload {
     public readonly occurredAt: Date = new Date(),
   ) {}
 }
-

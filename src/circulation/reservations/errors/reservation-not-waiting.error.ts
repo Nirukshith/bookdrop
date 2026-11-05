@@ -15,4 +15,3 @@ export class ReservationNotWaitingError extends BadRequestException {
     this.name = 'ReservationNotWaitingError';
   }
 }
-

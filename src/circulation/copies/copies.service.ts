@@ -1,7 +1,10 @@
 import {
   BadRequestException,
+  forwardRef,
+  Inject,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Copy, CopyStatus, CopyStatusHistory, Prisma } from '@prisma/client';
@@ -24,10 +27,13 @@ import {
   CopyStatusChangedEvent,
   CopyRetiredEvent,
 } from './events';
+import { COPY_AVAILABILITY_LISTENER, CopyAvailabilityListener } from './ports';
 
 export interface TransitionStatusMeta {
   reason?: string;
-  changedById?: number;
+  changedById?: number | null;
+  onCommit?: (cb: () => void) => void;
+  skipPromotion?: boolean;
 }
 
 export interface ListCopiesFilter {
@@ -44,6 +50,9 @@ export class CopiesService implements CopiesPublicApi {
     private readonly prisma: PrismaService,
     private readonly booksService: BooksService,
     private readonly eventEmitter: EventEmitter2,
+    @Optional()
+    @Inject(COPY_AVAILABILITY_LISTENER)
+    private readonly availabilityListener?: CopyAvailabilityListener,
   ) {}
 
   /**
@@ -111,6 +120,14 @@ export class CopiesService implements CopiesPublicApi {
             },
           });
 
+          if (this.availabilityListener) {
+            await this.availabilityListener.onCopyAvailable(
+              created.id,
+              created.bookId,
+              tx,
+            );
+          }
+
           return created;
         }),
       );
@@ -140,6 +157,14 @@ export class CopiesService implements CopiesPublicApi {
               changedById: actorId ?? null,
             },
           });
+
+          if (this.availabilityListener) {
+            await this.availabilityListener.onCopyAvailable(
+              created.id,
+              created.bookId,
+              tx,
+            );
+          }
 
           return created;
         }),
@@ -210,6 +235,16 @@ export class CopiesService implements CopiesPublicApi {
           });
 
           copies.push(created);
+        }
+
+        if (this.availabilityListener) {
+          for (const copy of copies) {
+            await this.availabilityListener.onCopyAvailable(
+              copy.id,
+              copy.bookId,
+              tx,
+            );
+          }
         }
 
         return copies;
@@ -426,6 +461,19 @@ export class CopiesService implements CopiesPublicApi {
       const updated = await client.copy.findUniqueOrThrow({
         where: { id: copyId },
       });
+
+      if (
+        to === CopyStatus.AVAILABLE &&
+        !meta?.skipPromotion &&
+        this.availabilityListener
+      ) {
+        await this.availabilityListener.onCopyAvailable(
+          updated.id,
+          updated.bookId,
+          client,
+          meta?.onCommit,
+        );
+      }
 
       return { updatedCopy: updated, previousStatus: current.status };
     };

@@ -666,7 +666,7 @@ export class LoansService implements LoansPublicApi {
       }
     }
 
-    const txResult = await withTransactionRetry(() =>
+    const txResult = await withTransactionRetry(({ onCommit }) =>
       this.prisma.$transaction(async (tx) => {
         // Step 1: Member advisory lock
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(${HOLD_ADVISORY_NAMESPACE}::int, ${memberId}::int)`;
@@ -757,7 +757,7 @@ export class LoansService implements LoansPublicApi {
         // Step 6: Condition handling
         let damagedFine: any = null;
         if (input.condition === ReturnCondition.GOOD) {
-          await this.copyReleasePort.release(lockedCopy.id, tx);
+          await this.copyReleasePort.release(lockedCopy.id, tx, onCommit);
         } else if (input.condition === ReturnCondition.DAMAGED) {
           const note = input.conditionNote!.trim();
           await this.copiesService.transitionStatus(
@@ -911,7 +911,7 @@ export class LoansService implements LoansPublicApi {
 
     const memberId = loan.userId;
 
-    const txResult = await withTransactionRetry(() =>
+    const txResult = await withTransactionRetry(({ onCommit }) =>
       this.prisma.$transaction(async (tx) => {
         // Step 1: Member advisory lock
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(${HOLD_ADVISORY_NAMESPACE}::int, ${memberId}::int)`;

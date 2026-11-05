@@ -14,4 +14,3 @@ export class UnpaidFinesError extends BadRequestException {
     this.name = 'UnpaidFinesError';
   }
 }
-
