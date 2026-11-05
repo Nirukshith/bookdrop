@@ -911,7 +911,7 @@ export class LoansService implements LoansPublicApi {
 
     const memberId = loan.userId;
 
-    const txResult = await withTransactionRetry(({ onCommit }) =>
+    const txResult = await withTransactionRetry(() =>
       this.prisma.$transaction(async (tx) => {
         // Step 1: Member advisory lock
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(${HOLD_ADVISORY_NAMESPACE}::int, ${memberId}::int)`;

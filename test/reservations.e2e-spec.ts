@@ -43,7 +43,6 @@ describe('Reservations & Promotion Queue E2E (Stage 8 Full Suite)', () => {
   let librarianToken: string;
   let librarianId: number;
 
-  let adminToken: string;
   let adminId: number;
 
   let testAuthorId: number;
@@ -55,6 +54,7 @@ describe('Reservations & Promotion Queue E2E (Stage 8 Full Suite)', () => {
   // System Invariant Verification Helper
   // -------------------------------------------------------------
   async function assertReservationInvariants(contextDescription = '') {
+    expect(contextDescription).toBeDefined();
     // 1. Total active holds in DB must match total copies in ON_HOLD status
     const activeHolds = await prisma.hold.count({
       where: { status: HoldStatus.ACTIVE },
@@ -199,11 +199,6 @@ describe('Reservations & Promotion Queue E2E (Stage 8 Full Suite)', () => {
       role: Role.ADMIN,
     });
     adminId = adm.id;
-    const admLogin = await authService.login({
-      email: admEmail,
-      password: 'AdminPass123!',
-    });
-    adminToken = admLogin.accessToken;
   });
 
   afterAll(async () => {
@@ -971,10 +966,7 @@ describe('Reservations & Promotion Queue E2E (Stage 8 Full Suite)', () => {
     it('promotes next waiting member when an active hold expires', async () => {
       const m1 = await createFreshMember('h_exp_m1');
       const m3 = await createFreshMember('h_exp_m3');
-      const { book, copies } = await createTestBook(
-        'Hold Expire Promo Book',
-        1,
-      );
+      const { book } = await createTestBook('Hold Expire Promo Book', 1);
 
       // Member 1 places hold
       const hold = await holdsService.requestHold(m1.id, book.id);

@@ -4,11 +4,13 @@ import { ReservationErrorCode } from './reservation-error-codes';
 export class AlreadyHeldError extends BadRequestException {
   readonly code = ReservationErrorCode.ALREADY_HELD;
 
-  constructor(bookId?: number) {
+  constructor(readonly bookId?: number) {
     super({
       statusCode: 400,
       code: ReservationErrorCode.ALREADY_HELD,
-      message: 'Member already has an active hold on this book',
+      message: bookId
+        ? `Member already has an active hold on book #${bookId}`
+        : 'Member already has an active hold on this book',
     });
     this.name = 'AlreadyHeldError';
   }

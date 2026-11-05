@@ -18,10 +18,7 @@ import {
 import { MemberEligibilityPolicy } from '../holds/member-eligibility.policy';
 import { HoldCreatedEvent } from '../holds/events';
 import { CopiesService } from '../copies/copies.service';
-import {
-  COPY_AVAILABILITY_LISTENER,
-  CopyAvailabilityListener,
-} from '../copies/ports';
+import { CopyAvailabilityListener } from '../copies/ports';
 import { ReservationPromotedEvent } from './events';
 
 @Injectable()

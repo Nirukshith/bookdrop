@@ -2,9 +2,8 @@ import { Inject, Injectable, Scope } from '@nestjs/common';
 import * as DataLoader from 'dataloader';
 import { ReservationStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
-import { BooksService } from '../../books';
+import { BooksService, BookModel } from '../../books';
 import { IDENTITY_PUBLIC_API, IdentityPublicApi, MemberDto } from '../../users';
-import { BookModel } from '../../books/models/book.model';
 
 @Injectable({ scope: Scope.REQUEST })
 export class ReservationsDataLoader {

@@ -1,8 +1,4 @@
-import {
-  ForbiddenException,
-  NotFoundException,
-  UseGuards,
-} from '@nestjs/common';
+import { ForbiddenException, UseGuards } from '@nestjs/common';
 import {
   Args,
   Int,
@@ -21,8 +17,8 @@ import {
 } from '@prisma/client';
 import { AuthenticatedUser, CurrentUser, Roles, RolesGuard } from '../../auth';
 import { PrismaService } from '../../prisma/prisma.service';
-import { BookModel } from '../../books/models/book.model';
-import { UserModel } from '../../users/models/user.model';
+import { BookModel } from '../../books';
+import { UserModel } from '../../users';
 import { HoldModel } from '../holds/models/hold.model';
 import { ReservationsService } from './reservations.service';
 import { ReservationsDataLoader } from './reservations.loader';

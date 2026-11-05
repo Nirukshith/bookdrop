@@ -1,7 +1,7 @@
 import { Field, ID, Int, ObjectType, registerEnumType } from '@nestjs/graphql';
 import { ReservationCancelReason, ReservationStatus } from '@prisma/client';
-import { BookModel } from '../../../books/models/book.model';
-import { UserModel } from '../../../users/models/user.model';
+import { BookModel } from '../../../books';
+import { UserModel } from '../../../users';
 import { HoldModel } from '../../holds/models/hold.model';
 
 registerEnumType(ReservationStatus, {

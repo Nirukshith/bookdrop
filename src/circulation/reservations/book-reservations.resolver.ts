@@ -1,6 +1,6 @@
 import { Int, Parent, ResolveField, Resolver } from '@nestjs/graphql';
 import { Public } from '../../auth';
-import { BookModel } from '../../books/models/book.model';
+import { BookModel } from '../../books';
 import { ReservationsDataLoader } from './reservations.loader';
 
 @Resolver(() => BookModel)

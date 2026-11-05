@@ -4,7 +4,7 @@ import { BooksModule } from '../../books';
 import { ClockModule } from '../../common/clock/clock.module';
 import { HoldsModule } from '../holds/holds.module';
 import { CopiesModule } from '../copies/copies.module';
-import { UsersModule } from '../../users/users.module';
+import { UsersModule } from '../../users';
 import { ReservationsService } from './reservations.service';
 import { PromotionService } from './promotion.service';
 import { ReservationsResolver } from './reservations.resolver';
