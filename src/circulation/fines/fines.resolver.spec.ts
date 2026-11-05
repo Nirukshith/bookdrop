@@ -252,6 +252,8 @@ describe('FinesResolver', () => {
             paidMinor: 500,
             status: FineStatus.PARTIALLY_PAID,
             loanId: 12,
+            uncappedAmountMinor: 5000,
+            capMinor: 2550,
             createdById: 99, // staff
             createdAt: fixedNow,
           },
@@ -272,6 +274,9 @@ describe('FinesResolver', () => {
       expect(fine.outstandingAmountRs).toBe(20.5);
       expect(fine.status).toBe(FineStatus.PARTIALLY_PAID);
       expect(fine.loanId).toBe(12);
+      expect(fine.uncappedAmountRs).toBe(50);
+      expect(fine.capRs).toBe(25.5);
+      expect(fine.wasCapped).toBe(true);
       expect((fine as any).userId).toBeUndefined();
       expect((fine as any).createdById).toBeUndefined();
     });
@@ -283,12 +288,28 @@ describe('FinesResolver', () => {
         id: 1,
         amountMinor: 3000,
         paidMinor: 1000,
+        uncappedAmountMinor: 5000,
+        capMinor: 3000,
       } as any;
 
       expect(resolver.resolveAmountRs(fine)).toBe(30);
       expect(resolver.resolvePaidRs(fine)).toBe(10);
       expect(resolver.resolveOutstandingMinor(fine)).toBe(2000);
       expect(resolver.resolveOutstandingRs(fine)).toBe(20);
+      expect(resolver.resolveUncappedAmountRs(fine)).toBe(50);
+      expect(resolver.resolveCapRs(fine)).toBe(30);
+      expect(resolver.resolveWasCapped(fine)).toBe(true);
+
+      const uncappedFine = {
+        id: 2,
+        amountMinor: 2000,
+        paidMinor: 0,
+        uncappedAmountMinor: null,
+        capMinor: null,
+      } as any;
+      expect(resolver.resolveUncappedAmountRs(uncappedFine)).toBeNull();
+      expect(resolver.resolveCapRs(uncappedFine)).toBeNull();
+      expect(resolver.resolveWasCapped(uncappedFine)).toBe(false);
 
       prismaMock.finePayment.findMany.mockResolvedValueOnce([
         {

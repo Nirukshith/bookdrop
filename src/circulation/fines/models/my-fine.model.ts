@@ -33,6 +33,24 @@ export class MyFineModel {
   })
   outstandingRs?: number;
 
+  @Field(() => Float, {
+    nullable: true,
+    description: 'Uncapped fine amount in Rupees before cap was applied',
+  })
+  uncappedAmountRs?: number | null;
+
+  @Field(() => Float, {
+    nullable: true,
+    description: 'Applied cap in Rupees (book price or global cap)',
+  })
+  capRs?: number | null;
+
+  @Field(() => Boolean, {
+    description:
+      'Dynamically evaluated: true if fine was capped (amountMinor < uncappedAmountMinor)',
+  })
+  wasCapped: boolean;
+
   @Field(() => FineStatus)
   status: FineStatus;
 

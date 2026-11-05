@@ -162,6 +162,15 @@ export class FinesResolver {
       status: f.status,
       loanId: f.loanId,
       createdAt: f.createdAt,
+      uncappedAmountRs:
+        f.uncappedAmountMinor !== null && f.uncappedAmountMinor !== undefined
+          ? minorToRs(f.uncappedAmountMinor)
+          : null,
+      capRs:
+        f.capMinor !== null && f.capMinor !== undefined
+          ? minorToRs(f.capMinor)
+          : null,
+      wasCapped: f.amountMinor < (f.uncappedAmountMinor ?? f.amountMinor),
     }));
   }
 
@@ -209,6 +218,26 @@ export class FinesResolver {
   @ResolveField(() => Float, { name: 'outstandingRs' })
   resolveOutstandingRs(@Parent() fine: Fine): number {
     return minorToRs(fine.amountMinor - fine.paidMinor);
+  }
+
+  @ResolveField(() => Float, { name: 'uncappedAmountRs', nullable: true })
+  resolveUncappedAmountRs(@Parent() fine: Fine): number | null {
+    return fine.uncappedAmountMinor !== null &&
+      fine.uncappedAmountMinor !== undefined
+      ? minorToRs(fine.uncappedAmountMinor)
+      : null;
+  }
+
+  @ResolveField(() => Float, { name: 'capRs', nullable: true })
+  resolveCapRs(@Parent() fine: Fine): number | null {
+    return fine.capMinor !== null && fine.capMinor !== undefined
+      ? minorToRs(fine.capMinor)
+      : null;
+  }
+
+  @ResolveField(() => Boolean, { name: 'wasCapped' })
+  resolveWasCapped(@Parent() fine: Fine): boolean {
+    return fine.amountMinor < (fine.uncappedAmountMinor ?? fine.amountMinor);
   }
 }
 
