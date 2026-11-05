@@ -14,6 +14,7 @@ import { ClockService } from '../../common/clock/clock.service';
 import { CopiesService } from '../copies/copies.service';
 import { HOLDS_PUBLIC_API } from '../holds/holds-public-api.interface';
 import { IDENTITY_PUBLIC_API } from '../../users';
+import { CATALOG_PUBLIC_API } from '../../books';
 import { MemberEligibilityPolicy } from '../holds/member-eligibility.policy';
 import { LoansService } from './loans.service';
 import { FinesService } from '../fines/fines.service';
@@ -56,6 +57,11 @@ describe('LoansService (Step 5)', () => {
   };
   let eligibilityPolicyMock: {
     checkCheckoutEligibility: jest.Mock;
+  };
+  let catalogPublicApiMock: {
+    exists: jest.Mock;
+    findTitlesByIds: jest.Mock;
+    getBookPricesMinor: jest.Mock;
   };
   let eventEmitterMock: { emit: jest.Mock };
 
@@ -152,6 +158,14 @@ describe('LoansService (Step 5)', () => {
       release: jest.fn().mockResolvedValue(undefined),
     };
 
+    catalogPublicApiMock = {
+      exists: jest.fn().mockResolvedValue(true),
+      findTitlesByIds: jest.fn().mockResolvedValue(new Map()),
+      getBookPricesMinor: jest
+        .fn()
+        .mockResolvedValue(new Map([[bookId, 49900]])),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         LoansService,
@@ -163,6 +177,7 @@ describe('LoansService (Step 5)', () => {
         { provide: COPY_RELEASE_PORT, useValue: copyReleasePortMock },
         { provide: HOLDS_PUBLIC_API, useValue: holdsPublicApiMock },
         { provide: IDENTITY_PUBLIC_API, useValue: identityPublicApiMock },
+        { provide: CATALOG_PUBLIC_API, useValue: catalogPublicApiMock },
         { provide: MemberEligibilityPolicy, useValue: eligibilityPolicyMock },
         { provide: EventEmitter2, useValue: eventEmitterMock },
       ],
@@ -261,6 +276,23 @@ describe('LoansService (Step 5)', () => {
           holdId,
           status: LoanStatus.ACTIVE,
           checkedOutById: staffId,
+          priceMinorAtBorrow: 49900,
+        }),
+        include: { copy: true },
+      });
+    });
+
+    it('snapshots null into priceMinorAtBorrow if book has no price on pickup', async () => {
+      catalogPublicApiMock.getBookPricesMinor.mockResolvedValueOnce(
+        new Map([[bookId, null]]),
+      );
+
+      await service.confirmPickup(holdId, validBarcode, staffId);
+
+      expect(txMock.loan.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          bookId,
+          priceMinorAtBorrow: null,
         }),
         include: { copy: true },
       });
@@ -431,6 +463,23 @@ describe('LoansService (Step 5)', () => {
           holdId: null,
           status: LoanStatus.ACTIVE,
           checkedOutById: staffId,
+          priceMinorAtBorrow: 49900,
+        }),
+        include: { copy: true },
+      });
+    });
+
+    it('snapshots null into priceMinorAtBorrow if book has no price on walk-in checkout', async () => {
+      catalogPublicApiMock.getBookPricesMinor.mockResolvedValueOnce(
+        new Map([[bookId, null]]),
+      );
+
+      await service.checkoutCopy(memberId, validBarcode, staffId);
+
+      expect(txMock.loan.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          bookId,
+          priceMinorAtBorrow: null,
         }),
         include: { copy: true },
       });

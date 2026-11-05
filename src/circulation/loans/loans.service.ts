@@ -35,6 +35,7 @@ import {
   HoldsPublicApi,
 } from '../holds/holds-public-api.interface';
 import { IDENTITY_PUBLIC_API, IdentityPublicApi } from '../../users';
+import { CATALOG_PUBLIC_API, CatalogPublicApi } from '../../books';
 import { MemberEligibilityPolicy } from '../holds/member-eligibility.policy';
 import {
   ConditionNoteRequiredError,
@@ -87,6 +88,8 @@ export class LoansService implements LoansPublicApi {
     private readonly holdsPublicApi: HoldsPublicApi,
     @Inject(IDENTITY_PUBLIC_API)
     private readonly identityPublicApi: IdentityPublicApi,
+    @Inject(CATALOG_PUBLIC_API)
+    private readonly catalogPublicApi: CatalogPublicApi,
     private readonly eligibilityPolicy: MemberEligibilityPolicy,
     private readonly eventEmitter: EventEmitter2,
   ) {
@@ -222,7 +225,13 @@ export class LoansService implements LoansPublicApi {
           tx,
         );
 
-        // 8. Insert Loan record
+        // 8. Snapshot book replacement price via Catalog public API
+        const bookPriceMap = await this.catalogPublicApi.getBookPricesMinor([
+          lockedCopy.bookId,
+        ]);
+        const priceMinorAtBorrow = bookPriceMap.get(lockedCopy.bookId) ?? null;
+
+        // Insert Loan record
         const dueAt = computeDueDate(now, this.libraryTimezone, LOAN_DAYS);
         const createdLoan = await tx.loan.create({
           data: {
@@ -234,6 +243,7 @@ export class LoansService implements LoansPublicApi {
             borrowedAt: now,
             dueAt,
             checkedOutById: staffId,
+            priceMinorAtBorrow,
           },
           include: { copy: true },
         });
@@ -382,7 +392,13 @@ export class LoansService implements LoansPublicApi {
         tx,
       );
 
-      // 7. Insert Loan with holdId = null
+      // 7. Snapshot book replacement price via Catalog public API
+      const bookPriceMap = await this.catalogPublicApi.getBookPricesMinor([
+        copy.bookId,
+      ]);
+      const priceMinorAtBorrow = bookPriceMap.get(copy.bookId) ?? null;
+
+      // Insert Loan with holdId = null
       const now = this.clockService.now();
       const dueAt = computeDueDate(now, this.libraryTimezone, LOAN_DAYS);
 
@@ -396,6 +412,7 @@ export class LoansService implements LoansPublicApi {
           borrowedAt: now,
           dueAt,
           checkedOutById: staffId,
+          priceMinorAtBorrow,
         },
         include: { copy: true },
       });
