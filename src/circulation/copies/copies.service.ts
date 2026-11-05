@@ -7,6 +7,7 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Copy, CopyStatus, CopyStatusHistory, Prisma } from '@prisma/client';
 import { BooksService } from '../../books';
 import { PrismaService } from '../../prisma/prisma.service';
+import { withTransactionRetry } from '../../common/database';
 import {
   assertCanRetireCopy,
   assertValidManualTransition,
@@ -88,57 +89,61 @@ export class CopiesService implements CopiesPublicApi {
         throw new DuplicateBarcodeError(trimmedBarcode);
       }
 
-      copy = await this.prisma.$transaction(async (tx) => {
-        const created = await tx.copy.create({
-          data: {
-            bookId,
-            barcode: trimmedBarcode,
-            shelfLocation: shelfLocation?.trim() || null,
-            notes: notes?.trim() || null,
-            status: CopyStatus.AVAILABLE,
-          },
-        });
+      copy = await withTransactionRetry(() =>
+        this.prisma.$transaction(async (tx) => {
+          const created = await tx.copy.create({
+            data: {
+              bookId,
+              barcode: trimmedBarcode,
+              shelfLocation: shelfLocation?.trim() || null,
+              notes: notes?.trim() || null,
+              status: CopyStatus.AVAILABLE,
+            },
+          });
 
-        await tx.copyStatusHistory.create({
-          data: {
-            copyId: created.id,
-            fromStatus: null,
-            toStatus: CopyStatus.AVAILABLE,
-            reason: 'Initial copy inventory',
-            changedById: actorId ?? null,
-          },
-        });
+          await tx.copyStatusHistory.create({
+            data: {
+              copyId: created.id,
+              fromStatus: null,
+              toStatus: CopyStatus.AVAILABLE,
+              reason: 'Initial copy inventory',
+              changedById: actorId ?? null,
+            },
+          });
 
-        return created;
-      });
+          return created;
+        }),
+      );
     } else {
-      copy = await this.prisma.$transaction(async (tx) => {
-        const { nextId, barcode: autoBarcode } =
-          await this.getNextSequenceBarcode(tx);
+      copy = await withTransactionRetry(() =>
+        this.prisma.$transaction(async (tx) => {
+          const { nextId, barcode: autoBarcode } =
+            await this.getNextSequenceBarcode(tx);
 
-        const created = await tx.copy.create({
-          data: {
-            id: nextId,
-            bookId,
-            barcode: autoBarcode,
-            shelfLocation: shelfLocation?.trim() || null,
-            notes: notes?.trim() || null,
-            status: CopyStatus.AVAILABLE,
-          },
-        });
+          const created = await tx.copy.create({
+            data: {
+              id: nextId,
+              bookId,
+              barcode: autoBarcode,
+              shelfLocation: shelfLocation?.trim() || null,
+              notes: notes?.trim() || null,
+              status: CopyStatus.AVAILABLE,
+            },
+          });
 
-        await tx.copyStatusHistory.create({
-          data: {
-            copyId: created.id,
-            fromStatus: null,
-            toStatus: CopyStatus.AVAILABLE,
-            reason: 'Initial copy inventory',
-            changedById: actorId ?? null,
-          },
-        });
+          await tx.copyStatusHistory.create({
+            data: {
+              copyId: created.id,
+              fromStatus: null,
+              toStatus: CopyStatus.AVAILABLE,
+              reason: 'Initial copy inventory',
+              changedById: actorId ?? null,
+            },
+          });
 
-        return created;
-      });
+          return created;
+        }),
+      );
     }
 
     this.eventEmitter.emit(
@@ -177,37 +182,39 @@ export class CopiesService implements CopiesPublicApi {
       throw new NotFoundException(`Book with ID ${bookId} not found.`);
     }
 
-    const createdCopies = await this.prisma.$transaction(async (tx) => {
-      const copies: Copy[] = [];
+    const createdCopies = await withTransactionRetry(() =>
+      this.prisma.$transaction(async (tx) => {
+        const copies: Copy[] = [];
 
-      for (let i = 0; i < quantity; i++) {
-        const { nextId, barcode } = await this.getNextSequenceBarcode(tx);
+        for (let i = 0; i < quantity; i++) {
+          const { nextId, barcode } = await this.getNextSequenceBarcode(tx);
 
-        const created = await tx.copy.create({
-          data: {
-            id: nextId,
-            bookId,
-            barcode,
-            shelfLocation: shelfLocation?.trim() || null,
-            status: CopyStatus.AVAILABLE,
-          },
-        });
+          const created = await tx.copy.create({
+            data: {
+              id: nextId,
+              bookId,
+              barcode,
+              shelfLocation: shelfLocation?.trim() || null,
+              status: CopyStatus.AVAILABLE,
+            },
+          });
 
-        await tx.copyStatusHistory.create({
-          data: {
-            copyId: created.id,
-            fromStatus: null,
-            toStatus: CopyStatus.AVAILABLE,
-            reason: 'Initial copy inventory',
-            changedById: actorId ?? null,
-          },
-        });
+          await tx.copyStatusHistory.create({
+            data: {
+              copyId: created.id,
+              fromStatus: null,
+              toStatus: CopyStatus.AVAILABLE,
+              reason: 'Initial copy inventory',
+              changedById: actorId ?? null,
+            },
+          });
 
-        copies.push(created);
-      }
+          copies.push(created);
+        }
 
-      return copies;
-    });
+        return copies;
+      }),
+    );
 
     for (const copy of createdCopies) {
       this.eventEmitter.emit(
@@ -425,7 +432,7 @@ export class CopiesService implements CopiesPublicApi {
 
     const { updatedCopy, previousStatus } = tx
       ? await executeInTx(tx)
-      : await this.prisma.$transaction(executeInTx);
+      : await withTransactionRetry(() => this.prisma.$transaction(executeInTx));
 
     this.eventEmitter.emit(
       CopyStatusChangedEvent.EVENT_NAME,
