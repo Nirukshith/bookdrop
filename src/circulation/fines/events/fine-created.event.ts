@@ -13,6 +13,6 @@ export class FineCreatedEvent implements FineCreatedPayload {
     public readonly amountMinor: number,
     public readonly loanId?: number | null,
     public readonly occurredAt: Date = new Date(),
-  ) {}
+  ) { }
 }
 
