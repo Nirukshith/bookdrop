@@ -32,16 +32,14 @@ describe('ReservationsDataLoader', () => {
     booksServiceMock = {};
 
     identityPublicApiMock = {
-      getMembersByIds: jest
-        .fn()
-        .mockResolvedValue([
-          {
-            id: 42,
-            name: 'Alice',
-            email: 'alice@example.com',
-            role: Role.MEMBER,
-          },
-        ]),
+      getMembersByIds: jest.fn().mockResolvedValue([
+        {
+          id: 42,
+          name: 'Alice',
+          email: 'alice@example.com',
+          role: Role.MEMBER,
+        },
+      ]),
     };
 
     const module: TestingModule = await Test.createTestingModule({
