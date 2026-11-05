@@ -15,6 +15,6 @@ export class LoanReturnedEvent implements LoanReturnedPayload {
     public readonly daysLate: number,
     public readonly condition: ReturnCondition,
     public readonly occurredAt: Date = new Date(),
-  ) {}
+  ) { }
 }
 
