@@ -31,6 +31,9 @@ type Book {
   id: ID!
   isbn: String!
   publishedYear: Int
+
+  """Replacement price in Rupees (null if not set)"""
+  replacementPriceRs: Float
   title: String!
 }
 
@@ -84,6 +87,9 @@ input CreateBookInput {
   categoryIds: [Int!]!
   description: String
   isbn: String!
+
+  """Replacement price in Rupees (at most 2 decimals)"""
+  priceRs: Float
   publishedYear: Int
   title: String!
 }
@@ -96,6 +102,7 @@ scalar DateTime
 type Fine {
   amountMinor: Int!
   amountRs: Float!
+  capRs: Float
   createdAt: DateTime!
   createdById: Int
   daysLate: Int
@@ -111,9 +118,11 @@ type Fine {
   reason: FineReason!
   settledAt: DateTime
   status: FineStatus!
+  uncappedAmountRs: Float
   userId: Int!
   waivedById: Int
   waivedReason: String
+  wasCapped: Boolean!
 }
 
 input FineFilterInput {
@@ -262,7 +271,7 @@ type Mutation {
   createBook(input: CreateBookInput!): Book!
   login(input: LoginInput!): AuthPayload!
   logout(refreshToken: String!): Boolean!
-  markLoanLost(assessedFeeRs: Float!, loanId: ID!, note: String!): Loan!
+  markLoanLost(assessedFeeRs: Float, loanId: ID!, note: String!): Loan!
   recordFinePayment(amountRs: Float!, fineId: ID!, note: String): Fine!
   refreshTokens(refreshToken: String!): AuthPayload!
   register(input: RegisterInput!): AuthPayload!
@@ -279,6 +288,9 @@ type MyFine {
   """Alias for originalAmountRs"""
   amountRs: Float
   bookTitle: String
+
+  """Applied cap in Rupees (book price or global cap)"""
+  capRs: Float
   createdAt: DateTime
   id: ID!
 
@@ -298,6 +310,14 @@ type MyFine {
   paidRs: Float
   reason: FineReason!
   status: FineStatus!
+
+  """Uncapped fine amount in Rupees before cap was applied"""
+  uncappedAmountRs: Float
+
+  """
+  Dynamically evaluated: true if fine was capped (amountMinor < uncappedAmountMinor)
+  """
+  wasCapped: Boolean!
 }
 
 type PickupDeskHold {
@@ -367,6 +387,9 @@ input UpdateBookInput {
   categoryIds: [Int!]
   description: String
   isbn: String
+
+  """Replacement price in Rupees (at most 2 decimals)"""
+  priceRs: Float
   publishedYear: Int
   title: String
 }

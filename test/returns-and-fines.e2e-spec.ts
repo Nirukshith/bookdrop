@@ -18,7 +18,11 @@ import { ClockService, FakeClockService } from '../src/common/clock';
 import { DOMAIN_EVENT_NAMES } from '../src/contracts/events';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { UsersService } from '../src/users/users.service';
-import { computeLateFeeMinor } from '../src/config/library-rules';
+import {
+  computeLateFeeMinor,
+  resolveLateFeeCapMinor,
+  calculateLateFee,
+} from '../src/config/library-rules';
 
 describe('Returns, Fines, and Concurrency E2E (Stage 7 Full Suite)', () => {
   jest.setTimeout(120000);
@@ -240,13 +244,18 @@ describe('Returns, Fines, and Concurrency E2E (Stage 7 Full Suite)', () => {
   }
 
   // Helper to create books with available copies
-  async function createTestBook(title: string, copyCount = 1) {
+  async function createTestBook(
+    title: string,
+    copyCount = 1,
+    priceMinor: number | null = null,
+  ) {
     const book = await prisma.book.create({
       data: {
         title: `${title}_${Date.now()}_${Math.random()}`,
         isbn: `ISBN-${Date.now()}-${Math.floor(Math.random() * 100000)}`,
         authors: { connect: [{ id: testAuthorId }] },
         categories: { connect: [{ id: testCategoryId }] },
+        priceMinor,
       },
     });
 
@@ -438,10 +447,10 @@ describe('Returns, Fines, and Concurrency E2E (Stage 7 Full Suite)', () => {
   });
 
   // =============================================================
-  // 3. Late Fee Cap Rule
+  // 3. Late Fee Cap Rule, Snapshotting, and Fallback Hierarchy
   // =============================================================
-  describe('3. Late Fee Cap Rule', () => {
-    it('pure function and fee calculations cap correctly when cap is configured', () => {
+  describe('3. Late Fee Cap Rule, Snapshotting, and Fallback Hierarchy', () => {
+    it('pure functions resolve caps and compute capped late fees accurately', () => {
       // 10 days late @ Rs 10/day uncapped = Rs 100 (10000 minor)
       expect(computeLateFeeMinor(10, 10, null)).toBe(10000);
 
@@ -450,6 +459,724 @@ describe('Returns, Fines, and Concurrency E2E (Stage 7 Full Suite)', () => {
 
       // 3 days late @ Rs 10/day with cap Rs 50 = Rs 30 (3000 minor, uncapped)
       expect(computeLateFeeMinor(3, 10, 50)).toBe(3000);
+
+      // calculateLateFee calculation check
+      expect(
+        calculateLateFee({ daysLate: 3, ratePerDayRs: 10, capMinor: 5000 })
+          .amountMinor,
+      ).toBe(3000);
+
+      // 4-tier resolution pure function
+      expect(
+        resolveLateFeeCapMinor({
+          loanSnapshotMinor: 40000,
+          bookCurrentPriceMinor: 80000,
+          globalCapRs: 50,
+        }),
+      ).toBe(40000);
+
+      expect(
+        resolveLateFeeCapMinor({
+          loanSnapshotMinor: null,
+          bookCurrentPriceMinor: 30000,
+          globalCapRs: 50,
+        }),
+      ).toBe(30000);
+
+      expect(
+        resolveLateFeeCapMinor({
+          loanSnapshotMinor: null,
+          bookCurrentPriceMinor: null,
+          globalCapRs: 50,
+        }),
+      ).toBe(5000);
+
+      expect(
+        resolveLateFeeCapMinor({
+          loanSnapshotMinor: null,
+          bookCurrentPriceMinor: null,
+          globalCapRs: null,
+        }),
+      ).toBeNull();
+    });
+
+    it('1. Fee below cap: Rs 10/day for 3 days on a Rs 500 book = Rs 30 (uncappedAmountMinor = 3000, capMinor = 50000, wasCapped = false)', async () => {
+      fakeClock.setTime('2026-11-01T10:00:00.000Z');
+      const { copies } = await createTestBook('CapBelowBook', 1, 50000); // Rs 500
+      const copy = copies[0];
+      const member = await createFreshMember();
+
+      const loan = await loansService.checkoutCopy(
+        member.id,
+        copy.barcode,
+        librarianId,
+      );
+
+      // Verify snapshot was taken at checkout
+      const loanInDb = await prisma.loan.findUniqueOrThrow({
+        where: { id: loan.id },
+      });
+      expect(loanInDb.priceMinorAtBorrow).toBe(50000);
+
+      // Advance clock 3 days past due date (14 days loan + 3 days late = Nov 18)
+      fakeClock.setTime('2026-11-18T14:00:00.000Z');
+
+      const returnRes = await gql(
+        `mutation Return($barcode: String!, $cond: ReturnCondition!) {
+          returnLoan(copyBarcode: $barcode, condition: $cond) {
+            id
+            daysLate
+          }
+        }`,
+        { barcode: copy.barcode, cond: 'GOOD' },
+        librarianToken,
+      );
+      expect(returnRes.body.errors).toBeUndefined();
+      expect(returnRes.body.data.returnLoan.daysLate).toBe(3);
+
+      const fine = await prisma.fine.findFirstOrThrow({
+        where: { loanId: loan.id },
+      });
+      expect(fine.reason).toBe(FineReason.LATE_RETURN);
+      expect(fine.amountMinor).toBe(3000);
+      expect(fine.uncappedAmountMinor).toBe(3000);
+      expect(fine.capMinor).toBe(50000);
+
+      // Verify GraphQL exposure
+      const fineGql = await gql(
+        `query GetFine($id: ID!) {
+          fine(id: $id) {
+            id
+            amountRs
+            uncappedAmountRs
+            capRs
+            wasCapped
+          }
+        }`,
+        { id: fine.id },
+        librarianToken,
+      );
+      expect(fineGql.body.errors).toBeUndefined();
+      expect(fineGql.body.data.fine.amountRs).toBe(30);
+      expect(fineGql.body.data.fine.uncappedAmountRs).toBe(30);
+      expect(fineGql.body.data.fine.capRs).toBe(500);
+      expect(fineGql.body.data.fine.wasCapped).toBe(false);
+
+      await assertSystemInvariants('Fee below cap');
+    });
+
+    it('2. Fee above cap: Rs 10/day for 100 days on a Rs 500 book = Rs 500 (uncappedAmountMinor = 100000, capMinor = 50000, wasCapped = true), member blocked and unblocked upon payment', async () => {
+      fakeClock.setTime('2026-11-01T10:00:00.000Z');
+      const { copies } = await createTestBook('CapAboveBook', 1, 50000); // Rs 500
+      const copy = copies[0];
+      const member = await createFreshMember();
+
+      const loan = await loansService.checkoutCopy(
+        member.id,
+        copy.barcode,
+        librarianId,
+      );
+
+      // Advance clock 100 days late
+      fakeClock.advanceDays(14 + 100);
+
+      const returnRes = await gql(
+        `mutation Return($barcode: String!, $cond: ReturnCondition!) {
+          returnLoan(copyBarcode: $barcode, condition: $cond) {
+            id
+            daysLate
+          }
+        }`,
+        { barcode: copy.barcode, cond: 'GOOD' },
+        librarianToken,
+      );
+      expect(returnRes.body.errors).toBeUndefined();
+      expect(returnRes.body.data.returnLoan.daysLate).toBe(100);
+
+      const fine = await prisma.fine.findFirstOrThrow({
+        where: { loanId: loan.id },
+      });
+      expect(fine.amountMinor).toBe(50000); // Capped at Rs 500
+      expect(fine.uncappedAmountMinor).toBe(100000); // 100 days * Rs 10 = Rs 1000 (100000 minor)
+      expect(fine.capMinor).toBe(50000);
+
+      // Verify GraphQL exposure
+      const fineGql = await gql(
+        `query GetFine($id: ID!) {
+          fine(id: $id) {
+            amountRs
+            uncappedAmountRs
+            capRs
+            wasCapped
+          }
+        }`,
+        { id: fine.id },
+        librarianToken,
+      );
+      expect(fineGql.body.data.fine.amountRs).toBe(500);
+      expect(fineGql.body.data.fine.uncappedAmountRs).toBe(1000);
+      expect(fineGql.body.data.fine.capRs).toBe(500);
+      expect(fineGql.body.data.fine.wasCapped).toBe(true);
+
+      // Patron is blocked with UNPAID_FINES
+      const { book: otherBook } = await createTestBook('HoldAttemptBook', 1);
+      const holdRes = await gql(
+        `mutation Hold($bookId: Int!) {
+          requestHold(bookId: $bookId) { id }
+        }`,
+        { bookId: otherBook.id },
+        member.token,
+      );
+      expect(holdRes.body.errors).toBeDefined();
+      expect(holdRes.body.errors[0].extensions.code).toBe('UNPAID_FINES');
+
+      // Pay full fee of Rs 500
+      const payRes = await gql(
+        `mutation Pay($fineId: ID!, $amountRs: Float!) {
+          recordFinePayment(fineId: $fineId, amountRs: $amountRs, note: "Full payment") {
+            id
+            status
+            paidRs
+            outstandingRs
+          }
+        }`,
+        { fineId: fine.id, amountRs: 500.0 },
+        librarianToken,
+      );
+      expect(payRes.body.errors).toBeUndefined();
+      expect(payRes.body.data.recordFinePayment.status).toBe(FineStatus.PAID);
+      expect(payRes.body.data.recordFinePayment.paidRs).toBe(500);
+      expect(payRes.body.data.recordFinePayment.outstandingRs).toBe(0);
+
+      // Member is now unblocked
+      const unblockedHold = await gql(
+        `mutation Hold($bookId: Int!) {
+          requestHold(bookId: $bookId) { id status }
+        }`,
+        { bookId: otherBook.id },
+        member.token,
+      );
+      expect(unblockedHold.body.errors).toBeUndefined();
+      expect(unblockedHold.body.data.requestHold.status).toBe('ACTIVE');
+
+      await assertSystemInvariants('Fee above cap and unblock');
+    });
+
+    it('3. Price change after borrow does not affect fee: snapshot isolation locks cap to checkout price', async () => {
+      fakeClock.setTime('2026-11-01T10:00:00.000Z');
+      const { book, copies } = await createTestBook('SnapshotBook', 1, 40000); // Rs 400
+      const copy = copies[0];
+      const member = await createFreshMember();
+
+      const loan = await loansService.checkoutCopy(
+        member.id,
+        copy.barcode,
+        librarianId,
+      );
+      expect(loan.priceMinorAtBorrow).toBe(40000);
+
+      // Price raised to Rs 800 while book is out on loan
+      const updateRes = await gql(
+        `mutation UpdateBook($id: Int!, $input: UpdateBookInput!) {
+          updateBook(id: $id, input: $input) {
+            id
+            replacementPriceRs
+          }
+        }`,
+        { id: book.id, input: { priceRs: 800.0 } },
+        librarianToken,
+      );
+      expect(updateRes.body.errors).toBeUndefined();
+      expect(updateRes.body.data.updateBook.replacementPriceRs).toBe(800);
+
+      // Book returned 60 days late (60 * Rs 10 = Rs 600 uncapped)
+      fakeClock.advanceDays(14 + 60);
+
+      const returnRes = await gql(
+        `mutation Return($barcode: String!, $cond: ReturnCondition!) {
+          returnLoan(copyBarcode: $barcode, condition: $cond) { id daysLate }
+        }`,
+        { barcode: copy.barcode, cond: 'GOOD' },
+        librarianToken,
+      );
+      expect(returnRes.body.errors).toBeUndefined();
+      expect(returnRes.body.data.returnLoan.daysLate).toBe(60);
+
+      // Fine must be capped at snapshot price Rs 400, NOT Rs 800
+      const fine = await prisma.fine.findFirstOrThrow({
+        where: { loanId: loan.id },
+      });
+      expect(fine.amountMinor).toBe(40000); // Rs 400
+      expect(fine.uncappedAmountMinor).toBe(60000); // Rs 600
+      expect(fine.capMinor).toBe(40000);
+
+      const fineGql = await gql(
+        `query GetFine($id: ID!) {
+          fine(id: $id) {
+            amountRs
+            uncappedAmountRs
+            capRs
+            wasCapped
+          }
+        }`,
+        { id: fine.id },
+        librarianToken,
+      );
+      expect(fineGql.body.data.fine.amountRs).toBe(400);
+      expect(fineGql.body.data.fine.uncappedAmountRs).toBe(600);
+      expect(fineGql.body.data.fine.capRs).toBe(400);
+      expect(fineGql.body.data.fine.wasCapped).toBe(true);
+
+      await assertSystemInvariants('Snapshot isolation');
+    });
+
+    it('4. Loan with no snapshot uses current book price (fallback tier 2 for pre-existing loans)', async () => {
+      fakeClock.setTime('2026-11-01T10:00:00.000Z');
+      const { copies } = await createTestBook('FallbackTier2Book', 1, 30000); // Rs 300
+      const copy = copies[0];
+      const member = await createFreshMember();
+
+      const loan = await loansService.checkoutCopy(
+        member.id,
+        copy.barcode,
+        librarianId,
+      );
+
+      // Simulate pre-existing legacy loan without snapshot
+      await prisma.loan.update({
+        where: { id: loan.id },
+        data: { priceMinorAtBorrow: null },
+      });
+
+      // 50 days late (50 * Rs 10 = Rs 500 uncapped)
+      fakeClock.advanceDays(14 + 50);
+
+      const returnRes = await gql(
+        `mutation Return($barcode: String!, $cond: ReturnCondition!) {
+          returnLoan(copyBarcode: $barcode, condition: $cond) { id daysLate }
+        }`,
+        { barcode: copy.barcode, cond: 'GOOD' },
+        librarianToken,
+      );
+      expect(returnRes.body.errors).toBeUndefined();
+
+      // Capped at current book price Rs 300
+      const fine = await prisma.fine.findFirstOrThrow({
+        where: { loanId: loan.id },
+      });
+      expect(fine.amountMinor).toBe(30000);
+      expect(fine.uncappedAmountMinor).toBe(50000);
+      expect(fine.capMinor).toBe(30000);
+
+      const fineGql = await gql(
+        `query GetFine($id: ID!) {
+          fine(id: $id) {
+            amountRs
+            uncappedAmountRs
+            capRs
+            wasCapped
+          }
+        }`,
+        { id: fine.id },
+        librarianToken,
+      );
+      expect(fineGql.body.data.fine.amountRs).toBe(300);
+      expect(fineGql.body.data.fine.capRs).toBe(300);
+      expect(fineGql.body.data.fine.wasCapped).toBe(true);
+
+      await assertSystemInvariants('Fallback tier 2 current price');
+    });
+
+    it('5. Book with no price and no global cap has no cap (fallback tier 4 uncapped)', async () => {
+      fakeClock.setTime('2026-11-01T10:00:00.000Z');
+      const { copies } = await createTestBook('NoPriceBook', 1, null);
+      const copy = copies[0];
+      const member = await createFreshMember();
+
+      const loan = await loansService.checkoutCopy(
+        member.id,
+        copy.barcode,
+        librarianId,
+      );
+      expect(loan.priceMinorAtBorrow).toBeNull();
+
+      // 50 days late (50 * Rs 10 = Rs 500)
+      fakeClock.advanceDays(14 + 50);
+
+      const returnRes = await gql(
+        `mutation Return($barcode: String!, $cond: ReturnCondition!) {
+          returnLoan(copyBarcode: $barcode, condition: $cond) { id daysLate }
+        }`,
+        { barcode: copy.barcode, cond: 'GOOD' },
+        librarianToken,
+      );
+      expect(returnRes.body.errors).toBeUndefined();
+
+      const fine = await prisma.fine.findFirstOrThrow({
+        where: { loanId: loan.id },
+      });
+      expect(fine.amountMinor).toBe(50000);
+      expect(fine.uncappedAmountMinor).toBe(50000);
+      expect(fine.capMinor).toBeNull();
+
+      const fineGql = await gql(
+        `query GetFine($id: ID!) {
+          fine(id: $id) {
+            amountRs
+            uncappedAmountRs
+            capRs
+            wasCapped
+          }
+        }`,
+        { id: fine.id },
+        librarianToken,
+      );
+      expect(fineGql.body.data.fine.amountRs).toBe(500);
+      expect(fineGql.body.data.fine.capRs).toBeNull();
+      expect(fineGql.body.data.fine.uncappedAmountRs).toBe(500);
+      expect(fineGql.body.data.fine.wasCapped).toBe(false);
+
+      await assertSystemInvariants('Fallback tier 4 uncapped');
+    });
+
+    it('6. Book with no price but global cap set uses global cap (fallback tier 3)', async () => {
+      fakeClock.setTime('2026-11-01T10:00:00.000Z');
+      const { copies } = await createTestBook('GlobalCapBook', 1, null);
+      const copy = copies[0];
+      const member = await createFreshMember();
+
+      const loan = await loansService.checkoutCopy(
+        member.id,
+        copy.barcode,
+        librarianId,
+      );
+
+      const originalCap = (loansService as any).globalLateFeeCapRs;
+      (loansService as any).globalLateFeeCapRs = 50; // Rs 50 global cap
+      try {
+        fakeClock.advanceDays(14 + 50);
+
+        const returnRes = await gql(
+          `mutation Return($barcode: String!, $cond: ReturnCondition!) {
+            returnLoan(copyBarcode: $barcode, condition: $cond) { id daysLate }
+          }`,
+          { barcode: copy.barcode, cond: 'GOOD' },
+          librarianToken,
+        );
+        expect(returnRes.body.errors).toBeUndefined();
+
+        const fine = await prisma.fine.findFirstOrThrow({
+          where: { loanId: loan.id },
+        });
+        expect(fine.amountMinor).toBe(5000); // Capped at Rs 50
+        expect(fine.uncappedAmountMinor).toBe(50000);
+        expect(fine.capMinor).toBe(5000);
+
+        const fineGql = await gql(
+          `query GetFine($id: ID!) {
+            fine(id: $id) {
+              amountRs
+              uncappedAmountRs
+              capRs
+              wasCapped
+            }
+          }`,
+          { id: fine.id },
+          librarianToken,
+        );
+        expect(fineGql.body.data.fine.amountRs).toBe(50);
+        expect(fineGql.body.data.fine.uncappedAmountRs).toBe(500);
+        expect(fineGql.body.data.fine.capRs).toBe(50);
+        expect(fineGql.body.data.fine.wasCapped).toBe(true);
+      } finally {
+        (loansService as any).globalLateFeeCapRs = originalCap;
+      }
+
+      await assertSystemInvariants('Fallback tier 3 global cap');
+    });
+
+    it('7. Accrued late fee on active overdue loan reflects the cap and matches the return fine', async () => {
+      fakeClock.setTime('2026-11-01T10:00:00.000Z');
+      const { copies } = await createTestBook('AccruedFeeCapBook', 1, 25000); // Rs 250
+      const copy = copies[0];
+      const member = await createFreshMember();
+
+      const loan = await loansService.checkoutCopy(
+        member.id,
+        copy.barcode,
+        librarianId,
+      );
+
+      // Advance clock 40 days late (uncapped Rs 400, cap Rs 250)
+      fakeClock.advanceDays(14 + 40);
+
+      const loanQueryRes = await gql(
+        `query GetLoan($id: Int!) {
+          loan(id: $id) {
+            id
+            daysLate
+            accruedLateFeeRs
+          }
+        }`,
+        { id: loan.id },
+        librarianToken,
+      );
+      expect(loanQueryRes.body.errors).toBeUndefined();
+      expect(loanQueryRes.body.data.loan.daysLate).toBe(40);
+      expect(loanQueryRes.body.data.loan.accruedLateFeeRs).toBe(250); // Capped at Rs 250!
+
+      // Return on same tick
+      const returnRes = await gql(
+        `mutation Return($barcode: String!, $cond: ReturnCondition!) {
+          returnLoan(copyBarcode: $barcode, condition: $cond) {
+            id
+            accruedLateFeeRs
+          }
+        }`,
+        { barcode: copy.barcode, cond: 'GOOD' },
+        librarianToken,
+      );
+      expect(returnRes.body.errors).toBeUndefined();
+
+      const fine = await prisma.fine.findFirstOrThrow({
+        where: { loanId: loan.id },
+      });
+      expect(fine.amountMinor).toBe(25000);
+      expect(fine.amountMinor / 100).toBe(
+        loanQueryRes.body.data.loan.accruedLateFeeRs,
+      );
+
+      await assertSystemInvariants('Accrued late fee cap check');
+    });
+
+    it('8. Lost book default price: uses snapshot price when omitted, and fails with AMOUNT_REQUIRED when book has no price', async () => {
+      fakeClock.setTime('2026-11-01T10:00:00.000Z');
+      const member = await createFreshMember();
+
+      // Case A: Book has price Rs 350 -> markLoanLost without fee defaults to Rs 350
+      const { copies: copiesA } = await createTestBook(
+        'LostPricedBook',
+        1,
+        35000,
+      );
+      const loanA = await loansService.checkoutCopy(
+        member.id,
+        copiesA[0].barcode,
+        librarianId,
+      );
+
+      const lostARes = await gql(
+        `mutation Lost($loanId: ID!, $note: String!) {
+          markLoanLost(loanId: $loanId, note: $note) {
+            id
+            status
+          }
+        }`,
+        { loanId: loanA.id, note: 'Lost on commute' },
+        librarianToken,
+      );
+      expect(lostARes.body.errors).toBeUndefined();
+      expect(lostARes.body.data.markLoanLost.status).toBe(LoanStatus.LOST);
+
+      const fineA = await prisma.fine.findFirstOrThrow({
+        where: { loanId: loanA.id },
+      });
+      expect(fineA.reason).toBe(FineReason.LOST_BOOK);
+      expect(fineA.amountMinor).toBe(35000); // Defaulted to Rs 350
+
+      // Case B: Book has NO price -> markLoanLost without fee fails with AMOUNT_REQUIRED
+      const memberB = await createFreshMember();
+      const { copies: copiesB } = await createTestBook(
+        'LostNoPriceBook',
+        1,
+        null,
+      );
+      const loanB = await loansService.checkoutCopy(
+        memberB.id,
+        copiesB[0].barcode,
+        librarianId,
+      );
+
+      const lostBRes = await gql(
+        `mutation Lost($loanId: ID!, $note: String!) {
+          markLoanLost(loanId: $loanId, note: $note) {
+            id
+          }
+        }`,
+        { loanId: loanB.id, note: 'Lost without price' },
+        librarianToken,
+      );
+      expect(lostBRes.body.errors).toBeDefined();
+      expect(lostBRes.body.errors[0].extensions.code).toBe('AMOUNT_REQUIRED');
+
+      // Case C: Book has NO price, but staff provides fee Rs 200 -> succeeds
+      const lostCRes = await gql(
+        `mutation Lost($loanId: ID!, $note: String!, $fee: Float) {
+          markLoanLost(loanId: $loanId, note: $note, assessedFeeRs: $fee) {
+            id
+            status
+          }
+        }`,
+        {
+          loanId: loanB.id,
+          note: 'Staff manually assessed Rs 200',
+          fee: 200.0,
+        },
+        librarianToken,
+      );
+      expect(lostCRes.body.errors).toBeUndefined();
+      const fineB = await prisma.fine.findFirstOrThrow({
+        where: { loanId: loanB.id },
+      });
+      expect(fineB.amountMinor).toBe(20000);
+
+      await assertSystemInvariants('Lost book price defaults');
+    });
+
+    it('9. Staff-only price edits: MEMBER trying to set priceRs in createBook or updateBook is rejected with FORBIDDEN', async () => {
+      const member = await createFreshMember();
+
+      // Member attempts createBook
+      const memberCreateRes = await gql(
+        `mutation CreateBook($input: CreateBookInput!) {
+          createBook(input: $input) {
+            id
+          }
+        }`,
+        {
+          input: {
+            title: 'Unauthorized Member Book',
+            isbn: `ISBN-MEM-${Date.now()}`,
+            authorIds: [testAuthorId],
+            categoryIds: [testCategoryId],
+            priceRs: 499.0,
+          },
+        },
+        member.token,
+      );
+      expect(memberCreateRes.body.errors).toBeDefined();
+      expect(memberCreateRes.body.errors[0].extensions.code).toBe('FORBIDDEN');
+
+      // Member attempts updateBook
+      const { book } = await createTestBook('StaffBookToUpdate', 1, 20000);
+      const memberUpdateRes = await gql(
+        `mutation UpdateBook($id: Int!, $input: UpdateBookInput!) {
+          updateBook(id: $id, input: $input) {
+            id
+          }
+        }`,
+        { id: book.id, input: { priceRs: 199.0 } },
+        member.token,
+      );
+      expect(memberUpdateRes.body.errors).toBeDefined();
+      expect(memberUpdateRes.body.errors[0].extensions.code).toBe('FORBIDDEN');
+
+      // Staff succeeds on both
+      const staffCreateRes = await gql(
+        `mutation CreateBook($input: CreateBookInput!) {
+          createBook(input: $input) {
+            id
+            replacementPriceRs
+          }
+        }`,
+        {
+          input: {
+            title: 'Authorized Staff Book',
+            isbn: `ISBN-STAFF-${Date.now()}`,
+            authorIds: [testAuthorId],
+            categoryIds: [testCategoryId],
+            priceRs: 499.0,
+          },
+        },
+        librarianToken,
+      );
+      expect(staffCreateRes.body.errors).toBeUndefined();
+      expect(staffCreateRes.body.data.createBook.replacementPriceRs).toBe(499);
+    });
+
+    it('10. Event emission: updating book price emits book.price_changed once with old and new price post-commit', async () => {
+      const emitSpy = jest.spyOn(eventEmitter, 'emit');
+      const { book } = await createTestBook('PriceEventBook', 1, 20000); // Rs 200
+
+      emitSpy.mockClear();
+
+      // Update price from Rs 200 to Rs 350
+      const updateRes = await gql(
+        `mutation UpdateBook($id: Int!, $input: UpdateBookInput!) {
+          updateBook(id: $id, input: $input) {
+            id
+            replacementPriceRs
+          }
+        }`,
+        { id: book.id, input: { priceRs: 350.0 } },
+        librarianToken,
+      );
+      expect(updateRes.body.errors).toBeUndefined();
+
+      const priceEvents = emitSpy.mock.calls.filter(
+        (c) => c[0] === DOMAIN_EVENT_NAMES.BOOK_PRICE_CHANGED,
+      );
+      expect(priceEvents).toHaveLength(1);
+      expect(priceEvents[0][1]).toEqual(
+        expect.objectContaining({
+          bookId: book.id,
+          oldPriceMinor: 20000,
+          newPriceMinor: 35000,
+          actorId: librarianId,
+        }),
+      );
+
+      emitSpy.mockClear();
+
+      // Update book with SAME price -> should NOT emit price_changed
+      await gql(
+        `mutation UpdateBook($id: Int!, $input: UpdateBookInput!) {
+          updateBook(id: $id, input: $input) { id }
+        }`,
+        { id: book.id, input: { priceRs: 350.0 } },
+        librarianToken,
+      );
+      const samePriceEvents = emitSpy.mock.calls.filter(
+        (c) => c[0] === DOMAIN_EVENT_NAMES.BOOK_PRICE_CHANGED,
+      );
+      expect(samePriceEvents).toHaveLength(0);
+    });
+
+    it('11. Negative and invalid prices: rejected with INVALID_PRICE on both createBook and updateBook', async () => {
+      // CreateBook validation
+      for (const invalidPrice of [0, -10, 10.555, 1000001]) {
+        const res = await gql(
+          `mutation CreateBook($input: CreateBookInput!) {
+            createBook(input: $input) { id }
+          }`,
+          {
+            input: {
+              title: `Invalid Price Book ${invalidPrice}`,
+              isbn: `ISBN-INV-${Date.now()}-${Math.random()}`,
+              authorIds: [testAuthorId],
+              categoryIds: [testCategoryId],
+              priceRs: invalidPrice,
+            },
+          },
+          librarianToken,
+        );
+        expect(res.body.errors).toBeDefined();
+        expect(res.body.errors[0].extensions.code).toBe('INVALID_PRICE');
+      }
+
+      // UpdateBook validation
+      const { book } = await createTestBook('UpdateInvalidPriceBook', 1, 30000);
+      for (const invalidPrice of [0, -50, 99.999, 2000000]) {
+        const res = await gql(
+          `mutation UpdateBook($id: Int!, $input: UpdateBookInput!) {
+            updateBook(id: $id, input: $input) { id }
+          }`,
+          { id: book.id, input: { priceRs: invalidPrice } },
+          librarianToken,
+        );
+        expect(res.body.errors).toBeDefined();
+        expect(res.body.errors[0].extensions.code).toBe('INVALID_PRICE');
+      }
     });
   });
 
@@ -530,7 +1257,11 @@ describe('Returns, Fines, and Concurrency E2E (Stage 7 Full Suite)', () => {
       const copy = copies[0];
       const member = await createFreshMember();
 
-      await loansService.checkoutCopy(member.id, copy.barcode, librarianId);
+      const loan = await loansService.checkoutCopy(
+        member.id,
+        copy.barcode,
+        librarianId,
+      );
 
       // 4 days late
       fakeClock.setTime('2026-11-19T14:00:00.000Z');
@@ -583,7 +1314,11 @@ describe('Returns, Fines, and Concurrency E2E (Stage 7 Full Suite)', () => {
       const copy = copies[0];
       const member = await createFreshMember();
 
-      await loansService.checkoutCopy(member.id, copy.barcode, librarianId);
+      const loan = await loansService.checkoutCopy(
+        member.id,
+        copy.barcode,
+        librarianId,
+      );
 
       // Advance clock past due date (10 days late)
       fakeClock.setTime('2026-11-25T14:00:00.000Z');
@@ -1189,7 +1924,11 @@ describe('Returns, Fines, and Concurrency E2E (Stage 7 Full Suite)', () => {
       const copy = copies[0];
       const member = await createFreshMember();
 
-      await loansService.checkoutCopy(member.id, copy.barcode, librarianId);
+      const loan = await loansService.checkoutCopy(
+        member.id,
+        copy.barcode,
+        librarianId,
+      );
 
       // Advance 3 days late
       fakeClock.advanceDays(17);
@@ -1314,7 +2053,11 @@ describe('Returns, Fines, and Concurrency E2E (Stage 7 Full Suite)', () => {
       const copy = copies[0];
       const member = await createFreshMember();
 
-      await loansService.checkoutCopy(member.id, copy.barcode, librarianId);
+      const loan = await loansService.checkoutCopy(
+        member.id,
+        copy.barcode,
+        librarianId,
+      );
 
       // Advance clock 3 days late
       fakeClock.advanceDays(17);

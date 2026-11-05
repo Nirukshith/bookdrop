@@ -17,7 +17,9 @@ describe('BookPriceEdgeUtil (Unit Tests)', () => {
 
   it('rejects non-finite, NaN, and negative amounts with INVALID_PRICE', () => {
     expect(() => parseBookPriceToMinor(NaN)).toThrow(/valid finite number/);
-    expect(() => parseBookPriceToMinor(Infinity)).toThrow(/valid finite number/);
+    expect(() => parseBookPriceToMinor(Infinity)).toThrow(
+      /valid finite number/,
+    );
     expect(() => parseBookPriceToMinor(0)).toThrow(/greater than zero/);
     expect(() => parseBookPriceToMinor(-50)).toThrow(/greater than zero/);
   });

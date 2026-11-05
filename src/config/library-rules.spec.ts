@@ -445,12 +445,12 @@ describe('library-rules', () => {
     });
 
     it('validates non-negative integer capMinor', () => {
-      expect(() =>
-        calculateLateFee({ daysLate: 2, capMinor: -100 }),
-      ).toThrow(/capMinor must be a non-negative integer or null/);
-      expect(() =>
-        calculateLateFee({ daysLate: 2, capMinor: 10.5 }),
-      ).toThrow(/capMinor must be a non-negative integer or null/);
+      expect(() => calculateLateFee({ daysLate: 2, capMinor: -100 })).toThrow(
+        /capMinor must be a non-negative integer or null/,
+      );
+      expect(() => calculateLateFee({ daysLate: 2, capMinor: 10.5 })).toThrow(
+        /capMinor must be a non-negative integer or null/,
+      );
     });
   });
 

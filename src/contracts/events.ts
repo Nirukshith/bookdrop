@@ -168,4 +168,3 @@ export interface BookPriceChangedPayload {
   actorId?: number | null;
   occurredAt?: Date;
 }
-

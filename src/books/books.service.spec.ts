@@ -344,7 +344,11 @@ describe('BooksService', () => {
   describe('update', () => {
     it('updates a book successfully using set for relations', async () => {
       prismaMock.book.findUnique
-        .mockResolvedValueOnce({ id: 1, isbn: '978-0451524935', priceMinor: null }) // existing book check
+        .mockResolvedValueOnce({
+          id: 1,
+          isbn: '978-0451524935',
+          priceMinor: null,
+        }) // existing book check
         .mockResolvedValueOnce(null); // duplicate isbn check
 
       prismaMock.author.count.mockResolvedValue(2);
@@ -391,7 +395,11 @@ describe('BooksService', () => {
 
     it('updates book price and emits book.price_changed', async () => {
       prismaMock.book.findUnique
-        .mockResolvedValueOnce({ id: 1, isbn: '978-0451524935', priceMinor: 30000 })
+        .mockResolvedValueOnce({
+          id: 1,
+          isbn: '978-0451524935',
+          priceMinor: 30000,
+        })
         .mockResolvedValueOnce(null);
 
       const mockUpdated = {
@@ -420,7 +428,11 @@ describe('BooksService', () => {
 
     it('does not emit book.price_changed if price was unchanged', async () => {
       prismaMock.book.findUnique
-        .mockResolvedValueOnce({ id: 1, isbn: '978-0451524935', priceMinor: 45000 })
+        .mockResolvedValueOnce({
+          id: 1,
+          isbn: '978-0451524935',
+          priceMinor: 45000,
+        })
         .mockResolvedValueOnce(null);
 
       const mockUpdated = {
@@ -440,7 +452,11 @@ describe('BooksService', () => {
 
     it('clears book price when priceRs is null and emits event', async () => {
       prismaMock.book.findUnique
-        .mockResolvedValueOnce({ id: 1, isbn: '978-0451524935', priceMinor: 45000 })
+        .mockResolvedValueOnce({
+          id: 1,
+          isbn: '978-0451524935',
+          priceMinor: 45000,
+        })
         .mockResolvedValueOnce(null);
 
       const mockUpdated = {
@@ -474,9 +490,9 @@ describe('BooksService', () => {
         priceMinor: 10000,
       });
 
-      await expect(
-        service.update(1, { priceRs: 0 }),
-      ).rejects.toThrow(InvalidPriceError);
+      await expect(service.update(1, { priceRs: 0 })).rejects.toThrow(
+        InvalidPriceError,
+      );
     });
 
     it('throws NotFoundException when updating non-existent book', async () => {

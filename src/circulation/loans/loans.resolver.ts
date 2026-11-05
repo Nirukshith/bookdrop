@@ -23,7 +23,6 @@ import { AuthenticatedUser, CurrentUser, Roles, RolesGuard } from '../../auth';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ClockService } from '../../common/clock/clock.service';
 import {
-  computeLateFeeMinor,
   computeDaysLate,
   calculateLateFee,
   resolveLateFeeCapMinor,
@@ -376,8 +375,8 @@ export class LoansResolver {
   }
 
   /**
-  * accruedLateFeeRs: Returns dynamically computed accrued late fee for ACTIVE overdue loans.
-  */
+   * accruedLateFeeRs: Returns dynamically computed accrued late fee for ACTIVE overdue loans.
+   */
   @ResolveField(() => Float, { name: 'accruedLateFeeRs' })
   async resolveAccruedLateFeeRs(@Parent() loan: Loan): Promise<number> {
     if (loan.status !== LoanStatus.ACTIVE) {

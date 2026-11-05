@@ -386,7 +386,9 @@ describe('LoansResolver (Step 6)', () => {
         dueAt: new Date('2026-10-16T10:00:00.000Z'),
         priceMinorAtBorrow: 5000,
       };
-      expect(await resolver.resolveAccruedLateFeeRs(overdueCappedLoan)).toBe(50);
+      expect(await resolver.resolveAccruedLateFeeRs(overdueCappedLoan)).toBe(
+        50,
+      );
     });
 
     it('resolveAccruedLateFeeRs falls back to book current price via DataLoader when snapshot is null', async () => {
@@ -396,9 +398,9 @@ describe('LoansResolver (Step 6)', () => {
         dueAt: new Date('2026-10-16T10:00:00.000Z'),
         priceMinorAtBorrow: null,
       };
-      expect(await resolver.resolveAccruedLateFeeRs(overdueNoSnapshotLoan)).toBe(
-        35,
-      );
+      expect(
+        await resolver.resolveAccruedLateFeeRs(overdueNoSnapshotLoan),
+      ).toBe(35);
       expect(loansDataLoaderMock.loadBookPriceMinor).toHaveBeenCalledWith(
         overdueNoSnapshotLoan.bookId,
       );

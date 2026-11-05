@@ -29,7 +29,6 @@ import {
   calculateLateFee,
   computeDaysLate,
   computeDueDate,
-  computeLateFeeMinor,
   resolveLateFeeCapMinor,
   rsToMinor,
 } from '../../config/library-rules';
@@ -841,10 +840,7 @@ export class LoansService implements LoansPublicApi {
       );
     }
 
-    if (
-      input.assessedFeeRs !== undefined &&
-      input.assessedFeeRs !== null
-    ) {
+    if (input.assessedFeeRs !== undefined && input.assessedFeeRs !== null) {
       assertValidAssessedFineRs(input.assessedFeeRs);
     }
     if (
