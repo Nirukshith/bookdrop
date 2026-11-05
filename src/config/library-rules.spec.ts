@@ -5,6 +5,8 @@ import {
   calculateHoldExpiresAt,
   computeDaysLate,
   computeLateFeeMinor,
+  resolveLateFeeCapMinor,
+  calculateLateFee,
   rsToMinor,
   formatRs,
   validateAssessedFineRs,
@@ -341,6 +343,114 @@ describe('library-rules', () => {
       expect(() => computeLateFeeMinor(2, 10, 15.5)).toThrow(
         /capRs must be a non-negative integer or null/,
       );
+    });
+  });
+
+  describe('resolveLateFeeCapMinor', () => {
+    it('resolves Tier 1: snapshot on loan takes priority over book current price and global cap', () => {
+      const cap = resolveLateFeeCapMinor({
+        loanSnapshotMinor: 45000,
+        bookCurrentPriceMinor: 60000,
+        globalCapRs: 100,
+      });
+      expect(cap).toBe(45000);
+    });
+
+    it('resolves Tier 2: book current price when loan has no snapshot', () => {
+      const cap = resolveLateFeeCapMinor({
+        loanSnapshotMinor: null,
+        bookCurrentPriceMinor: 60000,
+        globalCapRs: 100,
+      });
+      expect(cap).toBe(60000);
+    });
+
+    it('resolves Tier 3: global cap converted to minor units when book has no price', () => {
+      const cap = resolveLateFeeCapMinor({
+        loanSnapshotMinor: null,
+        bookCurrentPriceMinor: null,
+        globalCapRs: 50,
+      });
+      expect(cap).toBe(5000); // 50 * 100 paise
+    });
+
+    it('resolves Tier 4: null (uncapped) when neither loan snapshot, book price, nor global cap exists', () => {
+      const cap = resolveLateFeeCapMinor({
+        loanSnapshotMinor: null,
+        bookCurrentPriceMinor: null,
+        globalCapRs: null,
+      });
+      expect(cap).toBeNull();
+    });
+  });
+
+  describe('calculateLateFee', () => {
+    it('returns 0 for daysLate <= 0', () => {
+      expect(calculateLateFee({ daysLate: 0, capMinor: 5000 })).toEqual({
+        uncappedAmountMinor: 0,
+        amountMinor: 0,
+        capMinor: 5000,
+        wasCapped: false,
+      });
+      expect(calculateLateFee({ daysLate: -3 })).toEqual({
+        uncappedAmountMinor: 0,
+        amountMinor: 0,
+        capMinor: null,
+        wasCapped: false,
+      });
+    });
+
+    it('calculates uncapped late fee when capMinor is null', () => {
+      // 3 days * Rs 10 = Rs 30 = 3000 minor
+      const result = calculateLateFee({ daysLate: 3, capMinor: null });
+      expect(result).toEqual({
+        uncappedAmountMinor: 3000,
+        amountMinor: 3000,
+        capMinor: null,
+        wasCapped: false,
+      });
+    });
+
+    it('caps late fee and sets wasCapped to true when uncapped fee exceeds capMinor', () => {
+      // 10 days * Rs 10 = Rs 100 = 10000 minor; capped at 4000 minor (Rs 40)
+      const result = calculateLateFee({ daysLate: 10, capMinor: 4000 });
+      expect(result).toEqual({
+        uncappedAmountMinor: 10000,
+        amountMinor: 4000,
+        capMinor: 4000,
+        wasCapped: true,
+      });
+    });
+
+    it('does not cap late fee and sets wasCapped to false when uncapped fee is below capMinor', () => {
+      // 2 days * Rs 10 = 2000 minor; cap = 5000 minor
+      const result = calculateLateFee({ daysLate: 2, capMinor: 5000 });
+      expect(result).toEqual({
+        uncappedAmountMinor: 2000,
+        amountMinor: 2000,
+        capMinor: 5000,
+        wasCapped: false,
+      });
+    });
+
+    it('sets wasCapped to false when uncapped fee exactly equals capMinor', () => {
+      // 5 days * Rs 10 = 5000 minor; cap = 5000 minor
+      const result = calculateLateFee({ daysLate: 5, capMinor: 5000 });
+      expect(result).toEqual({
+        uncappedAmountMinor: 5000,
+        amountMinor: 5000,
+        capMinor: 5000,
+        wasCapped: false,
+      });
+    });
+
+    it('validates non-negative integer capMinor', () => {
+      expect(() =>
+        calculateLateFee({ daysLate: 2, capMinor: -100 }),
+      ).toThrow(/capMinor must be a non-negative integer or null/);
+      expect(() =>
+        calculateLateFee({ daysLate: 2, capMinor: 10.5 }),
+      ).toThrow(/capMinor must be a non-negative integer or null/);
     });
   });
 

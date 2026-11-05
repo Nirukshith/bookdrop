@@ -25,6 +25,9 @@ import { ClockService } from '../../common/clock/clock.service';
 import {
   computeLateFeeMinor,
   computeDaysLate,
+  calculateLateFee,
+  resolveLateFeeCapMinor,
+  LATE_FEE_PER_DAY_RS,
 } from '../../config/library-rules';
 import { CopiesService } from '../copies/copies.service';
 import { IDENTITY_PUBLIC_API, IdentityPublicApi } from '../../users';
@@ -196,7 +199,8 @@ export class LoansResolver {
   @Throttle({ default: { limit: 20, ttl: 60000 } })
   async markLoanLost(
     @Args('loanId', { type: () => ID }) loanId: number,
-    @Args('assessedFeeRs', { type: () => Float }) assessedFeeRs: number,
+    @Args('assessedFeeRs', { type: () => Float, nullable: true })
+    assessedFeeRs: number | undefined,
     @Args('note', { type: () => String }) note: string,
     @CurrentUser() staff?: AuthenticatedUser,
   ): Promise<Loan> {
@@ -206,11 +210,10 @@ export class LoansResolver {
       );
     }
 
-    const assessedFeeMinor = parseRupeesToMinor(
-      assessedFeeRs,
-      'assessedFeeRs',
-      false,
-    );
+    const assessedFeeMinor =
+      assessedFeeRs !== undefined && assessedFeeRs !== null
+        ? parseRupeesToMinor(assessedFeeRs, 'assessedFeeRs', false)
+        : undefined;
 
     return this.loansService.markLoanLost({
       loanId: Number(loanId),
@@ -373,10 +376,10 @@ export class LoansResolver {
   }
 
   /**
-   * accruedLateFeeRs: Returns dynamically computed accrued late fee for ACTIVE overdue loans.
-   */
+  * accruedLateFeeRs: Returns dynamically computed accrued late fee for ACTIVE overdue loans.
+  */
   @ResolveField(() => Float, { name: 'accruedLateFeeRs' })
-  resolveAccruedLateFeeRs(@Parent() loan: Loan): number {
+  async resolveAccruedLateFeeRs(@Parent() loan: Loan): Promise<number> {
     if (loan.status !== LoanStatus.ACTIVE) {
       return 0;
     }
@@ -386,7 +389,28 @@ export class LoansResolver {
       return 0;
     }
 
-    const feeMinor = computeLateFeeMinor(daysLate);
-    return minorToRs(feeMinor);
+    let bookCurrentPriceMinor: number | null = null;
+    if (
+      loan.priceMinorAtBorrow === null ||
+      loan.priceMinorAtBorrow === undefined
+    ) {
+      bookCurrentPriceMinor = await this.loansDataLoader.loadBookPriceMinor(
+        loan.bookId,
+      );
+    }
+
+    const capMinor = resolveLateFeeCapMinor({
+      loanSnapshotMinor: loan.priceMinorAtBorrow,
+      bookCurrentPriceMinor,
+      globalCapRs: this.loansService.getGlobalLateFeeCapRs(),
+    });
+
+    const calculation = calculateLateFee({
+      daysLate,
+      ratePerDayRs: LATE_FEE_PER_DAY_RS,
+      capMinor,
+    });
+
+    return minorToRs(calculation.amountMinor);
   }
 }

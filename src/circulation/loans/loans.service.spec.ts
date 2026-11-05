@@ -853,9 +853,178 @@ describe('LoansService (Step 5)', () => {
         expect.objectContaining({
           userId: memberId,
           reason: FineReason.LATE_RETURN,
+          amountMinor: 3000,
+          uncappedAmountMinor: 3000,
           loanId: 1,
           dedupeKey: 'late-return:1',
           createdById: 5,
+        }),
+        expect.anything(),
+      );
+    });
+
+    it('caps late fee at loan price snapshot when uncapped fee exceeds snapshot and persists uncappedAmountMinor and capMinor', async () => {
+      prismaMock.copy.findUnique.mockResolvedValueOnce({
+        id: copyId,
+        barcode: validBarcode,
+      });
+      prismaMock.loan.findFirst.mockResolvedValueOnce({
+        id: 1,
+        copyId,
+        userId: memberId,
+        bookId,
+        status: LoanStatus.ACTIVE,
+        priceMinorAtBorrow: 2500, // Rs 25 cap
+      });
+
+      // 10 days late * Rs 10 = Rs 100 = 10000 minor; capped at 2500 minor
+      const dueAt = new Date(fixedNow.getTime() - 10 * 86400000);
+      txMock.$queryRaw
+        .mockResolvedValueOnce([
+          {
+            id: 1,
+            userId: memberId,
+            bookId,
+            copyId,
+            status: LoanStatus.ACTIVE,
+            dueAt,
+            priceMinorAtBorrow: 2500,
+          },
+        ])
+        .mockResolvedValueOnce([{ id: copyId, status: CopyStatus.BORROWED }]);
+
+      txMock.loan.update.mockResolvedValueOnce({
+        id: 1,
+        status: LoanStatus.RETURNED,
+      });
+
+      await service.returnLoan({
+        copyBarcode: validBarcode,
+        condition: ReturnCondition.GOOD,
+        staffId: 5,
+      });
+
+      expect(finesServiceMock.createFine).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: memberId,
+          reason: FineReason.LATE_RETURN,
+          amountMinor: 2500,
+          uncappedAmountMinor: 10000,
+          capMinor: 2500,
+          loanId: 1,
+        }),
+        expect.anything(),
+      );
+    });
+
+    it('falls back to book current price via Catalog public API when loan has no snapshot', async () => {
+      prismaMock.copy.findUnique.mockResolvedValueOnce({
+        id: copyId,
+        barcode: validBarcode,
+      });
+      prismaMock.loan.findFirst.mockResolvedValueOnce({
+        id: 1,
+        copyId,
+        userId: memberId,
+        bookId,
+        status: LoanStatus.ACTIVE,
+        priceMinorAtBorrow: null,
+      });
+
+      catalogPublicApiMock.getBookPricesMinor.mockResolvedValueOnce(
+        new Map([[bookId, 4000]]), // Rs 40 live price
+      );
+
+      // 10 days late * Rs 10 = 10000 minor; capped at 4000 minor
+      const dueAt = new Date(fixedNow.getTime() - 10 * 86400000);
+      txMock.$queryRaw
+        .mockResolvedValueOnce([
+          {
+            id: 1,
+            userId: memberId,
+            bookId,
+            copyId,
+            status: LoanStatus.ACTIVE,
+            dueAt,
+            priceMinorAtBorrow: null,
+          },
+        ])
+        .mockResolvedValueOnce([{ id: copyId, status: CopyStatus.BORROWED }]);
+
+      txMock.loan.update.mockResolvedValueOnce({
+        id: 1,
+        status: LoanStatus.RETURNED,
+      });
+
+      await service.returnLoan({
+        copyBarcode: validBarcode,
+        condition: ReturnCondition.GOOD,
+        staffId: 5,
+      });
+
+      expect(catalogPublicApiMock.getBookPricesMinor).toHaveBeenCalledWith([
+        bookId,
+      ]);
+      expect(finesServiceMock.createFine).toHaveBeenCalledWith(
+        expect.objectContaining({
+          amountMinor: 4000,
+          uncappedAmountMinor: 10000,
+          capMinor: 4000,
+        }),
+        expect.anything(),
+      );
+    });
+
+    it('leaves fee uncapped when neither snapshot nor book price exists', async () => {
+      prismaMock.copy.findUnique.mockResolvedValueOnce({
+        id: copyId,
+        barcode: validBarcode,
+      });
+      prismaMock.loan.findFirst.mockResolvedValueOnce({
+        id: 1,
+        copyId,
+        userId: memberId,
+        bookId,
+        status: LoanStatus.ACTIVE,
+        priceMinorAtBorrow: null,
+      });
+
+      catalogPublicApiMock.getBookPricesMinor.mockResolvedValueOnce(
+        new Map([[bookId, null]]),
+      );
+
+      // 10 days late = 10000 minor, uncapped
+      const dueAt = new Date(fixedNow.getTime() - 10 * 86400000);
+      txMock.$queryRaw
+        .mockResolvedValueOnce([
+          {
+            id: 1,
+            userId: memberId,
+            bookId,
+            copyId,
+            status: LoanStatus.ACTIVE,
+            dueAt,
+            priceMinorAtBorrow: null,
+          },
+        ])
+        .mockResolvedValueOnce([{ id: copyId, status: CopyStatus.BORROWED }]);
+
+      txMock.loan.update.mockResolvedValueOnce({
+        id: 1,
+        status: LoanStatus.RETURNED,
+      });
+
+      await service.returnLoan({
+        copyBarcode: validBarcode,
+        condition: ReturnCondition.GOOD,
+        staffId: 5,
+      });
+
+      expect(finesServiceMock.createFine).toHaveBeenCalledWith(
+        expect.objectContaining({
+          amountMinor: 10000,
+          uncappedAmountMinor: 10000,
+          capMinor: null,
         }),
         expect.anything(),
       );
@@ -1047,6 +1216,127 @@ describe('LoansService (Step 5)', () => {
         expect.objectContaining({
           loanId: 1,
         }),
+      );
+    });
+
+    it('defaults fee to priceMinorAtBorrow snapshot when assessed fee is omitted', async () => {
+      prismaMock.loan.findUnique.mockResolvedValueOnce({
+        id: 1,
+        userId: memberId,
+        bookId,
+        copyId,
+        status: LoanStatus.ACTIVE,
+        priceMinorAtBorrow: 49900,
+      });
+
+      txMock.$queryRaw
+        .mockResolvedValueOnce([
+          {
+            id: 1,
+            userId: memberId,
+            bookId,
+            copyId,
+            status: LoanStatus.ACTIVE,
+            priceMinorAtBorrow: 49900,
+          },
+        ])
+        .mockResolvedValueOnce([{ id: copyId, status: CopyStatus.BORROWED }]);
+
+      txMock.loan.update.mockResolvedValueOnce({
+        id: 1,
+        status: LoanStatus.LOST,
+      });
+
+      await service.markLoanLost({
+        loanId: 1,
+        note: 'Lost without explicit fee',
+        staffId: 5,
+      });
+
+      expect(finesServiceMock.createFine).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: memberId,
+          reason: FineReason.LOST_BOOK,
+          amountMinor: 49900,
+          loanId: 1,
+        }),
+        expect.anything(),
+      );
+    });
+
+    it('defaults fee to book current price when assessed fee is omitted and loan has no snapshot', async () => {
+      prismaMock.loan.findUnique.mockResolvedValueOnce({
+        id: 1,
+        userId: memberId,
+        bookId,
+        copyId,
+        status: LoanStatus.ACTIVE,
+        priceMinorAtBorrow: null,
+      });
+
+      catalogPublicApiMock.getBookPricesMinor.mockResolvedValueOnce(
+        new Map([[bookId, 75000]]),
+      );
+
+      txMock.$queryRaw
+        .mockResolvedValueOnce([
+          {
+            id: 1,
+            userId: memberId,
+            bookId,
+            copyId,
+            status: LoanStatus.ACTIVE,
+            priceMinorAtBorrow: null,
+          },
+        ])
+        .mockResolvedValueOnce([{ id: copyId, status: CopyStatus.BORROWED }]);
+
+      txMock.loan.update.mockResolvedValueOnce({
+        id: 1,
+        status: LoanStatus.LOST,
+      });
+
+      await service.markLoanLost({
+        loanId: 1,
+        note: 'Lost without explicit fee (falls back to book price)',
+        staffId: 5,
+      });
+
+      expect(catalogPublicApiMock.getBookPricesMinor).toHaveBeenCalledWith([
+        bookId,
+      ]);
+      expect(finesServiceMock.createFine).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: memberId,
+          reason: FineReason.LOST_BOOK,
+          amountMinor: 75000,
+        }),
+        expect.anything(),
+      );
+    });
+
+    it('throws AmountRequiredError when assessed fee is omitted and neither loan snapshot nor book price exists', async () => {
+      prismaMock.loan.findUnique.mockResolvedValueOnce({
+        id: 1,
+        userId: memberId,
+        bookId,
+        copyId,
+        status: LoanStatus.ACTIVE,
+        priceMinorAtBorrow: null,
+      });
+
+      catalogPublicApiMock.getBookPricesMinor.mockResolvedValueOnce(
+        new Map([[bookId, null]]),
+      );
+
+      await expect(
+        service.markLoanLost({
+          loanId: 1,
+          note: 'Lost book with unpriced item',
+          staffId: 5,
+        }),
+      ).rejects.toThrow(
+        'An assessed fee is required because the book has no configured replacement price',
       );
     });
   });

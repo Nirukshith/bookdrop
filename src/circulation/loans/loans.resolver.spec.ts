@@ -50,6 +50,7 @@ describe('LoansResolver (Step 6)', () => {
       getLoan: jest.fn(),
       isOverdue: jest.fn(),
       getLibraryTimezone: jest.fn().mockReturnValue('UTC'),
+      getGlobalLateFeeCapRs: jest.fn().mockReturnValue(null),
     };
 
     copiesServiceMock = {
@@ -77,6 +78,7 @@ describe('LoansResolver (Step 6)', () => {
     loansDataLoaderMock = {
       loadBookTitle: jest.fn().mockResolvedValue('The Great Gatsby'),
       loadMemberName: jest.fn().mockResolvedValue('Alice Member'),
+      loadBookPriceMinor: jest.fn().mockResolvedValue(null),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -357,9 +359,9 @@ describe('LoansResolver (Step 6)', () => {
       expect(resolver.resolveDaysLate(returnedLoan)).toBe(0);
     });
 
-    it('resolveAccruedLateFeeRs returns 0 when loan is on-time or returned, and computes rate when active and overdue', () => {
+    it('resolveAccruedLateFeeRs returns 0 when loan is on-time or returned, and computes rate when active and overdue', async () => {
       // On-time
-      expect(resolver.resolveAccruedLateFeeRs(loan)).toBe(0);
+      expect(await resolver.resolveAccruedLateFeeRs(loan)).toBe(0);
 
       // Returned
       const returnedLoan = {
@@ -367,14 +369,39 @@ describe('LoansResolver (Step 6)', () => {
         status: LoanStatus.RETURNED,
         dueAt: new Date('2026-10-25T10:00:00.000Z'),
       };
-      expect(resolver.resolveAccruedLateFeeRs(returnedLoan)).toBe(0);
+      expect(await resolver.resolveAccruedLateFeeRs(returnedLoan)).toBe(0);
 
       // Overdue by 1 day (10 Rs = 1000 minor)
       const overdueLoan = {
         ...loan,
         dueAt: new Date('2026-10-25T10:00:00.000Z'),
       };
-      expect(resolver.resolveAccruedLateFeeRs(overdueLoan)).toBe(10);
+      expect(await resolver.resolveAccruedLateFeeRs(overdueLoan)).toBe(10);
+    });
+
+    it('resolveAccruedLateFeeRs caps fee at loan price snapshot', async () => {
+      // 10 days late * 10 Rs = 100 Rs; price snapshot = 50 Rs (5000 minor)
+      const overdueCappedLoan = {
+        ...loan,
+        dueAt: new Date('2026-10-16T10:00:00.000Z'),
+        priceMinorAtBorrow: 5000,
+      };
+      expect(await resolver.resolveAccruedLateFeeRs(overdueCappedLoan)).toBe(50);
+    });
+
+    it('resolveAccruedLateFeeRs falls back to book current price via DataLoader when snapshot is null', async () => {
+      loansDataLoaderMock.loadBookPriceMinor.mockResolvedValueOnce(3500); // Rs 35 cap
+      const overdueNoSnapshotLoan = {
+        ...loan,
+        dueAt: new Date('2026-10-16T10:00:00.000Z'),
+        priceMinorAtBorrow: null,
+      };
+      expect(await resolver.resolveAccruedLateFeeRs(overdueNoSnapshotLoan)).toBe(
+        35,
+      );
+      expect(loansDataLoaderMock.loadBookPriceMinor).toHaveBeenCalledWith(
+        overdueNoSnapshotLoan.bookId,
+      );
     });
   });
 
@@ -487,6 +514,26 @@ describe('LoansResolver (Step 6)', () => {
       ).rejects.toThrow(InvalidAmountError);
 
       expect(loansServiceMock.markLoanLost).not.toHaveBeenCalled();
+    });
+
+    it('allows omitting assessedFeeRs to default to book price snapshot/current price in service', async () => {
+      const lostLoan = { id: 5, status: LoanStatus.LOST };
+      loansServiceMock.markLoanLost.mockResolvedValueOnce(lostLoan);
+
+      const result = await resolver.markLoanLost(
+        5,
+        undefined,
+        'Lost without fee argument',
+        staffUser,
+      );
+
+      expect(loansServiceMock.markLoanLost).toHaveBeenCalledWith({
+        loanId: 5,
+        assessedFeeMinor: undefined,
+        note: 'Lost without fee argument',
+        staffId: 999,
+      });
+      expect(result).toEqual(lostLoan);
     });
   });
 

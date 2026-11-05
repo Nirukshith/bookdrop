@@ -178,6 +178,103 @@ export function validateFineAmountMinor(minor: number): void {
 
 export const assertValidFineAmountMinor = validateFineAmountMinor;
 
+export interface LateFeeCapResolutionInput {
+  loanSnapshotMinor?: number | null;
+  bookCurrentPriceMinor?: number | null;
+  globalCapRs?: number | null;
+  snapshotMinor?: number | null;
+  currentPriceMinor?: number | null;
+}
+
+/**
+ * 4-Tier resolution hierarchy for late-return fine caps:
+ * 1. Price snapshot captured at checkout time (loanSnapshotMinor).
+ * 2. If loan predates snapshots: live book replacement price at return time (bookCurrentPriceMinor).
+ * 3. Global library late fee cap in Rupees (globalCapRs), converted to minor units.
+ * 4. Otherwise null (uncapped).
+ */
+export function resolveLateFeeCapMinor(
+  input: LateFeeCapResolutionInput,
+): number | null {
+  const snapshot = input.loanSnapshotMinor ?? input.snapshotMinor;
+  if (snapshot !== null && snapshot !== undefined) {
+    return snapshot;
+  }
+  const current = input.bookCurrentPriceMinor ?? input.currentPriceMinor;
+  if (current !== null && current !== undefined) {
+    return current;
+  }
+  if (input.globalCapRs !== null && input.globalCapRs !== undefined) {
+    return rsToMinor(input.globalCapRs);
+  }
+  return null;
+}
+
+export interface CalculateLateFeeInput {
+  daysLate: number;
+  ratePerDayRs?: number;
+  capMinor?: number | null;
+}
+
+export interface CalculateLateFeeResult {
+  uncappedAmountMinor: number;
+  amountMinor: number;
+  capMinor: number | null;
+  wasCapped: boolean;
+}
+
+/**
+ * Calculates late fee:
+ * - uncappedAmountMinor = daysLate * ratePerDayRs * 100
+ * - If capMinor is present: amountMinor = min(uncappedAmountMinor, capMinor)
+ * - Else: amountMinor = uncappedAmountMinor
+ */
+export function calculateLateFee({
+  daysLate,
+  ratePerDayRs = LATE_FEE_PER_DAY_RS,
+  capMinor = null,
+}: CalculateLateFeeInput): CalculateLateFeeResult {
+  if (!Number.isInteger(daysLate)) {
+    throw new Error(`daysLate must be an integer, received: ${daysLate}`);
+  }
+  if (daysLate <= 0) {
+    return {
+      uncappedAmountMinor: 0,
+      amountMinor: 0,
+      capMinor: capMinor ?? null,
+      wasCapped: false,
+    };
+  }
+  if (!Number.isInteger(ratePerDayRs) || ratePerDayRs <= 0) {
+    throw new Error(
+      `ratePerDayRs must be a positive integer, received: ${ratePerDayRs}`,
+    );
+  }
+
+  const uncappedAmountMinor = daysLate * ratePerDayRs * PAISE_PER_RUPEE;
+  let amountMinor = uncappedAmountMinor;
+  let wasCapped = false;
+
+  if (capMinor !== null && capMinor !== undefined) {
+    if (!Number.isInteger(capMinor) || capMinor < 0) {
+      throw new Error(
+        `capMinor must be a non-negative integer or null, received: ${capMinor}`,
+      );
+    }
+    if (uncappedAmountMinor > capMinor) {
+      amountMinor = capMinor;
+      wasCapped = true;
+    }
+  }
+
+  return {
+    uncappedAmountMinor,
+    amountMinor,
+    capMinor: capMinor ?? null,
+    wasCapped,
+  };
+}
+
 /**
  * Computes the late fee in minor units (paise) given the number of days late,
  * daily late fee rate in Rupees, and an optional cap in Rupees.
@@ -204,17 +301,15 @@ export function computeLateFeeMinor(
     );
   }
 
-  const uncappedRs = daysLate * ratePerDayRs;
-  let finalRs = uncappedRs;
-
+  let capMinor: number | null = null;
   if (capRs !== null && capRs !== undefined) {
     if (!Number.isInteger(capRs) || capRs < 0) {
       throw new Error(
         `capRs must be a non-negative integer or null, received: ${capRs}`,
       );
     }
-    finalRs = Math.min(uncappedRs, capRs);
+    capMinor = rsToMinor(capRs);
   }
 
-  return rsToMinor(finalRs);
+  return calculateLateFee({ daysLate, ratePerDayRs, capMinor }).amountMinor;
 }

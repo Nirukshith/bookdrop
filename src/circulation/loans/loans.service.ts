@@ -22,10 +22,15 @@ import { ClockService } from '../../common/clock/clock.service';
 import {
   DEFAULT_LIBRARY_TIMEZONE,
   LOAN_DAYS,
+  LATE_FEE_PER_DAY_RS,
+  LATE_FEE_CAP_RS,
   assertValidAssessedFineRs,
+  validateFineAmountMinor,
+  calculateLateFee,
   computeDaysLate,
   computeDueDate,
   computeLateFeeMinor,
+  resolveLateFeeCapMinor,
   rsToMinor,
 } from '../../config/library-rules';
 import { CopiesService } from '../copies/copies.service';
@@ -38,6 +43,7 @@ import { IDENTITY_PUBLIC_API, IdentityPublicApi } from '../../users';
 import { CATALOG_PUBLIC_API, CatalogPublicApi } from '../../books';
 import { MemberEligibilityPolicy } from '../holds/member-eligibility.policy';
 import {
+  AmountRequiredError,
   ConditionNoteRequiredError,
   CopyMismatchError,
   CopyNotAvailableError,
@@ -75,6 +81,7 @@ const INTERACTIVE_TX_OPTIONS = {
 export class LoansService implements LoansPublicApi {
   private readonly logger = new Logger(LoansService.name);
   private readonly libraryTimezone: string;
+  private readonly globalLateFeeCapRs: number | null;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -97,10 +104,24 @@ export class LoansService implements LoansPublicApi {
       'LIBRARY_TIMEZONE',
       DEFAULT_LIBRARY_TIMEZONE,
     );
+    const configuredCap = this.configService.get<number | string | null>(
+      'LATE_FEE_CAP_RS',
+      null,
+    );
+    this.globalLateFeeCapRs =
+      configuredCap !== null &&
+      configuredCap !== undefined &&
+      configuredCap !== ''
+        ? Number(configuredCap)
+        : LATE_FEE_CAP_RS;
   }
 
   public getLibraryTimezone(): string {
     return this.libraryTimezone;
+  }
+
+  public getGlobalLateFeeCapRs(): number | null {
+    return this.globalLateFeeCapRs;
   }
 
   /**
@@ -670,13 +691,37 @@ export class LoansService implements LoansPublicApi {
       // Step 5: If overdue, assess late fee fine
       let lateFine: any = null;
       if (daysLate > 0) {
-        const lateFeeMinor = computeLateFeeMinor(daysLate);
-        if (lateFeeMinor > 0) {
+        let bookCurrentPriceMinor: number | null = null;
+        if (
+          loan.priceMinorAtBorrow === null ||
+          loan.priceMinorAtBorrow === undefined
+        ) {
+          const bookPrices = await this.catalogPublicApi.getBookPricesMinor([
+            loan.bookId,
+          ]);
+          bookCurrentPriceMinor = bookPrices.get(loan.bookId) ?? null;
+        }
+
+        const capMinor = resolveLateFeeCapMinor({
+          loanSnapshotMinor: loan.priceMinorAtBorrow,
+          bookCurrentPriceMinor,
+          globalCapRs: this.globalLateFeeCapRs,
+        });
+
+        const calculation = calculateLateFee({
+          daysLate,
+          ratePerDayRs: LATE_FEE_PER_DAY_RS,
+          capMinor,
+        });
+
+        if (calculation.amountMinor > 0) {
           lateFine = await this.finesService.createFine(
             {
               userId: loan.userId,
               reason: FineReason.LATE_RETURN,
-              amountMinor: lateFeeMinor,
+              amountMinor: calculation.amountMinor,
+              uncappedAmountMinor: calculation.uncappedAmountMinor,
+              capMinor: calculation.capMinor,
               loanId: loan.id,
               daysLate,
               dedupeKey: FinesService.buildLateReturnDedupeKey(loan.id),
@@ -796,12 +841,17 @@ export class LoansService implements LoansPublicApi {
       );
     }
 
-    let assessedMinor: number;
-    if (input.assessedFeeMinor !== undefined) {
-      assessedMinor = input.assessedFeeMinor;
-    } else {
-      assertValidAssessedFineRs(input.assessedFeeRs!);
-      assessedMinor = rsToMinor(input.assessedFeeRs!);
+    if (
+      input.assessedFeeRs !== undefined &&
+      input.assessedFeeRs !== null
+    ) {
+      assertValidAssessedFineRs(input.assessedFeeRs);
+    }
+    if (
+      input.assessedFeeMinor !== undefined &&
+      input.assessedFeeMinor !== null
+    ) {
+      validateFineAmountMinor(input.assessedFeeMinor);
     }
 
     const loan = await this.prisma.loan.findUnique({
@@ -810,6 +860,33 @@ export class LoansService implements LoansPublicApi {
 
     if (!loan) {
       throw new LoanNotFoundError(input.loanId);
+    }
+
+    let assessedMinor: number;
+    if (
+      input.assessedFeeMinor !== undefined &&
+      input.assessedFeeMinor !== null
+    ) {
+      assessedMinor = input.assessedFeeMinor;
+    } else if (
+      input.assessedFeeRs !== undefined &&
+      input.assessedFeeRs !== null
+    ) {
+      assessedMinor = rsToMinor(input.assessedFeeRs);
+    } else {
+      // Default to the book's price snapshot (or current price if no snapshot)
+      let resolvedPriceMinor: number | null = loan.priceMinorAtBorrow ?? null;
+      if (resolvedPriceMinor === null) {
+        const bookPrices = await this.catalogPublicApi.getBookPricesMinor([
+          loan.bookId,
+        ]);
+        resolvedPriceMinor = bookPrices.get(loan.bookId) ?? null;
+      }
+
+      if (resolvedPriceMinor === null) {
+        throw new AmountRequiredError();
+      }
+      assessedMinor = resolvedPriceMinor;
     }
 
     const memberId = loan.userId;

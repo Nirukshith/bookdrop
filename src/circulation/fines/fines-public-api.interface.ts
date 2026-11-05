@@ -4,6 +4,8 @@ export interface CreateFineInput {
   userId: number;
   reason: FineReason;
   amountMinor: number;
+  uncappedAmountMinor?: number | null;
+  capMinor?: number | null;
   loanId?: number | null;
   daysLate?: number | null;
   note?: string | null;
