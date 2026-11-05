@@ -16,6 +16,7 @@ model Book {
   isbn          String     @unique
   description   String?
   publishedYear Int?
+  priceMinor    Int?
   authors       Author[]
   categories    Category[]
   copies        Copy[]
@@ -131,9 +132,10 @@ model Loan {
   checkedOutById  Int // plain staff user id, NOT a foreign key
   returnCondition ReturnCondition?
   conditionNote   String?
-  returnedById    Int? // plain staff user id, NOT a foreign key
-  lostAt          DateTime?
-  fines           Fine[]
+  returnedById       Int? // plain staff user id, NOT a foreign key
+  lostAt             DateTime?
+  priceMinorAtBorrow Int?
+  fines              Fine[]
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
 
@@ -157,9 +159,11 @@ model Fine {
   createdById  Int? // plain staff user id, null when created by the system
   createdAt    DateTime      @default(now())
   settledAt    DateTime?
-  waivedById   Int? // plain admin user id
-  waivedReason String?
-  payments     FinePayment[]
+  waivedById          Int? // plain admin user id
+  waivedReason        String?
+  uncappedAmountMinor Int?
+  capMinor            Int?
+  payments            FinePayment[]
 
   @@index([userId, status])
   @@index([loanId])
