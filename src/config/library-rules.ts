@@ -9,8 +9,10 @@ export const MISSED_PICKUP_FINE_RS = 100;
 export const LATE_FEE_PER_DAY_RS = 10;
 export const LATE_FEE_CAP_RS: number | null = null;
 export const MAX_ASSESSED_FINE_RS = 100000;
+export const MAX_BOOK_PRICE_RS = 1000000;
 export const PAISE_PER_RUPEE = 100;
 export const MAX_ASSESSED_FINE_MINOR = MAX_ASSESSED_FINE_RS * PAISE_PER_RUPEE;
+export const MAX_BOOK_PRICE_MINOR = MAX_BOOK_PRICE_RS * PAISE_PER_RUPEE;
 export const DEFAULT_LIBRARY_TIMEZONE = 'UTC';
 
 /**

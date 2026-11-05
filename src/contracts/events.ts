@@ -22,6 +22,7 @@ export const DOMAIN_EVENT_NAMES = {
   FINE_CREATED: 'fine.created',
   FINE_PAYMENT_RECORDED: 'fine.payment_recorded',
   FINE_SETTLED: 'fine.settled',
+  BOOK_PRICE_CHANGED: 'book.price_changed',
 } as const;
 
 export type DomainEventName =
@@ -155,3 +156,16 @@ export interface FineSettledPayload {
   settledAt: Date;
   occurredAt?: Date;
 }
+
+export interface BookPriceChangedPayload {
+  eventName?: string;
+  domain?: string;
+  bookId: number;
+  oldPriceMinor?: number | null;
+  newPriceMinor?: number | null;
+  from?: number | null;
+  to?: number | null;
+  actorId?: number | null;
+  occurredAt?: Date;
+}
+

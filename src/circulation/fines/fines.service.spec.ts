@@ -101,6 +101,8 @@ describe('FinesService (Unit Tests)', () => {
         settledAt: null,
         waivedById: null,
         waivedReason: null,
+        uncappedAmountMinor: null,
+        capMinor: null,
       };
 
       prismaMock.$queryRaw.mockResolvedValueOnce([mockFine]);
@@ -146,6 +148,8 @@ describe('FinesService (Unit Tests)', () => {
         settledAt: null,
         waivedById: null,
         waivedReason: null,
+        uncappedAmountMinor: null,
+        capMinor: null,
       };
 
       // Conflict occurred -> 0 rows returned from raw insert
@@ -469,6 +473,8 @@ describe('FinesService (Unit Tests)', () => {
           settledAt: null,
           waivedById: null,
           waivedReason: null,
+          uncappedAmountMinor: null,
+          capMinor: null,
         },
         {
           id: 2,
@@ -486,6 +492,8 @@ describe('FinesService (Unit Tests)', () => {
           settledAt: null,
           waivedById: null,
           waivedReason: null,
+          uncappedAmountMinor: null,
+          capMinor: null,
         },
         {
           id: 3,
@@ -503,6 +511,8 @@ describe('FinesService (Unit Tests)', () => {
           settledAt: fixedNow,
           waivedById: null,
           waivedReason: null,
+          uncappedAmountMinor: null,
+          capMinor: null,
         },
         {
           id: 4,
@@ -520,6 +530,8 @@ describe('FinesService (Unit Tests)', () => {
           settledAt: fixedNow,
           waivedById: 9,
           waivedReason: 'Forgiven',
+          uncappedAmountMinor: null,
+          capMinor: null,
         },
       ];
 

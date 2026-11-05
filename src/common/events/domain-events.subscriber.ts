@@ -53,4 +53,16 @@ export class DomainEventsSubscriber {
       DomainEventsSubscriber.name,
     );
   }
+
+  @OnEvent('book.*')
+  handleBookEvent(event: any): void {
+    this.logger.log(
+      {
+        domain: 'book',
+        eventName: event?.eventName ?? event?.constructor?.name ?? 'book.*',
+        payload: event,
+      },
+      DomainEventsSubscriber.name,
+    );
+  }
 }

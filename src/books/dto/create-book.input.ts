@@ -1,9 +1,10 @@
-import { Field, InputType, Int } from '@nestjs/graphql';
+import { Field, Float, InputType, Int } from '@nestjs/graphql';
 import {
   ArrayNotEmpty,
   IsArray,
   IsInt,
   IsNotEmpty,
+  IsNumber,
   IsOptional,
   IsString,
 } from 'class-validator';
@@ -29,6 +30,14 @@ export class CreateBookInput {
   @IsOptional()
   @IsInt()
   publishedYear?: number;
+
+  @Field(() => Float, {
+    nullable: true,
+    description: 'Replacement price in Rupees (at most 2 decimals)',
+  })
+  @IsOptional()
+  @IsNumber()
+  priceRs?: number;
 
   @Field(() => [Int])
   @IsArray()
