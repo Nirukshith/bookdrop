@@ -96,6 +96,10 @@ export class LoansService implements LoansPublicApi {
     );
   }
 
+  public getLibraryTimezone(): string {
+    return this.libraryTimezone;
+  }
+
   /**
    * confirmPickup: Fulfills a member's active hold into an active loan.
    * Runs in ONE transaction in strict lock order:
@@ -752,7 +756,9 @@ export class LoansService implements LoansPublicApi {
       );
     }
 
-    return txResult.updatedLoan;
+    return Object.assign(txResult.updatedLoan, {
+      daysLate: txResult.daysLate,
+    });
   }
 
   /**

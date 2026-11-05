@@ -25,9 +25,9 @@ Bookdrop enforces declarative Role-Based Access Control (RBAC) via global guards
 
 | Role | Permissions & Capabilities |
 | :--- | :--- |
-| **MEMBER** | • View catalog books and single book details (`books`, `book` - public)<br>• Register and authenticate (`register`, `login`, `refreshTokens`, `logout`)<br>• View own authenticated profile (`me`)<br>• Request remote holds on titles (`requestHold`)<br>• View own active and historical holds (`myHolds`)<br>• Cancel own active hold (`cancelMyHold`)<br>• *Forbidden from modifying catalog books, managing physical copy inventory, viewing physical copy barcodes (masked), cancelling other patrons' holds, or administrative user operations.* |
-| **LIBRARIAN** | • All MEMBER permissions<br>• Manage catalog inventory: create new books (`createBook`) and update existing book details/authors/categories (`updateBook`)<br>• Manage physical copy inventory: add copies (`addCopies`), update location (`updateCopy`), manually change condition status (`transitionCopyStatus`), and retire copies (`retireCopy`)<br>• Query physical copy inventory and inspect unmasked barcodes (`copies`, `copy`, `bookCopies`, `Book.copies`)<br>• Manage remote holds across the system: view all member holds (`holds`, `hold`) and administratively cancel holds with staff audit notes (`cancelHold`)<br>• *Forbidden from administrative user operations.* |
-| **ADMIN** | • Full system administration<br>• All LIBRARIAN and MEMBER capabilities<br>• List all registered users (`users`)<br>• Update any user's role (`updateUserRole`)<br>• *Self-Demotion Lockout: An admin is strictly prohibited from removing their own admin status to prevent administrative lockouts.* |
+| **MEMBER** | • View catalog books and single book details (`books`, `book` - public)<br>• Register and authenticate (`register`, `login`, `refreshTokens`, `logout`)<br>• View own authenticated profile (`me`)<br>• Request remote holds on titles (`requestHold`)<br>• View own active and historical holds (`myHolds`)<br>• Cancel own active hold (`cancelMyHold`)<br>• View own loans with dynamic overdue fees (`myLoans`)<br>• View own outstanding and historical fines with book title (`myFines`)<br>• *Forbidden from modifying catalog books, managing physical copy inventory, viewing physical copy barcodes (masked), cancelling other patrons' holds, returning loans, declaring lost books, recording payments, waiving fines, or administrative user operations.* |
+| **LIBRARIAN** | • All MEMBER permissions<br>• Manage catalog inventory: create new books (`createBook`) and update existing book details/authors/categories (`updateBook`)<br>• Manage physical copy inventory: add copies (`addCopies`), update location (`updateCopy`), manually change condition status (`transitionCopyStatus`), and retire copies (`retireCopy`)<br>• Query physical copy inventory and inspect unmasked barcodes (`copies`, `copy`, `bookCopies`, `Book.copies`)<br>• Manage remote holds across the system: view all member holds (`holds`, `hold`) and administratively cancel holds with staff audit notes (`cancelHold`)<br>• Circulation desk operations: pickup desk fulfillment (`confirmPickup`), walk-in checkouts (`checkoutCopy`), loan returns (`returnLoan`), declaring lost books (`markLoanLost`), viewing active overdue loans (`overdueLoans`), and loan ledger lookups (`loans`, `loan`)<br>• Fine desk operations: record fine payments (`recordFinePayment`), query fine ledger and member fines (`fines`, `fine`, `memberFines`)<br>• *Forbidden from waiving fines or administrative user operations.* |
+| **ADMIN** | • Full system administration<br>• All LIBRARIAN and MEMBER capabilities<br>• Waive patron fines with justification reason (`waiveFine`)<br>• List all registered users (`users`)<br>• Update any user's role (`updateUserRole`)<br>• *Self-Demotion Lockout: An admin is strictly prohibited from removing their own admin status to prevent administrative lockouts.* |
 
 
 ---
@@ -637,20 +637,112 @@ Loans track physical book copies borrowed by patrons. Loans originate either fro
 
 ```mermaid
 stateDiagram-v2
-    [*] --> ACTIVE : confirmPickup (source: PICKUP) / checkoutCopy (source: WALK_IN)
+    [*] --> ACTIVE : confirmPickup (PICKUP) / checkoutCopy (WALK_IN)
 
-    ACTIVE --> RETURNED : [Staff] Return book in good condition (Stage 7)
-    ACTIVE --> LOST : [Staff] Copy declared lost / unreturned (Stage 7)
+    ACTIVE --> RETURNED : [Staff] returnLoan (GOOD: CopyReleasePort -> AVAILABLE)
+    ACTIVE --> RETURNED : [Staff] returnLoan (DAMAGED: note required, copy -> DAMAGED)
+    ACTIVE --> LOST : [Staff] markLoanLost (fee & note required, copy -> LOST)
 
-    RETURNED --> [*] : Terminal state (copy returns to AVAILABLE)
-    LOST --> [*] : Terminal state (copy transitions to LOST, fine assessed)
+    RETURNED --> [*] : Terminal closed state
+    LOST --> [*] : Terminal closed state
 ```
 
 * **ACTIVE**: Loan is active and in the patron's possession. Due date is set 14 calendar days out at `23:59:59.999` in the library's local timezone (`LIBRARY_TIMEZONE`).
-* **Dynamic Overdue Evaluation**: There is no database status update for overdue loans. `isOverdue` is calculated dynamically on query (`now > dueAt && status === 'ACTIVE'`), alongside dynamic computation of `daysRemaining` and `daysLate`.
-* **RETURNED**: The patron returns the physical book copy (Stage 7).
-* **LOST**: The physical copy is lost or unreturned (Stage 7).
-* Terminal states (`RETURNED`, `LOST`) release the copy or update its condition.
+* **Dynamic Overdue Evaluation**: There is no scheduled cron job mutating overdue loans in the database. `isOverdue` is calculated dynamically on query (`now > dueAt && status === 'ACTIVE'`), alongside dynamic computation of `daysRemaining`, `daysLate`, and `accruedLateFeeRs`.
+* **RETURNED**: The patron returns the physical book copy at the circulation desk (`returnLoan`):
+  * **GOOD condition**: Copy is released through `CopyReleasePort` (`AVAILABLE`). If returned after due date, an unpaid `LATE_RETURN` fine is assessed.
+  * **DAMAGED condition**: A descriptive note is mandatory (`CONDITION_NOTE_REQUIRED`). Copy transitions `BORROWED -> DAMAGED`. If a damage fee is assessed, a `DAMAGED_BOOK` fine is created. If also late, both `LATE_RETURN` and `DAMAGED_BOOK` fines are created.
+* **LOST**: The physical copy is declared lost by staff (`markLoanLost`):
+  * Copy transitions `BORROWED -> LOST`.
+  * Staff-assessed replacement fee creates an unpaid `LOST_BOOK` fine.
+  * No late fees are assessed on lost loans.
+* Both `RETURNED` and `LOST` are terminal states. A loan marked `LOST` cannot be returned through `returnLoan`.
+
+---
+
+### 4. Fine State Machine & Financial Ledger
+
+Fines track monetary debts assessed to library patrons for overdue returns, damaged books, or lost materials. Fines follow an immutable append-only ledger pattern backed by `Fine` and `FinePayment` records.
+
+```mermaid
+stateDiagram-v2
+    [*] --> UNPAID : createFine (LATE_RETURN / DAMAGED_BOOK / LOST_BOOK)
+
+    UNPAID --> PARTIALLY_PAID : [Staff] recordFinePayment (amount < outstanding)
+    UNPAID --> PAID : [Staff] recordFinePayment (amount == outstanding)
+    UNPAID --> WAIVED : [Admin] waiveFine (justification note required)
+
+    PARTIALLY_PAID --> PAID : [Staff] recordFinePayment (remaining balance)
+    PARTIALLY_PAID --> WAIVED : [Admin] waiveFine (retains previous payments)
+
+    PAID --> [*] : Terminal settled state
+    WAIVED --> [*] : Terminal settled state
+```
+
+* **UNPAID**: Initial fine state (`paidMinor = 0`). Blocks the patron from borrowing books (`checkoutCopy`, `confirmPickup`) or placing holds (`requestHold`).
+* **PARTIALLY_PAID**: Patron made a partial payment at the desk. Fine remains active and continues to block new checkouts until fully settled.
+* **PAID**: Fine is settled in full (`paidMinor == amountMinor`). Immediately unblocks patron borrowing privileges.
+* **WAIVED**: Fine is administratively forgiven by an `ADMIN` (`waivedReason` recorded, audited by `waivedById`). Waived fines unblock patron borrowing immediately. Any earlier partial payments remain recorded in the immutable payment ledger.
+* **Immutability Invariant**: Settled fines (`PAID`, `WAIVED`) cannot receive additional payments (`FINE_NOT_PAYABLE`). Overpayments exceeding the outstanding balance are rejected with `OVERPAYMENT`.
+
+---
+
+## 💰 Monetary Rules & Days Late Computation
+
+### Money-Handling Rule (Strict Integer Minor Units)
+1. **Integer Minor Units (Paise)**: All monetary amounts (`amountMinor`, `paidMinor`, `assessedFeeMinor`) are calculated and stored strictly as **integer minor units** (paise: ₹1.00 = 100 paise) in PostgreSQL `BIGINT` and TypeScript `number`.
+2. **Never Floating-Point Arithmetic**: Floating-point representations (`0.1 + 0.2 = 0.30000000000000004`) are strictly forbidden in domain services and SQL queries.
+3. **API Edge Validation**: Amounts cross the GraphQL boundary in Rupees as `Float`, but are immediately validated at the API boundary using strict regular expressions (`^\d+(\.\d{1,2})?$`) via `parseRupeesToMinor`. Sub-cent fractional inputs (e.g. `₹10.555`) are rejected fail-fast with `INVALID_AMOUNT`.
+4. **Display Conversion**: Minor units are converted to Rupees (`minorToRs` or `formatRs`) exclusively at the GraphQL presentation layer when building resolver responses.
+
+### Worked-Example Table: Days Late & Fee Calculation
+
+Late fees are assessed at **₹10.00 / calendar day** based on local date boundaries in the configured `LIBRARY_TIMEZONE`:
+
+| Scenario | Checkout Date (Local) | Due Date (23:59:59.999 Local) | Return Date & Time (Local) | Days Late | Rate / Day | Cap Config | Assessed Fine | Explanation |
+| :--- | :--- | :--- | :--- | :---: | :---: | :---: | :---: | :--- |
+| **On-Time Return** | Nov 1, 10:00 | Nov 15, 23:59:59.999 | Nov 15, 17:30 | **0** | ₹10 / day | None | **₹0.00** | Returned on or before the due date. No fine assessed. |
+| **1 Day Late** | Nov 1, 10:00 | Nov 15, 23:59:59.999 | Nov 16, 09:15 | **1** | ₹10 / day | None | **₹10.00** | Returned on the next local calendar day. Exactly 1 day late. |
+| **N Days Late (Uncapped)** | Nov 1, 10:00 | Nov 15, 23:59:59.999 | Nov 20, 14:00 | **5** | ₹10 / day | None | **₹50.00** | 5 calendar days late: 5 × ₹10 = ₹50 (5,000 paise). |
+| **N Days Late (Hitting Cap)** | Nov 1, 10:00 | Nov 15, 23:59:59.999 | Nov 25, 11:00 | **10** | ₹10 / day | **₹50.00** | **₹50.00** | Uncapped fee is ₹100. Capped at configured maximum ₹50. |
+| **Cross-DST Return (Autumn)** | Oct 25, 10:00 (EDT, UTC-4) | Nov 8, 23:59:59.999 (EST, UTC-5) | Nov 10, 10:00 (EST, UTC-5) | **2** | ₹10 / day | None | **₹20.00** | Despite a 25-hour DST transition day, Luxon calendar arithmetic evaluates exactly 2 calendar days late. |
+
+---
+
+## 🏛️ Circulation Desk Procedures
+
+### 1. Process a Book Return (`returnLoan`)
+1. Patron presents the borrowed book at the circulation desk.
+2. Staff scans the copy barcode and inspects its physical condition.
+3. If the copy is in **GOOD** condition:
+   * Execute `returnLoan(copyBarcode: "...", condition: GOOD)`.
+   * The loan is closed (`RETURNED`), and the copy becomes `AVAILABLE` via `CopyReleasePort`.
+   * If the book is late, a `LATE_RETURN` fine is assessed automatically.
+4. If the copy is **DAMAGED**:
+   * Staff must supply a descriptive note explaining the damage (`conditionNote`). Omitting the note fails with `CONDITION_NOTE_REQUIRED`.
+   * Staff may optionally enter a repair/replacement fee in Rupees (`damageFeeRs`).
+   * The copy moves to `DAMAGED` status with an audit history row. If late and damaged, two distinct fines are created.
+
+### 2. Declare a Lost Book (`markLoanLost`)
+1. If a patron reports a book lost, or staff confirms it was never returned:
+2. Staff invokes `markLoanLost(loanId: "...", assessedFeeRs: 350.0, note: "Lost by patron on train")`.
+3. In one atomic transaction:
+   * The loan is locked and moved to `LOST`.
+   * The physical copy is moved to `LOST`.
+   * A `LOST_BOOK` fine is assessed for the replacement fee. Late return fines are skipped.
+
+### 3. Record a Fine Payment (`recordFinePayment`)
+1. Patron pays outstanding dues at the circulation desk (cash, card, or UPI).
+2. Staff calls `recordFinePayment(fineId: "...", amountRs: 50.0, note: "Cash desk payment")`.
+3. The system appends an immutable `FinePayment` ledger entry, increments `paidMinor`, and transitions the fine to `PARTIALLY_PAID` or `PAID`. Overpayment is rejected.
+4. When all fines are cleared, the patron is automatically unblocked from borrowing.
+
+### 4. Administratively Waive a Fine (`waiveFine` - Admin Only)
+1. If a patron qualifies for an administrative exemption (e.g. verified medical emergency, institutional partner):
+2. An **ADMIN** user calls `waiveFine(fineId: "...", reason: "Medical emergency documented")`. Librarians receive `FORBIDDEN`.
+3. The fine transitions to `WAIVED`. Any previous partial payments remain intact in the ledger, and the patron is unblocked.
+
+---
 
 ---
 
@@ -867,16 +959,25 @@ sequenceDiagram
 
 ---
 
-## GraphQL Operations & RBAC Matrix (Circulation Desk & Loans)
+## GraphQL Operations & RBAC Matrix (Circulation Desk, Returns, & Fines)
 
 | Operation | Type | Allowed Roles | Rate Limit | Description |
 | :--- | :--- | :--- | :--- | :--- |
 | `pickupDeskHolds(memberEmail?, copyBarcode?)` | Query | **LIBRARIAN, ADMIN** | 20 req/min | Look up active holds ready for collection at the desk. Resolves `bookTitle` and `memberName` via batch DataLoaders (1 query each, 0 N+1). |
 | `confirmPickup(holdId: Int!, copyBarcode: String!)` | Mutation | **LIBRARIAN, ADMIN** | 20 req/min | Fulfills an active hold and creates an ACTIVE loan in a single atomic transaction. Self-heals expired holds upon rollback. |
-| `checkoutCopy(memberEmail: String!, copyBarcode: String!)` | Mutation | **LIBRARIAN, ADMIN** | 20 req/min | Lends an available physical copy to a walk-in member (`holdId = null`). Enforces copy status guards and patron quota. |
+| `checkoutCopy(memberEmail: String!, copyBarcode: String!)` | Mutation | **LIBRARIAN, ADMIN** | 20 req/min | Lends an available physical copy to a walk-in member (`holdId = null`). Enforces copy status guards, unpaid fine checks, and patron quota. |
+| `returnLoan(copyBarcode, condition, conditionNote?, damageFeeRs?)` | Mutation | **LIBRARIAN, ADMIN** | 20 req/min | Processes book return in one transaction. Condition GOOD releases copy via `CopyReleasePort`; DAMAGED marks copy damaged (note required). Assesses late and damage fines. |
+| `markLoanLost(loanId, assessedFeeRs, note)` | Mutation | **LIBRARIAN, ADMIN** | 20 req/min | Marks loan and physical copy LOST, assessing a `LOST_BOOK` replacement fine. Skipping late return fines. |
+| `recordFinePayment(fineId, amountRs, note?)` | Mutation | **LIBRARIAN, ADMIN** | 20 req/min | Records patron fine payment. Appends immutable `FinePayment` row; updates fine to PARTIALLY_PAID or PAID. Rejects overpayment. |
+| `waiveFine(fineId, reason)` | Mutation | **ADMIN only** | 20 req/min | Administratively forgives patron fine. Retains prior payments and records audit reason. Unblocks patron immediately. |
 | `loans(filter?, pagination?)` | Query | **LIBRARIAN, ADMIN** | Default (100/min) | Staff listing of loans with filters (`status`, `userId`, `bookId`, `overdue`, `dueBefore`) and cursor pagination. |
+| `overdueLoans(pagination?)` | Query | **LIBRARIAN, ADMIN** | Default (100/min) | Staff shortcut query returning active overdue loans with dynamically computed late fees. |
 | `loan(id: Int!)` | Query | **LIBRARIAN, ADMIN** | Default (100/min) | Staff single-loan lookup by primary key ID. |
-| `myLoans(status?)` | Query | **MEMBER** | Default (100/min) | Patron query returning only their own loans. Physical barcodes are redacted (`copyBarcode = null`). Computes `isOverdue`, `daysRemaining`, and `daysLate`. |
+| `memberFines(memberEmail, status?)` | Query | **LIBRARIAN, ADMIN** | Default (100/min) | Staff query to look up all fines for a specific member resolved via `IdentityPublicApi`. |
+| `fines(filter?, pagination?)` | Query | **LIBRARIAN, ADMIN** | Default (100/min) | Staff listing of fines across the system with status/reason filters. |
+| `fine(id: ID!)` | Query | **LIBRARIAN, ADMIN** | Default (100/min) | Staff single-fine lookup with nested payment history. |
+| `myLoans(status?)` | Query | **MEMBER** | Default (100/min) | Patron query returning only their own loans. Physical barcodes are redacted (`copyBarcode = null`). Computes `isOverdue`, `daysRemaining`, `daysLate`, and `accruedLateFeeRs`. |
+| `myFines(status?)` | Query | **MEMBER** | Default (100/min) | Patron query returning own fines with related book titles batched via DataLoader. Never leaks barcodes, staff names, or other member IDs. |
 
 ---
 
@@ -896,8 +997,17 @@ All domain errors map to stable, machine-readable codes in GraphQL `error.extens
 | `HOLD_EXISTS_USE_PICKUP` | 200 (GraphQL error) | Walk-in checkout attempted by a member who already holds the same book (must use pickup desk). |
 | `MEMBER_NOT_FOUND` | 200 (GraphQL error) | Member email or ID was not found in the Identity area. |
 | `LOAN_LIMIT_REACHED` | 200 (GraphQL error) | Member has reached the maximum quota of 3 active loans (`MAX_ACTIVE_LOANS = 3`). |
-| `UNPAID_FINES` | 200 (GraphQL error) | Member has outstanding unpaid fines (placeholder interface for Stage 7). |
-| `FORBIDDEN` | 200 (GraphQL error) | Authenticated user lacks required role (e.g. MEMBER calling staff mutations). |
+| `LOAN_NOT_FOUND` | 200 (GraphQL error) | Specified loan ID does not exist in the database. |
+| `LOAN_NOT_ACTIVE` | 200 (GraphQL error) | Loan is already RETURNED or LOST when attempting return or marking lost. |
+| `NO_ACTIVE_LOAN_FOR_COPY` | 200 (GraphQL error) | Attempted `returnLoan` on a copy that currently has no ACTIVE loan record. |
+| `CONDITION_NOTE_REQUIRED` | 200 (GraphQL error) | Staff marked returned copy DAMAGED without providing the required descriptive note. |
+| `INVALID_AMOUNT` | 200 (GraphQL error) | Monetary amount is negative, zero, exceeds max fine, or contains sub-cent decimal places (>2 decimals). |
+| `FINE_NOT_FOUND` | 200 (GraphQL error) | Specified fine ID does not exist in the database. |
+| `FINE_NOT_PAYABLE` | 200 (GraphQL error) | Payment attempted against a fine that is already settled (`PAID` or `WAIVED`). |
+| `OVERPAYMENT` | 200 (GraphQL error) | Payment amount exceeds the remaining outstanding fine balance. |
+| `UNPAID_FINES` | 200 (GraphQL error) | Member has outstanding unpaid or partially paid fines blocking checkout or hold requests. |
+| `OVERDUE_LOANS` | 200 (GraphQL error) | Member has active overdue loans blocking new checkouts or hold requests. |
+| `FORBIDDEN` | 200 (GraphQL error) | Authenticated user lacks required role (e.g. MEMBER calling staff mutations, LIBRARIAN calling `waiveFine`). |
 | `UNAUTHENTICATED` | 200 (GraphQL error) | Request lacks a valid JWT bearer token. |
 
 ---
@@ -982,8 +1092,24 @@ Bookdrop is structured into distinct bounded contexts designed for seamless deco
 | `Loan` (Circulation) | `User` (Identity) | `Loan.userId: Int` | **Already decoupled.** Plain scalar integer reference; no cross-boundary database foreign key. |
 | `Loan` (Circulation) | `Book` (Catalog) | `Loan.bookId: Int` | **Already decoupled.** Plain scalar integer reference; no cross-boundary database foreign key. |
 | `Loan` (Circulation) | `User` (Identity) | `Loan.checkedOutById: Int` | **Already decoupled.** Plain staff user ID reference; no cross-boundary database foreign key. |
+| `Loan` (Circulation) | `User` (Identity) | `Loan.returnedById: Int?` | **Already decoupled.** Plain staff user ID reference; no cross-boundary database foreign key. |
 | `Loan` (Circulation) | `Copy` (Circulation) | `Loan.copyId -> Copy.id` | **Intra-domain relationship.** Retains relational foreign key constraint within the Circulation database boundary. |
 | `Loan` (Circulation) | `Hold` (Circulation) | `Loan.holdId -> Hold.id` | **Intra-domain relationship.** Optional 1-to-1 relationship linking a loan to its originating hold within Circulation. |
+| `Fine` (Circulation) | `User` (Identity) | `Fine.userId: Int` | **Already decoupled.** Plain scalar integer reference; no cross-boundary database foreign key. |
+| `Fine` (Circulation) | `User` (Identity) | `Fine.waivedById: Int?` | **Already decoupled.** Plain staff user ID reference; no cross-boundary database foreign key. |
+| `Fine` (Circulation) | `Loan` (Circulation) | `Fine.loanId -> Loan.id` | **Intra-domain relationship.** Optional relationship linking a fine to its loan within Circulation. |
+| `FinePayment` (Circulation) | `Fine` (Circulation) | `FinePayment.fineId -> Fine.id` | **Intra-domain relationship.** Relational foreign key constraint linking a payment to its parent fine. |
+| `FinePayment` (Circulation) | `User` (Identity) | `FinePayment.receivedById: Int` | **Already decoupled.** Plain staff user ID reference; no cross-boundary database foreign key. |
+
+### Domain Ports & Extensibility (Open-Closed Principle)
+* **`CopyReleasePort` (`src/circulation/loans/ports/copy-release.port.ts`)**:
+  * An abstract interface with `release(copyId: number, tx: PrismaTransaction): Promise<void>`.
+  * The Stage 7 default implementation (`DefaultCopyReleaseAdapter`) transitions the returned copy `BORROWED -> AVAILABLE` with `transitionStatus` inside the transaction.
+  * *Stage 8 Extensibility*: Stage 8 will introduce a reservation queue adapter that inspects waiting holds for the title, assigns the copy directly to the next waiting patron (`ON_HOLD`), and emits notification events — without requiring any modifications to the core `returnLoan` domain logic.
+* **`FinesPublicApi.createFine` (`src/circulation/fines/fines-public-api.interface.ts`)**:
+  * Clean boundary interface exposed by Fines to Circulation and external modules.
+  * Accepts structured input including a required idempotent `dedupeKey` (e.g. `late-return:<loanId>`, `lost:<loanId>`, `damaged:<loanId>`).
+  * If a fine with the key already exists, returns the existing record without raising duplicate-entry errors, guaranteeing idempotency during network retries or concurrent operations.
 
 > [!NOTE]
 > **PostgreSQL Partial Unique Indexes in Circulation (Holds & Loans)**:
@@ -997,8 +1123,7 @@ Bookdrop is structured into distinct bounded contexts designed for seamless deco
 > [!IMPORTANT]
 > **Lost Book Lifecycle & Limitations (Stage 7)**:
 > Once an active loan is declared lost via `markLoanLost`, its status transitions to `LOST`, its copy transitions to `LOST`, and an assessed replacement fee (`LOST_BOOK`) is generated without late fee penalties.
-> A loan marked `LOST` is terminal and cannot be returned through `returnLoan`. Handling a lost book that is later found or recovered is out of scope for the current circulation lifecycle.
-
+> A loan marked `LOST` is terminal and cannot be returned through `returnLoan`. Handling a lost book that is later found or recovered is out of scope for the current circulation lifecycle. A future stage will introduce a dedicated found-copy workflow (re-cataloging, physical condition assessment, and replacement fine adjustment).
 
 ---
 
@@ -1018,6 +1143,11 @@ Bookdrop implements an event-driven architecture using asynchronous domain event
 | `hold.expired` | `hold` | Pickup deadline expired; copy released | `{ holdId: number, userId: number, bookId: number, copyId: number, expiredAt: Date }` |
 | `hold.fulfilled` | `circulation` | Hold fulfilled upon desk pickup collection | `{ holdId: number, loanId: number }` |
 | `loan.started` | `loan` | Active loan started via pickup or walk-in checkout | `{ loanId: number, userId: number, bookId: number, copyId: number, borrowedAt: Date, dueAt: Date, source: 'PICKUP' \| 'WALK_IN' }` |
+| `loan.returned` | `loan` | Loan closed upon return at desk | `{ loanId: number, userId: number, bookId: number, copyId: number, returnedAt: Date, daysLate: number, condition: ReturnCondition }` |
+| `loan.lost` | `loan` | Loan declared lost by staff with replacement fee | `{ loanId: number, userId: number, bookId: number, copyId: number, occurredAt: Date }` |
+| `fine.created` | `fine` | Fine assessed for late return, damaged copy, or lost book | `{ fineId: number, userId: number, reason: FineReason, amountMinor: number, loanId: number \| null }` |
+| `fine.payment_recorded` | `fine` | Payment recorded against an outstanding fine | `{ fineId: number, paymentId: number, userId: number, amountMinor: number, paidMinor: number, remainingMinor: number, receivedById: number }` |
+| `fine.settled` | `fine` | Fine settled in full (PAID) or administratively WAIVED | `{ fineId: number, userId: number, reason: FineReason, status: 'PAID' \| 'WAIVED', settledAt: Date }` |
 
 ### Observability & Subscriber
 
@@ -1025,6 +1155,7 @@ A centralized subscriber ([`src/common/events/domain-events.subscriber.ts`](src/
 - `@OnEvent('copy.*')`
 - `@OnEvent('hold.*')`
 - `@OnEvent('loan.*')`
+- `@OnEvent('fine.*')`
 
 All received events are formatted as structured JSON via [`JsonLogger`](src/common/logger/json-logger.ts) including standard timestamps, log levels, event domain names, and payloads. This provides seamless out-of-the-box ingestion for log aggregation tools (e.g., Datadog, ELK, CloudWatch).
 
@@ -1033,7 +1164,7 @@ All received events are formatted as structured JSON via [`JsonLogger`](src/comm
 ## Security Hardening
 
 * **Helmet**: Sets defensive HTTP headers (`X-Content-Type-Options`, `X-Frame-Options`, `Strict-Transport-Security`). In development, Content Security Policy (CSP) is relaxed so the Apollo Sandbox UI loads properly; in production, strict CSP is enforced.
-* **Rate Limiting (`@nestjs/throttler`)**: GraphQL-aware throttling with default quota of 100 requests/minute, strict throttling (10 requests/minute) on sensitive authentication endpoints (`login`, `register`, `refreshTokens`), and staff desk throttling (20 requests/minute) on circulation mutations (`confirmPickup`, `checkoutCopy`).
+* **Rate Limiting (`@nestjs/throttler`)**: GraphQL-aware throttling with default quota of 100 requests/minute, strict throttling (10 requests/minute) on sensitive authentication endpoints (`login`, `register`, `refreshTokens`), and staff desk throttling (20 requests/minute) on circulation mutations (`confirmPickup`, `checkoutCopy`, `returnLoan`, `markLoanLost`, `recordFinePayment`, `waiveFine`).
 * **Query Depth Limiting**: Protects against denial-of-service query nesting attacks by capping GraphQL AST depth at 5 (`depthLimit(5)`).
 * **Production Protection**: GraphQL Introspection and Playground are automatically disabled when `NODE_ENV=production`.
 * **Field-Level Access Control**: Sensitive fields (`Book.copyCounts`, `Loan.copyBarcode`) are guarded independently at the GraphQL field resolver level using `@UseGuards(RolesGuard)` and field resolvers.
@@ -1046,13 +1177,13 @@ All received events are formatted as structured JSON via [`JsonLogger`](src/comm
 ```bash
 npm test
 ```
-*Executes 333 unit tests across 25 test suites covering pure due-date calculation, domain state machines, eligibility policies, clock deadlines, services, loaders, guards, and validators.*
+*Executes 485 unit tests across 32 test suites covering pure due-date calculation, days-late arithmetic, fee capping, currency parsing/formatting, domain state machines (Copies, Holds, Fines), eligibility policies, clock deadlines, services, loaders, guards, and validators.*
 
 ### Run End-to-End (E2E) Tests
 ```bash
 npm run test:e2e
 ```
-*Executes 101 integration tests across 8 suites sequentially against the real PostgreSQL container (Loans lifecycle, pickup desk, walk-in checkouts, advisory lock concurrency, 50-iteration loop tests, holds lifecycle, 20-member copy contention, CAS race conditions, database partial unique indexes, Auth, RBAC, Catalog, Security headers, Rate limiting, Depth limits).*
+*Executes 123 integration tests across 9 suites sequentially against the real PostgreSQL container (Returns & Fines lifecycle, advisory lock concurrency loops, payment ledger, raw SQL check constraints, Loans lifecycle, pickup desk, walk-in checkouts, holds lifecycle, 20-member copy contention, CAS race conditions, database partial unique indexes, Auth, RBAC, Catalog, Security headers, Rate limiting, Depth limits).*
 
 ### Run Code Linter & Boundary Check
 ```bash

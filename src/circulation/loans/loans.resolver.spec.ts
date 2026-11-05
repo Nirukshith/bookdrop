@@ -49,6 +49,7 @@ describe('LoansResolver (Step 6)', () => {
       listMemberLoans: jest.fn(),
       getLoan: jest.fn(),
       isOverdue: jest.fn(),
+      getLibraryTimezone: jest.fn().mockReturnValue('UTC'),
     };
 
     copiesServiceMock = {

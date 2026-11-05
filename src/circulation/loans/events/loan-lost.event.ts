@@ -11,6 +11,5 @@ export class LoanLostEvent implements LoanLostPayload {
     public readonly bookId: number,
     public readonly copyId: number,
     public readonly occurredAt: Date = new Date(),
-  ) { }
+  ) {}
 }
-

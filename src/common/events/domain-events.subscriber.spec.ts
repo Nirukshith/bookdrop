@@ -357,7 +357,6 @@ describe('DomainEventsSubscriber', () => {
     });
 
     it('intercepts fine.created via wildcard fine.*', async () => {
-      const now = new Date();
       const fineEvent = {
         eventName: 'fine.created',
         domain: 'fine',

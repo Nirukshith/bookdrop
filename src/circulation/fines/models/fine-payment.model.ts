@@ -23,4 +23,3 @@ export class FinePaymentModel {
   @Field(() => Date)
   createdAt: Date;
 }
-

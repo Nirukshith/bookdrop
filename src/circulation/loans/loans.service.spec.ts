@@ -17,7 +17,7 @@ import { IDENTITY_PUBLIC_API } from '../../users';
 import { MemberEligibilityPolicy } from '../holds/member-eligibility.policy';
 import { LoansService } from './loans.service';
 import { FinesService } from '../fines/fines.service';
-import { COPY_RELEASE_PORT, CopyReleasePort } from './ports';
+import { COPY_RELEASE_PORT } from './ports';
 import {
   ConditionNoteRequiredError,
   CopyMismatchError,

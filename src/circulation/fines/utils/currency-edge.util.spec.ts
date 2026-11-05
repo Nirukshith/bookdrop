@@ -72,4 +72,3 @@ describe('currency-edge.util', () => {
     });
   });
 });
-

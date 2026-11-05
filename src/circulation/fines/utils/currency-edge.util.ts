@@ -71,4 +71,3 @@ export function minorToRs(minor: number): number {
   }
   return Number((minor / 100).toFixed(2));
 }
-

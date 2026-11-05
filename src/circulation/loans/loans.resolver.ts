@@ -22,7 +22,10 @@ import {
 import { AuthenticatedUser, CurrentUser, Roles, RolesGuard } from '../../auth';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ClockService } from '../../common/clock/clock.service';
-import { computeLateFeeMinor } from '../../config/library-rules';
+import {
+  computeLateFeeMinor,
+  computeDaysLate,
+} from '../../config/library-rules';
 import { CopiesService } from '../copies/copies.service';
 import { IDENTITY_PUBLIC_API, IdentityPublicApi } from '../../users';
 import { LoansService } from './loans.service';
@@ -341,21 +344,32 @@ export class LoansResolver {
   }
 
   /**
-   * daysLate: Returns number of calendar days late if loan is ACTIVE and overdue.
+   * daysLate: Returns number of calendar days late:
+   * - If returned: days late at return time
+   * - If active and past due: current days late
+   * - Otherwise: 0
    */
   @ResolveField(() => Int, { name: 'daysLate' })
-  resolveDaysLate(@Parent() loan: Loan): number {
-    if (loan.status !== LoanStatus.ACTIVE) {
-      return 0;
+  resolveDaysLate(@Parent() loan: Loan & { daysLate?: number }): number {
+    if (loan.daysLate !== undefined && loan.daysLate !== null) {
+      return loan.daysLate;
     }
 
-    const now = this.clockService.now();
-    if (now <= loan.dueAt) {
-      return 0;
+    const timezone =
+      typeof this.loansService?.getLibraryTimezone === 'function'
+        ? this.loansService.getLibraryTimezone()
+        : 'UTC';
+
+    if (loan.status === LoanStatus.RETURNED && loan.returnedAt) {
+      return computeDaysLate(loan.dueAt, loan.returnedAt, timezone);
     }
 
-    const diffMs = now.getTime() - loan.dueAt.getTime();
-    return Math.ceil(diffMs / (24 * 60 * 60 * 1000));
+    if (loan.status === LoanStatus.ACTIVE) {
+      const now = this.clockService.now();
+      return computeDaysLate(loan.dueAt, now, timezone);
+    }
+
+    return 0;
   }
 
   /**

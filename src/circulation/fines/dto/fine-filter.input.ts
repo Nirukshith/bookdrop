@@ -33,4 +33,3 @@ export class FinePaginationInput {
   @Max(100)
   take: number = 20;
 }
-

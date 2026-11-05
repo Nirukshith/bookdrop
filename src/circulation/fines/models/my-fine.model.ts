@@ -48,4 +48,3 @@ export class MyFineModel {
   // Internal loanId used solely by DataLoader to resolve bookTitle (not exposed in GraphQL)
   loanId?: number | null;
 }
-

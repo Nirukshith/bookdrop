@@ -13,4 +13,3 @@ export class InvalidAmountError extends BadRequestException {
     this.name = 'InvalidAmountError';
   }
 }
-

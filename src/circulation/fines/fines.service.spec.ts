@@ -1,8 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Fine, FineReason, FineStatus } from '@prisma/client';
-import { FinesService, MEMBER_ADVISORY_NAMESPACE } from './fines.service';
-import { PrismaService } from '../../prisma/prisma.service';
+import { FinesService } from './fines.service';
 import { ClockService } from '../../common/clock/clock.service';
 import { DOMAIN_EVENT_NAMES } from '../../contracts/events';
 import {

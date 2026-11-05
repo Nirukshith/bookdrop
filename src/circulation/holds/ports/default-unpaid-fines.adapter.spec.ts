@@ -1,6 +1,5 @@
 import { FineStatus, LoanStatus } from '@prisma/client';
 import { DefaultUnpaidFinesAdapter } from './default-unpaid-fines.adapter';
-import { PrismaService } from '../../../prisma/prisma.service';
 import { ClockService } from '../../../common/clock/clock.service';
 
 describe('DefaultUnpaidFinesAdapter (Unit Tests)', () => {

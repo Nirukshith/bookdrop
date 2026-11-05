@@ -83,4 +83,3 @@ export class FineModel {
   })
   payments?: FinePaymentModel[];
 }
-
