@@ -18,7 +18,7 @@ import { UNPAID_FINES_PORT, DefaultUnpaidFinesAdapter } from '../holds/ports';
     PrismaModule,
     BooksModule,
     ClockModule,
-    HoldsModule,
+    forwardRef(() => HoldsModule),
     UsersModule,
     forwardRef(() => CopiesModule),
   ],

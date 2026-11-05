@@ -1,6 +1,8 @@
 import {
   ConflictException,
   ForbiddenException,
+  forwardRef,
+  Inject,
   Injectable,
   Logger,
 } from '@nestjs/common';
@@ -51,6 +53,7 @@ export class HoldsService implements HoldsPublicApi {
   constructor(
     private readonly prisma: PrismaService,
     private readonly booksService: BooksService,
+    @Inject(forwardRef(() => CopiesService))
     private readonly copiesService: CopiesService,
     private readonly clockService: ClockService,
     private readonly eligibilityPolicy: MemberEligibilityPolicy,

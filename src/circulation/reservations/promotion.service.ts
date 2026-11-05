@@ -30,6 +30,7 @@ export class PromotionService implements CopyAvailabilityListener {
     private readonly prisma: PrismaService,
     private readonly clockService: ClockService,
     private readonly eventEmitter: EventEmitter2,
+    @Inject(forwardRef(() => MemberEligibilityPolicy))
     private readonly eligibilityPolicy: MemberEligibilityPolicy,
     @Inject(forwardRef(() => CopiesService))
     private readonly copiesService: CopiesService,
