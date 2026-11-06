@@ -50,6 +50,7 @@ All environment variables are validated at application boot-time using Joi schem
 | `SEED_LIBRARIAN_PASSWORD` | Password for seeded demo Librarian (development only)                                                                                         | `LibrarianPassword123!`                                                |             Optional              |
 | `SEED_MEMBER_PASSWORD`    | Password for seeded demo Member (development only)                                                                                            | `MemberPassword123!`                                                   |             Optional              |
 | `ALLOW_PROD_SEED`         | Safety override flag allowing non-destructive seeding in production without wiping tables                                                     | `false`                                                                |    Optional (default: `false`)    |
+| `SCHEDULER_ENABLED`       | Enables in-process cron timer scheduling for background jobs (`expire-holds`, `send-reminders`). Disabled by default in tests and CLI scripts. | `true`                                                                 |    Optional (default: `false`)    |
 | `ADMIN_EMAIL`             | Target email address when running the `npm run create-admin` bootstrap script                                                                 | `admin@bookdrop.io`                                                    |    Required for `create-admin`    |
 | `ADMIN_NAME`              | Full name when running the `npm run create-admin` bootstrap script                                                                            | `Primary Administrator`                                                |    Required for `create-admin`    |
 | `ADMIN_PASSWORD`          | Plaintext password (min. 8 characters) when running `npm run create-admin`                                                                    | `SecureProductionPassword123!`                                         |    Required for `create-admin`    |
@@ -1399,6 +1400,279 @@ mutation {
 
 ---
 
+## Scheduled Jobs, Missed Pickups, and Reminders (Stage 9)
+
+Bookdrop features an enterprise background job execution system designed for multi-instance distributed deployments, high reliability, and zero connection-pool starvation.
+
+### Architecture: Distributed Leases & Connection Pool Safety
+
+```
+┌────────────────────────────────────────────────────────┐
+│                   JobRunnerService                     │
+│  - Acquires lease via atomic PostgreSQL CAS            │
+│  - Heartbeat lease extension every floor(TTL / 2)     │
+│  - Respects max run time budget (50s)                  │
+│  - Releases lease in finally block                     │
+└───────────────────────┬────────────────────────────────┘
+                        │
+                        ▼ Atomic CAS
+┌────────────────────────────────────────────────────────┐
+│              PostgreSQL: "JobLease" Table              │
+│  UPDATE "JobLease"                                     │
+│  SET "lockedUntil" = NOW() + '120 seconds'::interval,  │
+│      "lockedBy" = 'worker-node-hostname:pid',          │
+│      "lastStartedAt" = NOW()                           │
+│  WHERE name = 'expire-holds'                           │
+│    AND ("lockedUntil" IS NULL OR "lockedUntil" < NOW())│
+└────────────────────────────────────────────────────────┘
+```
+
+1. **Why Distributed Leases instead of PostgreSQL Advisory Locks?**
+   - `pg_advisory_xact_lock` is strictly bound to a single transaction; the lock releases automatically the moment that transaction commits or rolls back.
+   - Background jobs process items in **separate, short-lived transactions**. Holding a single transaction open while batch-processing hundreds of items would exhaust database connection pools, create row contention, and block active API traffic.
+   - Distributed leases stored in the `JobLease` table survive across multiple transactions while guaranteeing that only one worker node executes a given job at any point in time.
+
+2. **Atomic Compare-and-Swap (CAS) & Automatic Crash Recovery:**
+   - Leases are acquired with an atomic conditional update (`lockedUntil < NOW()`). If two worker nodes attempt to acquire the lease simultaneously, exactly one row update succeeds (`count === 1`); the second node yields immediately without error.
+   - If a container crashes, restarts, or runs out of memory, the lease automatically expires when `lockedUntil < NOW()` (`LEASE_SECONDS = 120`). No human intervention or manual DB unlock is required.
+
+3. **Connection Pool Safety & Fault Isolation:**
+   - Every candidate within a job batch is processed in its own isolated transaction with exponential-backoff retry (`withTransactionRetry`).
+   - If item #87 encounters a deadlock or failure, it is logged and skipped. Items 1 through 86 remain committed, and item 88 proceeds normally.
+   - Database connections are held for only milliseconds per item, avoiding connection starvation.
+
+4. **Time Budgeting & Batch Limits:**
+   - `JOB_BATCH_SIZE = 100`: Jobs process a maximum of 100 items per sweep.
+   - `JOB_MAX_RUN_SECONDS = 50`: Long-running sweeps check their elapsed time after every item and gracefully yield before exceeding the budget, leaving ample buffer before the lease expires.
+
+---
+
+### Registered Jobs & Schedule Intervals
+
+The in-process scheduler (`@nestjs/schedule`) activates only when `SCHEDULER_ENABLED=true`. When disabled (default in test and development), no recurring timers are spawned.
+
+| Job Name         | Interval | Purpose                                                                                                                                                                                                         |
+| :--------------- | :------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `expire-holds`   | Every 60s | Queries active holds where `expiresAt <= NOW()` in batches using `FOR UPDATE SKIP LOCKED`. Calls `HoldsService.expireHold`, releases physical copies back to circulation, and promotes waiting queue reservations. |
+| `send-reminders` | Every 15m | Performs three sweeps using idempotent `ReminderMark` deduplication to emit communication events for approaching deadlines.                                                                                     |
+
+#### Three Sweeps of `send-reminders`:
+1. **Loans Due Soon (`loan.due_soon`)**: Active loans with `dueAt > now AND dueAt <= now + 48h` (`DUE_SOON_HOURS = 48`). Inserts `LOAN_DUE_SOON` mark and emits `loan.due_soon` with remaining hours.
+2. **Loans Overdue (`loan.overdue`)**: Active loans with `dueAt <= now`. Inserts `LOAN_OVERDUE` mark and emits `loan.overdue` with `daysLate`.
+   > [!NOTE]
+   > A loan that is already overdue the first first time the job sweeps it receives **only** the `loan.overdue` event, never a `loan.due_soon` event.
+3. **Holds Expiring Soon (`hold.expiring_soon`)**: Active holds with `expiresAt > now AND expiresAt <= now + 6h` (`HOLD_REMINDER_HOURS = 6`). Inserts `HOLD_EXPIRING_SOON` mark and emits `hold.expiring_soon` with remaining hours.
+
+---
+
+### Missed Pickups & Rs 100 Fine Assessment
+
+All hold expiration flows exclusively through `HoldsService.expireHold`, ensuring consistent missed-pickup tracking whether triggered by the background job, CLI script, or the circulation desk.
+
+- **Only Expired Holds Count**: A hold counts as a missed pickup **only** when its final status is `EXPIRED`. Holds cancelled by the patron, cancelled by staff, or fulfilled upon pickup collection never count. Promoted queue holds (`QUEUE_PROMOTION`) that expire DO count.
+- **System-Delay Grace Excuse**: If a hold is processed more than `MISSED_PICKUP_GRACE_MINUTES = 60` after its `expiresAt` (e.g., if the application container was stopped or the job caught up late), the hold is expired and the physical copy is released, but the missed pickup is marked `excused = true` with reason `SYSTEM_DELAY`. Excused missed pickups **never** count toward the fine threshold.
+- **3-Strike Threshold (`MISSED_PICKUPS_BEFORE_FINE = 3`)**:
+  - Unassessed, unexcused missed pickups (`fineId IS NULL AND excused = false`) are grouped in batches of 3, oldest first (`selectMissedPickupsToAssess`).
+  - For each group of 3, one fine of **Rs 100** (10,000 paise integer minor units, reason `MISSED_PICKUPS`) is created via `FinesPublicApi.createFine` with idempotent dedupe key `missed-pickups:<userId>:<oldestPickupId>`.
+  - The 3 missed pickup records are linked to the newly created fine (`fineId`), resetting the member's unassessed count to zero.
+
+#### Worked Example:
+```
+Hold #1 expires on Monday at 10:00 AM (processed at 10:01 AM)
+  ↳ MissedPickup #1 created: excused = false. (Unassessed count = 1, Fines = 0)
+
+Hold #2 expires on Wednesday at 2:00 PM (processed at 2:02 PM)
+  ↳ MissedPickup #2 created: excused = false. (Unassessed count = 2, Fines = 0)
+
+Hold #3 expires on Friday at 9:00 AM (server stopped; processed at 11:30 AM — 150m late > 60m grace)
+  ↳ MissedPickup #3 created: excused = true (SYSTEM_DELAY). (Unassessed count remains 2, Fines = 0)
+
+Hold #4 expires on Sunday at 4:00 PM (processed at 4:01 PM)
+  ↳ MissedPickup #4 created: excused = false. (Unassessed count = 3)
+  ↳ THRESHOLD REACHED! Fine created: Rs 100 (reason: MISSED_PICKUPS).
+  ↳ MissedPickups #1, #2, #4 updated with fineId.
+  ↳ Unassessed count resets to 0.
+```
+
+---
+
+### Execution Interfaces (CLI & GraphQL)
+
+#### 1. Command-Line Interface (CLI)
+```bash
+# Run hold expiration job
+npm run jobs:run -- --job=expire-holds
+
+# Run reminder sweeps job
+npm run jobs:run -- --job=send-reminders
+
+# Run all registered jobs sequentially
+npm run jobs:run -- --job=all
+
+# Legacy script (forwards directly to expire-holds via the runner)
+npm run holds:expire-due
+```
+
+#### 2. GraphQL API
+
+##### Member Query: View Own Missed Pickups
+```graphql
+query {
+  myMissedPickups {
+    unassessedCount # e.g. 2
+    threshold       # 3
+    recent {
+      id
+      bookTitle     # Batched efficiently via DataLoader
+      missedAt
+      excused
+      excusedReason
+    }
+  }
+}
+```
+
+##### Librarian & Admin Query: Member Missed Pickups Lookup
+```graphql
+query {
+  memberMissedPickups(memberEmail: "patron@example.com") {
+    unassessedCount
+    threshold
+    recent {
+      bookTitle
+      missedAt
+      excused
+      excusedReason
+    }
+  }
+}
+```
+
+##### Admin Queries & Mutations: Job Monitoring and Execution
+```graphql
+# Inspect job lease states, last run status, error message, and JSON execution stats
+query {
+  jobStatuses {
+    name
+    isLeased
+    lockedUntil
+    lockedBy
+    lastStartedAt
+    lastFinishedAt
+    lastStatus
+    lastError
+    lastStats
+  }
+}
+
+# Trigger an immediate run of a background job (subject to strict 5 req/min rate limit)
+mutation {
+  runJob(name: "expire-holds") {
+    jobName
+    status
+    durationMs
+    skipped
+    error
+    stats
+  }
+}
+```
+
+---
+
+### Delivery Guarantees: Transparent At-Most-Once Event Dispatch
+
+> [!IMPORTANT]
+> **At-Most-Once Event Dispatch in Stage 9**:
+> In Bookdrop, domain events (`hold.expiring_soon`, `loan.due_soon`, `loan.overdue`, `missed_pickup.recorded`, etc.) are published into an in-memory event bus strictly **after** database transactions successfully commit.
+>
+> If the application container crashes, terminates, or loses power between the database transaction commit and event dispatch:
+> - The database state (`Hold`, `MissedPickup`, `ReminderMark`, `Fine`) is permanently and safely committed.
+> - The in-memory event notification is dropped and will not be emitted (at-most-once delivery).
+>
+> In a subsequent architecture stage (Stage 10/11), Bookdrop will introduce the **Transactional Outbox Pattern**: events will be inserted into an `OutboxMessage` database table inside the exact same atomic transaction as the domain state changes, and polled by a dedicated publisher process to guarantee **at-least-once** event delivery.
+
+---
+
+### AWS ECS Deployment & Terraform Configuration
+
+To enable the background job scheduler in your live AWS production environment, configure `SCHEDULER_ENABLED = "true"` in your ECS task definition container definitions.
+
+#### Terraform Configuration Snippet (`terraform/main.tf` or ECS Task Definition)
+
+```hcl
+resource "aws_ecs_task_definition" "bookdrop_api" {
+  family                   = "bookdrop-api-task"
+  network_mode             = "awsvpc"
+  requires_compatibilities = ["EC2"]
+  cpu                      = "256"
+  memory                   = "512"
+
+  container_definitions = jsonencode([
+    {
+      name      = "bookdrop-api"
+      image     = "${var.ecr_repository_url}:latest"
+      essential = true
+
+      portMappings = [
+        {
+          containerPort = 3000
+          hostPort      = 3000
+        }
+      ]
+
+      environment = [
+        {
+          name  = "NODE_ENV"
+          value = "production"
+        },
+        {
+          name  = "PORT"
+          value = "3000"
+        },
+        {
+          name  = "TRUST_PROXY"
+          value = "true"
+        },
+        # =====================================================================
+        # Stage 9: Enable Background Job Scheduler
+        # =====================================================================
+        {
+          name  = "SCHEDULER_ENABLED"
+          value = "true"
+        }
+      ]
+
+      secrets = [
+        {
+          name      = "DATABASE_URL"
+          valueFrom = "arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter/bookdrop/prod/DATABASE_URL"
+        },
+        {
+          name      = "JWT_ACCESS_SECRET"
+          valueFrom = "arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter/bookdrop/prod/JWT_ACCESS_SECRET"
+        }
+      ]
+
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          "awslogs-group"         = aws_cloudwatch_log_group.bookdrop_api.name
+          "awslogs-region"        = var.aws_region
+          "awslogs-stream-prefix" = "ecs"
+        }
+      }
+    }
+  ])
+}
+```
+
+> [!TIP]
+> **Multi-Instance Clustering**:
+> When running multiple ECS task replicas (`desired_count > 1`), `SCHEDULER_ENABLED` can safely be set to `"true"` across **all** instances. The `JobLease` distributed database lock ensures that only one instance executes a job at any given time, providing automatic active-passive failover with zero duplicate job runs.
+
+---
+
 ## Domain Events & Message Contracts
 
 Bookdrop implements an event-driven architecture using asynchronous domain events. Events are defined in [`src/contracts/events.ts`](src/contracts/events.ts) and dispatched strictly **after** database transactions successfully commit. If a transaction fails or rolls back, no domain events are published.
@@ -1421,9 +1695,14 @@ Bookdrop implements an event-driven architecture using asynchronous domain event
 | `fine.payment_recorded` | `fine`        | Payment recorded against an outstanding fine                 | `{ fineId: number, paymentId: number, userId: number, amountMinor: number, paidMinor: number, remainingMinor: number, receivedById: number }`                                    |
 | `fine.settled`          | `fine`        | Fine settled in full (PAID) or administratively WAIVED       | `{ fineId: number, userId: number, reason: FineReason, status: 'PAID' \| 'WAIVED', settledAt: Date }`                                                                            |
 | `book.price_changed`    | `catalog`     | Replacement price set, updated, or cleared on a catalog book | `{ bookId: number, oldPriceMinor: number \| null, newPriceMinor: number \| null, actorId: number \| null, occurredAt: Date }`                                                    |
-| `reservation.joined`    | `reservation` | Member joined reservation queue for title                    | `{ reservationId: number, userId: number, bookId: number, position: number, occurredAt: Date }`                                                                                  |
-| `reservation.cancelled` | `reservation` | Active reservation cancelled (member, staff, or superseded)  | `{ reservationId: number, userId: number, bookId: number, reason: ReservationCancelReason, cancelledById: number, occurredAt: Date }`                                            |
-| `reservation.promoted`  | `reservation` | Waiting reservation promoted to active hold upon copy avail  | `{ reservationId: number, userId: number, bookId: number, holdId: number, copyId: number, occurredAt: Date }`                                                                    |
+| `reservation.joined`          | `reservation` | Member joined reservation queue for title                    | `{ reservationId: number, userId: number, bookId: number, position: number, occurredAt: Date }`                                                                                  |
+| `reservation.cancelled`       | `reservation` | Active reservation cancelled (member, staff, or superseded)  | `{ reservationId: number, userId: number, bookId: number, reason: ReservationCancelReason, cancelledById: number, occurredAt: Date }`                                            |
+| `reservation.promoted`        | `reservation` | Waiting reservation promoted to active hold upon copy avail  | `{ reservationId: number, userId: number, bookId: number, holdId: number, copyId: number, occurredAt: Date }`                                                                    |
+| `missed_pickup.recorded`      | `circulation` | Patron hold expired without collection (excused or active)   | `{ missedPickupId: number, holdId: number, userId: number, bookId: number, excused: boolean, excusedReason: string \| null, missedAt: Date }`                                         |
+| `missed_pickup.fine_assessed` | `circulation` | 3 unassessed missed pickups triggered a Rs 100 penalty fine  | `{ fineId: number, userId: number, amountMinor: number, missedPickupIds: number[], assessedAt: Date }`                                                                            |
+| `loan.due_soon`               | `circulation` | Active loan due within approaching window (≤ 48 hours)       | `{ loanId: number, userId: number, bookId: number, copyId: number, dueAt: Date, hoursRemaining: number, occurredAt: Date }`                                                      |
+| `loan.overdue`                | `circulation` | Active loan passed due deadline; communication event emitted | `{ loanId: number, userId: number, bookId: number, copyId: number, dueAt: Date, daysLate: number, occurredAt: Date }`                                                             |
+| `hold.expiring_soon`          | `circulation` | Active hold expires within reminder window (≤ 6 hours)       | `{ holdId: number, userId: number, bookId: number, copyId: number, expiresAt: Date, hoursRemaining: number, occurredAt: Date }`                                                 |
 
 ### Observability & Subscriber
 
@@ -1435,6 +1714,7 @@ A centralized subscriber ([`src/common/events/domain-events.subscriber.ts`](src/
 - `@OnEvent('fine.*')`
 - `@OnEvent('book.*')`
 - `@OnEvent('reservation.*')`
+- `@OnEvent('missed_pickup.*')`
 
 All received events are formatted as structured JSON via [`JsonLogger`](src/common/logger/json-logger.ts) including standard timestamps, log levels, event domain names, and payloads. This provides seamless out-of-the-box ingestion for log aggregation tools (e.g., Datadog, ELK, CloudWatch).
 
@@ -1443,7 +1723,7 @@ All received events are formatted as structured JSON via [`JsonLogger`](src/comm
 ## Security Hardening
 
 - **Helmet**: Sets defensive HTTP headers (`X-Content-Type-Options`, `X-Frame-Options`, `Strict-Transport-Security`). In development, Content Security Policy (CSP) is relaxed so the Apollo Sandbox UI loads properly; in production, strict CSP is enforced.
-- **Rate Limiting (`@nestjs/throttler`)**: GraphQL-aware throttling with default quota of 100 requests/minute, strict throttling (10 requests/minute) on sensitive authentication endpoints (`login`, `register`, `refreshTokens`), and staff desk throttling (20 requests/minute) on circulation mutations (`confirmPickup`, `checkoutCopy`, `returnLoan`, `markLoanLost`, `recordFinePayment`, `waiveFine`, `joinReservationQueue`, `cancelReservation`).
+- **Rate Limiting (`@nestjs/throttler`)**: GraphQL-aware throttling with default quota of 100 requests/minute, strict throttling (10 requests/minute) on sensitive authentication endpoints (`login`, `register`, `refreshTokens`), and staff desk throttling (20 requests/minute) on circulation mutations (`confirmPickup`, `checkoutCopy`, `returnLoan`, `markLoanLost`, `recordFinePayment`, `waiveFine`, `joinReservationQueue`, `cancelReservation`), and job execution (`runJob` throttled to 5 requests/minute).
 - **Query Depth Limiting**: Protects against denial-of-service query nesting attacks by capping GraphQL AST depth at 5 (`depthLimit(5)`).
 - **Production Protection**: GraphQL Introspection and Playground are automatically disabled when `NODE_ENV=production`.
 - **Field-Level Access Control**: Sensitive fields (`Book.copyCounts`, `Loan.copyBarcode`) are guarded independently at the GraphQL field resolver level using `@UseGuards(RolesGuard)` and field resolvers.
@@ -1458,7 +1738,7 @@ All received events are formatted as structured JSON via [`JsonLogger`](src/comm
 npm test
 ```
 
-_Executes 608 unit tests across 41 test suites covering pure due-date calculation, days-late arithmetic, fee capping, currency parsing/formatting, domain state machines (Copies, Holds, Fines, Reservations), transaction retry helper with jitter backoff, eligibility policies, clock deadlines, services, loaders, guards, and validators._
+_Executes 685 unit tests across 49 test suites covering pure due-date calculation, days-late arithmetic, fee capping, currency parsing/formatting, domain state machines (Copies, Holds, Fines, Reservations), transaction retry helper with jitter backoff, eligibility policies, clock deadlines, services, loaders, guards, validators, job runner, distributed leases, and scheduler._
 
 ### Run End-to-End (E2E) Tests
 
@@ -1466,7 +1746,7 @@ _Executes 608 unit tests across 41 test suites covering pure due-date calculatio
 npm run test:e2e
 ```
 
-_Executes 160 integration tests across 10 suites sequentially against the real PostgreSQL container (Reservation queue FIFO lifecycle, atomic copy promotion across all availability triggers, ineligibility skipping, active reservation superseding, concurrent join races, Returns & Fines lifecycle, advisory lock concurrency loops, payment ledger, raw SQL check constraints, Loans lifecycle, pickup desk, walk-in checkouts, holds lifecycle, 20-member copy contention, CAS race conditions, database partial unique indexes, Auth, RBAC, Catalog, Security headers, Rate limiting, Depth limits)._
+_Executes 171 integration tests across 11 suites sequentially against the real PostgreSQL container (Scheduled jobs runner, distributed JobLease atomic CAS, hold expiration batches, missed pickup 3-strike threshold and fine assessment, system-delay grace period, 250-hold backlog catch-up, reminder mark deduplication, hold expiry vs pickup desk CAS races, 3-hold simultaneous expiration concurrency with advisory locks, Reservation queue FIFO lifecycle, atomic copy promotion across all availability triggers, ineligibility skipping, active reservation superseding, concurrent join races, Returns & Fines lifecycle, advisory lock concurrency loops, payment ledger, raw SQL check constraints, Loans lifecycle, pickup desk, walk-in checkouts, holds lifecycle, 20-member copy contention, CAS race conditions, database partial unique indexes, Auth, RBAC, Catalog, Security headers, Rate limiting, Depth limits)._
 
 ### Run Code Linter & Boundary Check
 
