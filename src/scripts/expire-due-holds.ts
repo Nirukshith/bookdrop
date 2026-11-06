@@ -2,6 +2,7 @@ import 'dotenv/config';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from '../app.module';
 import { HoldsService } from '../circulation/holds/holds.service';
+import { JobRunnerService } from '../circulation/jobs/job-runner.service';
 
 export async function runExpireDueHolds(batchSize = 100) {
   const app = await NestFactory.createApplicationContext(AppModule, {
@@ -9,6 +10,16 @@ export async function runExpireDueHolds(batchSize = 100) {
   });
 
   try {
+    const jobRunner = app.get(JobRunnerService, { strict: false });
+    if (jobRunner && jobRunner.getJob('expire-holds')) {
+      console.log('🔄 Checking for due holds to expire via JobRunner...');
+      const result = await jobRunner.runOnce('expire-holds', { batchSize });
+      console.log(
+        `✅ Holds expiration complete. Status: ${result.status}, Stats: ${JSON.stringify(result.stats)}`,
+      );
+      return result;
+    }
+
     const holdsService = app.get(HoldsService);
     console.log('🔄 Checking for due holds to expire...');
     const result = await holdsService.expireDueHolds(batchSize);

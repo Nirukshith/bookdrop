@@ -6,7 +6,14 @@ import {
   HoldCreatedEvent,
   HoldCancelledEvent,
   HoldExpiredEvent,
+  MissedPickupRecordedEvent,
+  MissedPickupFineAssessedEvent,
+  HoldExpiringSoonEvent,
 } from '../../circulation/holds/events';
+import {
+  LoanDueSoonEvent,
+  LoanOverdueEvent,
+} from '../../circulation/loans/events';
 import {
   CopyCreatedEvent,
   CopyStatusChangedEvent,
@@ -398,6 +405,106 @@ describe('DomainEventsSubscriber', () => {
           domain: 'reservation',
           eventName: 'reservation.joined',
           payload: joinedEvent,
+        },
+        'DomainEventsSubscriber',
+      );
+    });
+
+    it('intercepts missed_pickup.recorded and missed_pickup.fine_assessed via wildcard missed_pickup.*', async () => {
+      const now = new Date();
+      const recordedEvent = new MissedPickupRecordedEvent(
+        10,
+        101,
+        false,
+        2,
+        3,
+        now,
+        42,
+        now,
+        null,
+      );
+
+      eventEmitter.emit(MissedPickupRecordedEvent.EVENT_NAME, recordedEvent);
+
+      expect(loggerMock.log).toHaveBeenCalledWith(
+        {
+          domain: 'missed_pickup',
+          eventName: 'missed_pickup.recorded',
+          payload: recordedEvent,
+        },
+        'DomainEventsSubscriber',
+      );
+
+      const fineAssessedEvent = new MissedPickupFineAssessedEvent(
+        10,
+        55,
+        [101, 102, 103],
+        10000,
+        now,
+        [1, 2, 3],
+      );
+
+      eventEmitter.emit(
+        MissedPickupFineAssessedEvent.EVENT_NAME,
+        fineAssessedEvent,
+      );
+
+      expect(loggerMock.log).toHaveBeenCalledWith(
+        {
+          domain: 'missed_pickup',
+          eventName: 'missed_pickup.fine_assessed',
+          payload: fineAssessedEvent,
+        },
+        'DomainEventsSubscriber',
+      );
+    });
+
+    it('intercepts loan.due_soon and loan.overdue via wildcard loan.*', async () => {
+      const now = new Date();
+      const dueSoonEvent = new LoanDueSoonEvent(10, 20, 30, now, now);
+
+      eventEmitter.emit(LoanDueSoonEvent.EVENT_NAME, dueSoonEvent);
+
+      expect(loggerMock.log).toHaveBeenCalledWith(
+        {
+          domain: 'loan',
+          eventName: 'loan.due_soon',
+          payload: dueSoonEvent,
+        },
+        'DomainEventsSubscriber',
+      );
+
+      const overdueEvent = new LoanOverdueEvent(10, 20, 30, now, 3, now);
+
+      eventEmitter.emit(LoanOverdueEvent.EVENT_NAME, overdueEvent);
+
+      expect(loggerMock.log).toHaveBeenCalledWith(
+        {
+          domain: 'loan',
+          eventName: 'loan.overdue',
+          payload: overdueEvent,
+        },
+        'DomainEventsSubscriber',
+      );
+    });
+
+    it('intercepts hold.expiring_soon via wildcard hold.*', async () => {
+      const now = new Date();
+      const expiringSoonEvent = new HoldExpiringSoonEvent(
+        101,
+        10,
+        30,
+        now,
+        now,
+      );
+
+      eventEmitter.emit(HoldExpiringSoonEvent.EVENT_NAME, expiringSoonEvent);
+
+      expect(loggerMock.log).toHaveBeenCalledWith(
+        {
+          domain: 'hold',
+          eventName: 'hold.expiring_soon',
+          payload: expiringSoonEvent,
         },
         'DomainEventsSubscriber',
       );

@@ -11,6 +11,14 @@ import {
   formatRs,
   validateAssessedFineRs,
   validateFineAmountMinor,
+  selectMissedPickupsToAssess,
+  isExcusedAsSystemDelay,
+  selectReminderWindows,
+  isLoanDueSoon,
+  isLoanOverdue,
+  isHoldExpiringSoon,
+  isLeaseActive,
+  computeLeaseExpiry,
   LOAN_DAYS,
   MAX_ACTIVE_LOANS,
   MAX_ACTIVE_HOLDS,
@@ -19,6 +27,16 @@ import {
   MAX_ASSESSED_FINE_RS,
   MAX_ASSESSED_FINE_MINOR,
   PAISE_PER_RUPEE,
+  MISSED_PICKUPS_BEFORE_FINE,
+  MISSED_PICKUP_FINE_RS,
+  MISSED_PICKUP_GRACE_MINUTES,
+  DUE_SOON_HOURS,
+  HOLD_REMINDER_HOURS,
+  JOB_BATCH_SIZE,
+  JOB_MAX_RUN_SECONDS,
+  LEASE_SECONDS,
+  EXPIRE_HOLDS_INTERVAL_SECONDS,
+  REMINDERS_INTERVAL_SECONDS,
 } from './library-rules';
 
 describe('library-rules', () => {
@@ -32,6 +50,16 @@ describe('library-rules', () => {
       expect(MAX_ASSESSED_FINE_RS).toBe(100000);
       expect(PAISE_PER_RUPEE).toBe(100);
       expect(MAX_ASSESSED_FINE_MINOR).toBe(10000000);
+      expect(MISSED_PICKUPS_BEFORE_FINE).toBe(3);
+      expect(MISSED_PICKUP_FINE_RS).toBe(100);
+      expect(MISSED_PICKUP_GRACE_MINUTES).toBe(60);
+      expect(DUE_SOON_HOURS).toBe(48);
+      expect(HOLD_REMINDER_HOURS).toBe(6);
+      expect(JOB_BATCH_SIZE).toBe(100);
+      expect(JOB_MAX_RUN_SECONDS).toBe(50);
+      expect(LEASE_SECONDS).toBe(120);
+      expect(EXPIRE_HOLDS_INTERVAL_SECONDS).toBe(60);
+      expect(REMINDERS_INTERVAL_SECONDS).toBe(900);
     });
 
     it('computes pickup deadline 24 hours later in UTC', () => {
@@ -541,6 +569,321 @@ describe('library-rules', () => {
         expect(() => validateFineAmountMinor(10000001)).toThrow(
           /exceeds the maximum allowed fine/,
         );
+      });
+    });
+  });
+
+  describe('selectMissedPickupsToAssess', () => {
+    it('returns empty groups and empty remainder for 0 items', () => {
+      const result = selectMissedPickupsToAssess([], 3);
+      expect(result.groups).toEqual([]);
+      expect(result.toAssess).toEqual([]);
+      expect(result.remainder).toEqual([]);
+    });
+
+    it('returns empty groups and all items as remainder for 2 items (below threshold 3)', () => {
+      const items = [{ id: 1 }, { id: 2 }];
+      const result = selectMissedPickupsToAssess(items, 3);
+      expect(result.groups).toEqual([]);
+      expect(result.toAssess).toEqual([]);
+      expect(result.remainder).toEqual(items);
+    });
+
+    it('returns 1 group of 3 and empty remainder for 3 items (exact threshold)', () => {
+      const items = [{ id: 1 }, { id: 2 }, { id: 3 }];
+      const result = selectMissedPickupsToAssess(items, 3);
+      expect(result.groups).toEqual([items]);
+      expect(result.toAssess).toEqual([items]);
+      expect(result.remainder).toEqual([]);
+    });
+
+    it('returns 1 group of 3 and 1 remainder for 4 items', () => {
+      const items = [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }];
+      const result = selectMissedPickupsToAssess(items, 3);
+      expect(result.groups).toEqual([[items[0], items[1], items[2]]]);
+      expect(result.toAssess).toEqual([[items[0], items[1], items[2]]]);
+      expect(result.remainder).toEqual([items[3]]);
+    });
+
+    it('returns 2 groups of 3 and empty remainder for 6 items (two full batches)', () => {
+      const items = [
+        { id: 1 },
+        { id: 2 },
+        { id: 3 },
+        { id: 4 },
+        { id: 5 },
+        { id: 6 },
+      ];
+      const result = selectMissedPickupsToAssess(items, 3);
+      expect(result.groups).toEqual([
+        [items[0], items[1], items[2]],
+        [items[3], items[4], items[5]],
+      ]);
+      expect(result.remainder).toEqual([]);
+    });
+
+    it('returns 2 groups of 3 and 1 remainder for 7 items', () => {
+      const items = [
+        { id: 1 },
+        { id: 2 },
+        { id: 3 },
+        { id: 4 },
+        { id: 5 },
+        { id: 6 },
+        { id: 7 },
+      ];
+      const result = selectMissedPickupsToAssess(items, 3);
+      expect(result.groups).toEqual([
+        [items[0], items[1], items[2]],
+        [items[3], items[4], items[5]],
+      ]);
+      expect(result.remainder).toEqual([items[6]]);
+    });
+
+    it('preserves oldest-first order within groups and across batches', () => {
+      const ids = [10, 20, 30, 40, 50, 60, 70];
+      const result = selectMissedPickupsToAssess(ids, 3);
+      expect(result.groups[0]).toEqual([10, 20, 30]);
+      expect(result.groups[1]).toEqual([40, 50, 60]);
+      expect(result.remainder).toEqual([70]);
+    });
+
+    it('defaults threshold to MISSED_PICKUPS_BEFORE_FINE (3)', () => {
+      const ids = [1, 2, 3];
+      const result = selectMissedPickupsToAssess(ids);
+      expect(result.groups).toHaveLength(1);
+      expect(result.remainder).toHaveLength(0);
+    });
+
+    it('throws error if threshold is <= 0 or not an integer', () => {
+      expect(() => selectMissedPickupsToAssess([1], 0)).toThrow(
+        /threshold must be a positive integer/,
+      );
+      expect(() => selectMissedPickupsToAssess([1], -1)).toThrow(
+        /threshold must be a positive integer/,
+      );
+      expect(() => selectMissedPickupsToAssess([1], 2.5)).toThrow(
+        /threshold must be a positive integer/,
+      );
+    });
+  });
+
+  describe('isExcusedAsSystemDelay', () => {
+    const expiresAt = new Date('2026-11-06T10:00:00.000Z');
+
+    it('returns false when processed before or exactly at expiresAt', () => {
+      const earlier = new Date('2026-11-06T09:50:00.000Z');
+      expect(isExcusedAsSystemDelay(expiresAt, earlier)).toBe(false);
+      expect(isExcusedAsSystemDelay(expiresAt, expiresAt)).toBe(false);
+    });
+
+    it('returns false when delay is within the 60-minute grace window', () => {
+      const processed30mLater = new Date('2026-11-06T10:30:00.000Z');
+      const processed59mLater = new Date('2026-11-06T10:59:00.000Z');
+      expect(isExcusedAsSystemDelay(expiresAt, processed30mLater)).toBe(false);
+      expect(isExcusedAsSystemDelay(expiresAt, processed59mLater)).toBe(false);
+    });
+
+    it('returns false at the exact grace window boundary (delay == 60 minutes)', () => {
+      const processedExactly60mLater = new Date('2026-11-06T11:00:00.000Z');
+      expect(isExcusedAsSystemDelay(expiresAt, processedExactly60mLater)).toBe(
+        false,
+      );
+    });
+
+    it('returns true when delay strictly exceeds grace window by even 1 millisecond', () => {
+      const processed60mPlus1ms = new Date('2026-11-06T11:00:00.001Z');
+      expect(isExcusedAsSystemDelay(expiresAt, processed60mPlus1ms)).toBe(true);
+    });
+
+    it('returns true when processed much later (e.g. 90 minutes or several days)', () => {
+      const processed90mLater = new Date('2026-11-06T11:30:00.000Z');
+      const processed3DaysLater = new Date('2026-11-09T10:00:00.000Z');
+      expect(isExcusedAsSystemDelay(expiresAt, processed90mLater)).toBe(true);
+      expect(isExcusedAsSystemDelay(expiresAt, processed3DaysLater)).toBe(true);
+    });
+
+    it('respects custom grace minutes parameter', () => {
+      // 15 min custom grace
+      const processed20mLater = new Date('2026-11-06T10:20:00.000Z');
+      expect(isExcusedAsSystemDelay(expiresAt, processed20mLater, 15)).toBe(
+        true,
+      );
+      expect(isExcusedAsSystemDelay(expiresAt, processed20mLater, 30)).toBe(
+        false,
+      );
+    });
+
+    it('throws error if invalid dates are passed', () => {
+      expect(() =>
+        isExcusedAsSystemDelay(new Date('invalid'), new Date()),
+      ).toThrow(/Invalid Date/);
+      expect(() =>
+        isExcusedAsSystemDelay(new Date(), new Date('invalid')),
+      ).toThrow(/Invalid Date/);
+    });
+  });
+
+  describe('selectReminderWindows & reminder boundary helpers', () => {
+    const baseNow = new Date('2026-11-06T12:00:00.000Z');
+
+    describe('selectReminderWindows', () => {
+      it('returns query windows relative to now using default rule constants', () => {
+        const windows = selectReminderWindows(baseNow);
+
+        expect(windows.dueSoon.from.toISOString()).toBe(
+          '2026-11-06T12:00:00.000Z',
+        );
+        // now + 48 hours = 2026-11-08T12:00:00.000Z
+        expect(windows.dueSoon.to.toISOString()).toBe(
+          '2026-11-08T12:00:00.000Z',
+        );
+
+        expect(windows.overdue.before.toISOString()).toBe(
+          '2026-11-06T12:00:00.000Z',
+        );
+
+        expect(windows.holdExpiringSoon.from.toISOString()).toBe(
+          '2026-11-06T12:00:00.000Z',
+        );
+        // now + 6 hours = 2026-11-06T18:00:00.000Z
+        expect(windows.holdExpiringSoon.to.toISOString()).toBe(
+          '2026-11-06T18:00:00.000Z',
+        );
+      });
+
+      it('accepts custom window overrides', () => {
+        const windows = selectReminderWindows(baseNow, {
+          dueSoonHours: 24,
+          holdReminderHours: 3,
+        });
+        expect(windows.dueSoon.to.toISOString()).toBe(
+          '2026-11-07T12:00:00.000Z',
+        );
+        expect(windows.holdExpiringSoon.to.toISOString()).toBe(
+          '2026-11-06T15:00:00.000Z',
+        );
+      });
+
+      it('throws on invalid date', () => {
+        expect(() => selectReminderWindows(new Date('invalid'))).toThrow(
+          /Invalid Date/,
+        );
+      });
+    });
+
+    describe('isLoanDueSoon', () => {
+      const now = new Date('2026-11-06T12:00:00.000Z');
+      const windowHours = 48;
+
+      it('is true exactly at the window edge (due in exactly 48 hours)', () => {
+        const dueAt = new Date('2026-11-08T12:00:00.000Z'); // now + 48h
+        expect(isLoanDueSoon(dueAt, now, windowHours)).toBe(true);
+      });
+
+      it('is true just inside the window (due in 47h 59m 59s)', () => {
+        const dueAt = new Date('2026-11-08T11:59:59.000Z');
+        expect(isLoanDueSoon(dueAt, now, windowHours)).toBe(true);
+      });
+
+      it('is false just outside the window (due in 48h 1ms)', () => {
+        const dueAt = new Date('2026-11-08T12:00:00.001Z');
+        expect(isLoanDueSoon(dueAt, now, windowHours)).toBe(false);
+      });
+
+      it('is true when due right now (dueAt === now)', () => {
+        expect(isLoanDueSoon(now, now, windowHours)).toBe(true);
+      });
+
+      it('is false when already overdue (dueAt < now)', () => {
+        const dueAt = new Date('2026-11-06T11:59:59.999Z');
+        expect(isLoanDueSoon(dueAt, now, windowHours)).toBe(false);
+      });
+    });
+
+    describe('isLoanOverdue', () => {
+      const dueAt = new Date('2026-11-06T12:00:00.000Z');
+
+      it('is false before due date', () => {
+        const now = new Date('2026-11-06T11:59:59.000Z');
+        expect(isLoanOverdue(dueAt, now)).toBe(false);
+      });
+
+      it('is false exactly at the due instant (now === dueAt)', () => {
+        const now = new Date('2026-11-06T12:00:00.000Z');
+        expect(isLoanOverdue(dueAt, now)).toBe(false);
+      });
+
+      it('is true 1 millisecond past due date', () => {
+        const now = new Date('2026-11-06T12:00:00.001Z');
+        expect(isLoanOverdue(dueAt, now)).toBe(true);
+      });
+
+      it('is true long past due date', () => {
+        const now = new Date('2026-11-07T12:00:00.000Z');
+        expect(isLoanOverdue(dueAt, now)).toBe(true);
+      });
+    });
+
+    describe('isHoldExpiringSoon', () => {
+      const now = new Date('2026-11-06T12:00:00.000Z');
+      const windowHours = 6;
+
+      it('is true exactly at the window edge (expires in exactly 6 hours)', () => {
+        const expiresAt = new Date('2026-11-06T18:00:00.000Z');
+        expect(isHoldExpiringSoon(expiresAt, now, windowHours)).toBe(true);
+      });
+
+      it('is true just inside the window (expires in 5h 59m)', () => {
+        const expiresAt = new Date('2026-11-06T17:59:00.000Z');
+        expect(isHoldExpiringSoon(expiresAt, now, windowHours)).toBe(true);
+      });
+
+      it('is false just outside the window (expires in 6h 1ms)', () => {
+        const expiresAt = new Date('2026-11-06T18:00:00.001Z');
+        expect(isHoldExpiringSoon(expiresAt, now, windowHours)).toBe(false);
+      });
+
+      it('is false when already expired (expiresAt < now)', () => {
+        const expiresAt = new Date('2026-11-06T11:59:59.000Z');
+        expect(isHoldExpiringSoon(expiresAt, now, windowHours)).toBe(false);
+      });
+    });
+  });
+
+  describe('Lease helpers', () => {
+    const now = new Date('2026-11-06T12:00:00.000Z');
+
+    describe('isLeaseActive', () => {
+      it('returns false for null or undefined lockedUntil', () => {
+        expect(isLeaseActive(null, now)).toBe(false);
+        expect(isLeaseActive(undefined, now)).toBe(false);
+      });
+
+      it('returns false for past or expired lockedUntil', () => {
+        const past = new Date('2026-11-06T11:59:59.000Z');
+        expect(isLeaseActive(past, now)).toBe(false);
+      });
+
+      it('returns false when lockedUntil equals now', () => {
+        expect(isLeaseActive(now, now)).toBe(false);
+      });
+
+      it('returns true when lockedUntil is in the future', () => {
+        const future = new Date('2026-11-06T12:00:01.000Z');
+        expect(isLeaseActive(future, now)).toBe(true);
+      });
+    });
+
+    describe('computeLeaseExpiry', () => {
+      it('computes expiry as now + leaseSeconds', () => {
+        const expiry = computeLeaseExpiry(now, 120);
+        expect(expiry.toISOString()).toBe('2026-11-06T12:02:00.000Z');
+      });
+
+      it('defaults to LEASE_SECONDS (120s)', () => {
+        const expiry = computeLeaseExpiry(now);
+        expect(expiry.getTime() - now.getTime()).toBe(120 * 1000);
       });
     });
   });

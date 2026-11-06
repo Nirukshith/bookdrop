@@ -19,6 +19,7 @@ export const envValidationSchema = Joi.object({
   SEED_MEMBER_PASSWORD: Joi.string().optional(),
   TRUST_PROXY: Joi.boolean().default(false),
   ALLOWED_ORIGINS: Joi.string().allow('').default(''),
+  SCHEDULER_ENABLED: Joi.boolean().default(false),
   LIBRARY_TIMEZONE: Joi.string()
     .default('UTC')
     .custom((value, helpers) => {

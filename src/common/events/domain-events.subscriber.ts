@@ -78,4 +78,17 @@ export class DomainEventsSubscriber {
       DomainEventsSubscriber.name,
     );
   }
+
+  @OnEvent('missed_pickup.*')
+  handleMissedPickupEvent(event: any): void {
+    this.logger.log(
+      {
+        domain: 'missed_pickup',
+        eventName:
+          event?.eventName ?? event?.constructor?.name ?? 'missed_pickup.*',
+        payload: event,
+      },
+      DomainEventsSubscriber.name,
+    );
+  }
 }
