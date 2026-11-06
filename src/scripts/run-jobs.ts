@@ -23,6 +23,7 @@ export async function runJobsCli(jobTarget?: string): Promise<JobRunResult[]> {
   const app = await NestFactory.createApplicationContext(AppModule, {
     logger: ['error', 'warn', 'log'],
   });
+  await app.init();
 
   const results: JobRunResult[] = [];
 
@@ -37,7 +38,7 @@ export async function runJobsCli(jobTarget?: string): Promise<JobRunResult[]> {
 
     const jobsToRun =
       target === 'all'
-        ? registeredJobs
+        ? registeredJobs.filter((j) => j.name !== 'reminders')
         : registeredJobs.filter((j) => j.name === target);
 
     if (target !== 'all' && jobsToRun.length === 0) {
