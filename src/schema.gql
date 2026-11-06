@@ -32,6 +32,9 @@ type Book {
   isbn: String!
   publishedYear: Int
 
+  """Count of active WAITING reservations for this book"""
+  queueLength: Int!
+
   """Replacement price in Rupees (null if not set)"""
   replacementPriceRs: Float
   title: String!
@@ -265,10 +268,12 @@ type Mutation {
   addCopy(input: AddCopyInput!): Copy!
   cancelHold(holdId: Int!, reason: String): Hold!
   cancelMyHold(holdId: Int!): Hold!
+  cancelReservation(reason: String, reservationId: Int!): Reservation!
   changeCopyStatus(id: Int!, reason: String, to: CopyStatus!): Copy!
   checkoutCopy(copyBarcode: String!, memberEmail: String!): Loan!
   confirmPickup(copyBarcode: String!, holdId: Int!): Loan!
   createBook(input: CreateBookInput!): Book!
+  joinReservationQueue(bookId: Int!): Reservation!
   login(input: LoginInput!): AuthPayload!
   logout(refreshToken: String!): Boolean!
   markLoanLost(assessedFeeRs: Float, loanId: ID!, note: String!): Loan!
@@ -358,8 +363,11 @@ type Query {
   myFines(status: FineStatus): [MyFine!]!
   myHolds(status: HoldStatus): [Hold!]!
   myLoans(status: LoanStatus): [Loan!]!
+  myReservations: [Reservation!]!
   overdueLoans(pagination: LoanPaginationInput): [Loan!]!
   pickupDeskHolds(copyBarcode: String, memberEmail: String): [PickupDeskHold!]!
+  queueForBook(bookId: Int!): [Reservation!]!
+  reservation(id: Int!): Reservation
   users: [User!]!
 }
 
@@ -367,6 +375,39 @@ input RegisterInput {
   email: String!
   name: String!
   password: String!
+}
+
+type Reservation {
+  book: Book
+  bookId: Int!
+  cancelReason: ReservationCancelReason
+  cancelledAt: DateTime
+  cancelledById: Int
+  createdAt: DateTime!
+  hold: Hold
+  holdId: Int
+  id: ID!
+
+  """1-based queue position if WAITING, null otherwise"""
+  position: Int
+  promotedAt: DateTime
+  status: ReservationStatus!
+  user: User
+  userId: Int!
+}
+
+"""Reason an active waiting reservation was cancelled"""
+enum ReservationCancelReason {
+  MEMBER
+  STAFF
+  SUPERSEDED
+}
+
+"""Lifecycle statuses for patron book reservations (queue entries)"""
+enum ReservationStatus {
+  CANCELLED
+  PROMOTED
+  WAITING
 }
 
 """Condition of physical copy upon return"""

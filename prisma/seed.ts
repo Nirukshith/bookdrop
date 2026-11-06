@@ -10,6 +10,8 @@ import {
   FineReason,
   FineStatus,
   ReturnCondition,
+  ReservationStatus,
+  ReservationCancelReason,
 } from '@prisma/client';
 
 const prisma = new PrismaClient();
@@ -35,6 +37,7 @@ async function main() {
     // Clear existing records in reverse dependency order for repeatability in development/test
     await prisma.finePayment.deleteMany();
     await prisma.fine.deleteMany();
+    await prisma.reservation.deleteMany();
     await prisma.loan.deleteMany();
     await prisma.hold.deleteMany();
     await prisma.copyStatusHistory.deleteMany();
@@ -573,6 +576,8 @@ async function main() {
     const adminEmail = (process.env.SEED_ADMIN_EMAIL || 'admin@bookdrop.local').trim().toLowerCase();
     const librarianEmail = (process.env.SEED_LIBRARIAN_EMAIL || 'librarian@bookdrop.local').trim().toLowerCase();
     const memberEmail = (process.env.SEED_MEMBER_EMAIL || 'member@bookdrop.local').trim().toLowerCase();
+    const member2Email = (process.env.SEED_MEMBER2_EMAIL || 'member2@bookdrop.local').trim().toLowerCase();
+    const member3Email = (process.env.SEED_MEMBER3_EMAIL || 'member3@bookdrop.local').trim().toLowerCase();
 
     const adminPassword = process.env.SEED_ADMIN_PASSWORD || 'AdminPassword123!';
     const librarianPassword = process.env.SEED_LIBRARIAN_PASSWORD || 'LibrarianPassword123!';
@@ -603,6 +608,18 @@ async function main() {
         role: Role.MEMBER,
         passwordHash: memberHash,
       },
+      {
+        email: member2Email,
+        name: 'Demo Member 2',
+        role: Role.MEMBER,
+        passwordHash: memberHash,
+      },
+      {
+        email: member3Email,
+        name: 'Demo Member 3',
+        role: Role.MEMBER,
+        passwordHash: memberHash,
+      },
     ];
 
     for (const user of demoUsers) {
@@ -622,9 +639,11 @@ async function main() {
     // 5. Seed Demo Holds for Demo Member (ACTIVE, EXPIRED, CANCELLED)
     console.log('🔖 Seeding demo holds for demo member...');
 
-    const demoMember = await prisma.user.findUnique({
-      where: { email: memberEmail },
-    });
+    const [demoMember, demoMember2, demoMember3] = await Promise.all([
+      prisma.user.findUnique({ where: { email: memberEmail } }),
+      prisma.user.findUnique({ where: { email: member2Email } }),
+      prisma.user.findUnique({ where: { email: member3Email } }),
+    ]);
 
     if (demoMember) {
       const [book1984, bookAnimalFarm, bookBraveNewWorld] = await Promise.all([
@@ -1209,6 +1228,207 @@ async function main() {
 
       console.log(
         '✅ Seeded demo fines: 1 PAID (late loan), 1 UNPAID (lost loan), 1 PARTIALLY_PAID, 1 WAIVED, 1 CAPPED UNPAID (late loan capped at book price).',
+      );
+
+      // 8. Seed Demo Reservations & Waiting Queues (Stage 8)
+      console.log('📋 Seeding demo reservation queues and history...');
+
+      const [bookEmma, bookSense, bookFellowship] = await Promise.all([
+        prisma.book.findFirst({
+          where: { title: 'Emma' },
+          include: { copies: { orderBy: { id: 'asc' } } },
+        }),
+        prisma.book.findFirst({
+          where: { title: 'Sense and Sensibility' },
+          include: { copies: { orderBy: { id: 'asc' } } },
+        }),
+        prisma.book.findFirst({
+          where: { title: 'The Fellowship of the Ring' },
+          include: { copies: { orderBy: { id: 'asc' } } },
+        }),
+      ]);
+
+      // 8a. Book A (Emma): all copies checked out (0 available), 2 members waiting in queue
+      if (bookEmma && bookEmma.copies.length > 0 && demoMember2 && demoMember3) {
+        const emmaCopy = bookEmma.copies[0];
+        const borrowedAt = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000); // 2 days ago
+        const dueAt = new Date(now.getTime() + 12 * 24 * 60 * 60 * 1000);
+
+        // Checkout single copy so book has 0 AVAILABLE copies
+        await prisma.loan.create({
+          data: {
+            userId: staffId,
+            copyId: emmaCopy.id,
+            bookId: bookEmma.id,
+            status: LoanStatus.ACTIVE,
+            borrowedAt,
+            dueAt,
+            checkedOutById: staffId,
+            priceMinorAtBorrow: bookEmma.priceMinor,
+          },
+        });
+
+        await prisma.copy.update({
+          where: { id: emmaCopy.id },
+          data: { status: CopyStatus.BORROWED },
+        });
+
+        await prisma.copyStatusHistory.create({
+          data: {
+            copyId: emmaCopy.id,
+            fromStatus: CopyStatus.AVAILABLE,
+            toStatus: CopyStatus.BORROWED,
+            reason: `Checkout to staff #${staffId}`,
+            changedById: staffId,
+            createdAt: borrowedAt,
+          },
+        });
+
+        // Member 1 waiting at position 1 (Demo Member 2)
+        await prisma.reservation.create({
+          data: {
+            userId: demoMember2.id,
+            bookId: bookEmma.id,
+            status: ReservationStatus.WAITING,
+            createdAt: new Date(now.getTime() - 2 * 60 * 60 * 1000), // 2 hours ago
+          },
+        });
+
+        // Member 2 waiting at position 2 (Demo Member 3)
+        await prisma.reservation.create({
+          data: {
+            userId: demoMember3.id,
+            bookId: bookEmma.id,
+            status: ReservationStatus.WAITING,
+            createdAt: new Date(now.getTime() - 1 * 60 * 60 * 1000), // 1 hour ago
+          },
+        });
+      }
+
+      // 8b. Book B (Sense and Sensibility): all copies checked out (0 available)
+      // Member 1 (demoMember with unpaid fines) at position 1; Member 2 (demoMember2 with clean record) at position 2
+      if (bookSense && bookSense.copies.length >= 2 && demoMember && demoMember2) {
+        const borrowedAt = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000);
+        const dueAt = new Date(now.getTime() + 11 * 24 * 60 * 60 * 1000);
+
+        for (let i = 0; i < bookSense.copies.length; i++) {
+          const copy = bookSense.copies[i];
+          await prisma.loan.create({
+            data: {
+              userId: staffId,
+              copyId: copy.id,
+              bookId: bookSense.id,
+              status: LoanStatus.ACTIVE,
+              borrowedAt,
+              dueAt,
+              checkedOutById: staffId,
+              priceMinorAtBorrow: bookSense.priceMinor,
+            },
+          });
+
+          await prisma.copy.update({
+            where: { id: copy.id },
+            data: { status: CopyStatus.BORROWED },
+          });
+
+          await prisma.copyStatusHistory.create({
+            data: {
+              copyId: copy.id,
+              fromStatus: CopyStatus.AVAILABLE,
+              toStatus: CopyStatus.BORROWED,
+              reason: `Checkout to staff #${staffId}`,
+              changedById: staffId,
+              createdAt: borrowedAt,
+            },
+          });
+        }
+
+        // Member 1 (demoMember - has unpaid fines from Section 7) WAITING at position 1
+        await prisma.reservation.create({
+          data: {
+            userId: demoMember.id,
+            bookId: bookSense.id,
+            status: ReservationStatus.WAITING,
+            createdAt: new Date(now.getTime() - 4 * 60 * 60 * 1000), // 4 hours ago
+          },
+        });
+
+        // Member 2 (demoMember2 - clean record) WAITING at position 2
+        await prisma.reservation.create({
+          data: {
+            userId: demoMember2.id,
+            bookId: bookSense.id,
+            status: ReservationStatus.WAITING,
+            createdAt: new Date(now.getTime() - 3 * 60 * 60 * 1000), // 3 hours ago
+          },
+        });
+      }
+
+      // 8c. Historical reservations
+      // 1 PROMOTED reservation linked to active hold
+      if (bookFellowship && bookFellowship.copies.length > 0 && demoMember2) {
+        const promoCopy = bookFellowship.copies[0];
+        const promoCreatedAt = new Date(now.getTime() - 24 * 60 * 60 * 1000); // 1 day ago
+        const promotedAt = new Date(now.getTime() - 2 * 60 * 60 * 1000); // promoted 2 hours ago
+        const promoExpiresAt = new Date(now.getTime() + 22 * 60 * 60 * 1000); // 1 day window
+
+        const promoHold = await prisma.hold.create({
+          data: {
+            userId: demoMember2.id,
+            bookId: bookFellowship.id,
+            copyId: promoCopy.id,
+            status: HoldStatus.ACTIVE,
+            source: HoldSource.QUEUE_PROMOTION,
+            createdAt: promotedAt,
+            expiresAt: promoExpiresAt,
+          },
+        });
+
+        await prisma.copy.update({
+          where: { id: promoCopy.id },
+          data: { status: CopyStatus.ON_HOLD },
+        });
+
+        await prisma.copyStatusHistory.create({
+          data: {
+            copyId: promoCopy.id,
+            fromStatus: CopyStatus.AVAILABLE,
+            toStatus: CopyStatus.ON_HOLD,
+            reason: `Promoted from queue for demo member #${demoMember2.id}`,
+            changedById: staffId,
+            createdAt: promotedAt,
+          },
+        });
+
+        await prisma.reservation.create({
+          data: {
+            userId: demoMember2.id,
+            bookId: bookFellowship.id,
+            status: ReservationStatus.PROMOTED,
+            createdAt: promoCreatedAt,
+            promotedAt,
+            holdId: promoHold.id,
+          },
+        });
+      }
+
+      // 1 CANCELLED reservation (cancelReason: MEMBER)
+      if (book1984 && demoMember2) {
+        await prisma.reservation.create({
+          data: {
+            userId: demoMember2.id,
+            bookId: book1984.id,
+            status: ReservationStatus.CANCELLED,
+            createdAt: new Date(now.getTime() - 48 * 60 * 60 * 1000), // 2 days ago
+            cancelledAt: new Date(now.getTime() - 24 * 60 * 60 * 1000), // 1 day ago
+            cancelReason: ReservationCancelReason.MEMBER,
+            cancelledById: demoMember2.id,
+          },
+        });
+      }
+
+      console.log(
+        '✅ Seeded demo reservations: Book A queue (2 waiting), Book B queue (pos 1 with unpaid fines, pos 2 clean), 1 PROMOTED reservation linked to active hold, 1 CANCELLED reservation.',
       );
     }
   } else {

@@ -1,6 +1,8 @@
 import {
   ConflictException,
   ForbiddenException,
+  forwardRef,
+  Inject,
   Injectable,
   Logger,
 } from '@nestjs/common';
@@ -11,12 +13,15 @@ import {
   HoldSource,
   HoldStatus,
   Prisma,
+  ReservationCancelReason,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { withTransactionRetry } from '../../common/database';
 import { BooksService } from '../../books';
 import { CopiesService } from '../copies/copies.service';
 import { ClockService } from '../../common/clock';
 import { computePickupDeadline } from '../../config/library-rules';
+import { cancelWaitingForUserAndBook } from '../reservations/utils/supersede-reservation.helper';
 import { MemberEligibilityPolicy } from './member-eligibility.policy';
 import { HoldsPublicApi } from './holds-public-api.interface';
 import { PaginationArgs, StaffHoldFilter } from './dto/hold-query.dto';
@@ -48,6 +53,7 @@ export class HoldsService implements HoldsPublicApi {
   constructor(
     private readonly prisma: PrismaService,
     private readonly booksService: BooksService,
+    @Inject(forwardRef(() => CopiesService))
     private readonly copiesService: CopiesService,
     private readonly clockService: ClockService,
     private readonly eligibilityPolicy: MemberEligibilityPolicy,
@@ -66,26 +72,27 @@ export class HoldsService implements HoldsPublicApi {
    * 7. Post-commit event emission (hold.created)
    */
   async requestHold(userId: number, bookId: number): Promise<Hold> {
-    const { hold, now, expiresAt } = await this.prisma.$transaction(
-      async (tx) => {
-        // 1. Per-member advisory lock to serialize simultaneous requests by the same user
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(${HOLD_ADVISORY_NAMESPACE}::int, ${userId}::int)`;
+    const { hold, now, expiresAt } = await withTransactionRetry(
+      ({ onCommit }) =>
+        this.prisma.$transaction(async (tx) => {
+          // 1. Per-member advisory lock to serialize simultaneous requests by the same user
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(${HOLD_ADVISORY_NAMESPACE}::int, ${userId}::int)`;
 
-        // 2. Verify book exists in the Catalog public interface
-        const bookExists = await this.booksService.exists(bookId);
-        if (!bookExists) {
-          throw new BookNotFoundError(bookId);
-        }
+          // 2. Verify book exists in the Catalog public interface
+          const bookExists = await this.booksService.exists(bookId);
+          if (!bookExists) {
+            throw new BookNotFoundError(bookId);
+          }
 
-        // 3. Run eligibility policy inside the transaction
-        await this.eligibilityPolicy.checkRequestEligibility(
-          userId,
-          bookId,
-          tx,
-        );
+          // 3. Run eligibility policy inside the transaction
+          await this.eligibilityPolicy.checkRequestEligibility(
+            userId,
+            bookId,
+            tx,
+          );
 
-        // 4. Select one available copy using FOR UPDATE SKIP LOCKED
-        const candidates = await tx.$queryRaw<{ id: number }[]>`
+          // 4. Select one available copy using FOR UPDATE SKIP LOCKED
+          const candidates = await tx.$queryRaw<{ id: number }[]>`
           SELECT id FROM "Copy"
           WHERE "bookId" = ${bookId}
             AND status = 'AVAILABLE'
@@ -95,48 +102,59 @@ export class HoldsService implements HoldsPublicApi {
           FOR UPDATE SKIP LOCKED
         `;
 
-        if (!candidates || candidates.length === 0) {
-          throw new NoCopiesAvailableError(bookId);
-        }
+          if (!candidates || candidates.length === 0) {
+            throw new NoCopiesAvailableError(bookId);
+          }
 
-        const copyId = candidates[0].id;
+          const copyId = candidates[0].id;
 
-        // 5. Move copy AVAILABLE -> ON_HOLD within this transaction
-        await this.copiesService.transitionStatus(
-          copyId,
-          [CopyStatus.AVAILABLE],
-          CopyStatus.ON_HOLD,
-          {
-            reason: `Hold requested by member #${userId}`,
-            changedById: userId,
-          },
-          tx,
-        );
+          // 5. Move copy AVAILABLE -> ON_HOLD within this transaction
+          await this.copiesService.transitionStatus(
+            copyId,
+            [CopyStatus.AVAILABLE],
+            CopyStatus.ON_HOLD,
+            {
+              reason: `Hold requested by member #${userId}`,
+              changedById: userId,
+            },
+            tx,
+          );
 
-        // 6. Create Hold record with calculated deadline
-        const currentTime = this.clockService.now();
-        const calculatedExpiresAt = computePickupDeadline(currentTime);
+          // 6. Create Hold record with calculated deadline
+          const currentTime = this.clockService.now();
+          const calculatedExpiresAt = computePickupDeadline(currentTime);
 
-        const createdHold = await tx.hold.create({
-          data: {
+          const createdHold = await tx.hold.create({
+            data: {
+              userId,
+              bookId,
+              copyId,
+              status: HoldStatus.ACTIVE,
+              source: HoldSource.REQUEST,
+              expiresAt: calculatedExpiresAt,
+              createdAt: currentTime,
+            },
+            include: { copy: true },
+          });
+
+          // 7. Cancel any active WAITING reservation for this user and book (SUPERSEDED)
+          await cancelWaitingForUserAndBook(
+            tx,
             userId,
             bookId,
-            copyId,
-            status: HoldStatus.ACTIVE,
-            source: HoldSource.REQUEST,
-            expiresAt: calculatedExpiresAt,
-            createdAt: currentTime,
-          },
-          include: { copy: true },
-        });
+            this.clockService,
+            this.eventEmitter,
+            ReservationCancelReason.SUPERSEDED,
+            userId,
+            onCommit,
+          );
 
-        return {
-          hold: createdHold,
-          now: currentTime,
-          expiresAt: calculatedExpiresAt,
-        };
-      },
-      INTERACTIVE_TX_OPTIONS,
+          return {
+            hold: createdHold,
+            now: currentTime,
+            expiresAt: calculatedExpiresAt,
+          };
+        }, INTERACTIVE_TX_OPTIONS),
     );
 
     // 7. Emit domain event strictly after transaction successfully commits
@@ -186,57 +204,60 @@ export class HoldsService implements HoldsPublicApi {
       reason?.trim() || `Cancelled by ${actor.role} #${actor.id}`;
     const now = this.clockService.now();
 
-    const cancelledHold = await this.prisma.$transaction(async (tx) => {
-      // Conditional update: only update if still ACTIVE
-      const updateResult = await tx.hold.updateMany({
-        where: {
-          id: holdId,
-          status: HoldStatus.ACTIVE,
-        },
-        data: {
-          status: HoldStatus.CANCELLED,
-          resolvedAt: now,
-          resolvedNote: cancellationNote,
-        },
-      });
+    const cancelledHold = await withTransactionRetry(({ onCommit }) =>
+      this.prisma.$transaction(async (tx) => {
+        // Conditional update: only update if still ACTIVE
+        const updateResult = await tx.hold.updateMany({
+          where: {
+            id: holdId,
+            status: HoldStatus.ACTIVE,
+          },
+          data: {
+            status: HoldStatus.CANCELLED,
+            resolvedAt: now,
+            resolvedNote: cancellationNote,
+          },
+        });
 
-      if (updateResult.count === 0) {
-        throw new ConflictException(
-          `Cannot cancel hold #${holdId}: hold was already resolved concurrently.`,
+        if (updateResult.count === 0) {
+          throw new ConflictException(
+            `Cannot cancel hold #${holdId}: hold was already resolved concurrently.`,
+          );
+        }
+
+        // Verify physical copy consistency
+        const copy = await tx.copy.findUnique({
+          where: { id: existing.copyId },
+        });
+
+        if (!copy || copy.status !== CopyStatus.ON_HOLD) {
+          this.logger.error(
+            `Data inconsistency: Copy #${existing.copyId} is in status '${copy?.status}' instead of 'ON_HOLD' while cancelling Hold #${holdId}`,
+          );
+          throw new ConflictException(
+            `Cannot cancel hold #${holdId}: physical copy #${existing.copyId} is in inconsistent state '${copy?.status}'.`,
+          );
+        }
+
+        // Return copy to AVAILABLE
+        await this.copiesService.transitionStatus(
+          existing.copyId,
+          [CopyStatus.ON_HOLD],
+          CopyStatus.AVAILABLE,
+          {
+            reason: `Hold #${holdId} cancelled: ${cancellationNote}`,
+            changedById: actor.id,
+            onCommit,
+          },
+          tx,
         );
-      }
 
-      // Verify physical copy consistency
-      const copy = await tx.copy.findUnique({
-        where: { id: existing.copyId },
-      });
-
-      if (!copy || copy.status !== CopyStatus.ON_HOLD) {
-        this.logger.error(
-          `Data inconsistency: Copy #${existing.copyId} is in status '${copy?.status}' instead of 'ON_HOLD' while cancelling Hold #${holdId}`,
-        );
-        throw new ConflictException(
-          `Cannot cancel hold #${holdId}: physical copy #${existing.copyId} is in inconsistent state '${copy?.status}'.`,
-        );
-      }
-
-      // Return copy to AVAILABLE
-      await this.copiesService.transitionStatus(
-        existing.copyId,
-        [CopyStatus.ON_HOLD],
-        CopyStatus.AVAILABLE,
-        {
-          reason: `Hold #${holdId} cancelled: ${cancellationNote}`,
-          changedById: actor.id,
-        },
-        tx,
-      );
-
-      return tx.hold.findUniqueOrThrow({
-        where: { id: holdId },
-        include: { copy: true },
-      });
-    }, INTERACTIVE_TX_OPTIONS);
+        return tx.hold.findUniqueOrThrow({
+          where: { id: holdId },
+          include: { copy: true },
+        });
+      }, INTERACTIVE_TX_OPTIONS),
+    );
 
     const cancelledBy: CancelledBy =
       actor.role === 'MEMBER' ? 'member' : 'staff';
@@ -266,51 +287,54 @@ export class HoldsService implements HoldsPublicApi {
   async expireHold(holdId: number): Promise<Hold | null> {
     const now = this.clockService.now();
 
-    const result = await this.prisma.$transaction(async (tx) => {
-      const existing = await tx.hold.findUnique({
-        where: { id: holdId },
-      });
+    const result = await withTransactionRetry(({ onCommit }) =>
+      this.prisma.$transaction(async (tx) => {
+        const existing = await tx.hold.findUnique({
+          where: { id: holdId },
+        });
 
-      if (!existing) {
-        return null;
-      }
+        if (!existing) {
+          return null;
+        }
 
-      if (existing.status !== HoldStatus.ACTIVE || existing.expiresAt > now) {
-        return null;
-      }
+        if (existing.status !== HoldStatus.ACTIVE || existing.expiresAt > now) {
+          return null;
+        }
 
-      const updateResult = await tx.hold.updateMany({
-        where: {
-          id: holdId,
-          status: HoldStatus.ACTIVE,
-          expiresAt: { lte: now },
-        },
-        data: {
-          status: HoldStatus.EXPIRED,
-          resolvedAt: now,
-          resolvedNote: 'Expired due to missed pickup deadline',
-        },
-      });
+        const updateResult = await tx.hold.updateMany({
+          where: {
+            id: holdId,
+            status: HoldStatus.ACTIVE,
+            expiresAt: { lte: now },
+          },
+          data: {
+            status: HoldStatus.EXPIRED,
+            resolvedAt: now,
+            resolvedNote: 'Expired due to missed pickup deadline',
+          },
+        });
 
-      if (updateResult.count === 0) {
-        return null;
-      }
+        if (updateResult.count === 0) {
+          return null;
+        }
 
-      await this.copiesService.transitionStatus(
-        existing.copyId,
-        [CopyStatus.ON_HOLD],
-        CopyStatus.AVAILABLE,
-        {
-          reason: `Hold #${holdId} expired at pickup deadline`,
-        },
-        tx,
-      );
+        await this.copiesService.transitionStatus(
+          existing.copyId,
+          [CopyStatus.ON_HOLD],
+          CopyStatus.AVAILABLE,
+          {
+            reason: `Hold #${holdId} expired at pickup deadline`,
+            onCommit,
+          },
+          tx,
+        );
 
-      return tx.hold.findUniqueOrThrow({
-        where: { id: holdId },
-        include: { copy: true },
-      });
-    }, INTERACTIVE_TX_OPTIONS);
+        return tx.hold.findUniqueOrThrow({
+          where: { id: holdId },
+          include: { copy: true },
+        });
+      }, INTERACTIVE_TX_OPTIONS),
+    );
 
     if (result) {
       this.eventEmitter.emit(
@@ -380,8 +404,9 @@ export class HoldsService implements HoldsPublicApi {
     holdId: number,
     now: Date,
   ): Promise<Hold | null> {
-    const expired = await this.prisma.$transaction(async (tx) => {
-      const locked = await tx.$queryRaw<{ id: number; copyId: number }[]>`
+    const expired = await withTransactionRetry(({ onCommit }) =>
+      this.prisma.$transaction(async (tx) => {
+        const locked = await tx.$queryRaw<{ id: number; copyId: number }[]>`
         SELECT id, "copyId" FROM "Hold"
         WHERE id = ${holdId}
           AND status = 'ACTIVE'
@@ -389,34 +414,36 @@ export class HoldsService implements HoldsPublicApi {
         FOR UPDATE SKIP LOCKED
       `;
 
-      if (!locked || locked.length === 0) {
-        return null;
-      }
+        if (!locked || locked.length === 0) {
+          return null;
+        }
 
-      await tx.hold.update({
-        where: { id: holdId },
-        data: {
-          status: HoldStatus.EXPIRED,
-          resolvedAt: now,
-          resolvedNote: 'Expired due to missed pickup deadline',
-        },
-      });
+        await tx.hold.update({
+          where: { id: holdId },
+          data: {
+            status: HoldStatus.EXPIRED,
+            resolvedAt: now,
+            resolvedNote: 'Expired due to missed pickup deadline',
+          },
+        });
 
-      await this.copiesService.transitionStatus(
-        locked[0].copyId,
-        [CopyStatus.ON_HOLD],
-        CopyStatus.AVAILABLE,
-        {
-          reason: `Hold #${holdId} expired at pickup deadline`,
-        },
-        tx,
-      );
+        await this.copiesService.transitionStatus(
+          locked[0].copyId,
+          [CopyStatus.ON_HOLD],
+          CopyStatus.AVAILABLE,
+          {
+            reason: `Hold #${holdId} expired at pickup deadline`,
+            onCommit,
+          },
+          tx,
+        );
 
-      return tx.hold.findUniqueOrThrow({
-        where: { id: holdId },
-        include: { copy: true },
-      });
-    }, INTERACTIVE_TX_OPTIONS);
+        return tx.hold.findUniqueOrThrow({
+          where: { id: holdId },
+          include: { copy: true },
+        });
+      }, INTERACTIVE_TX_OPTIONS),
+    );
 
     if (expired) {
       this.eventEmitter.emit(

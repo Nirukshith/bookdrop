@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { PrismaModule } from '../../prisma/prisma.module';
 import { BooksModule } from '../../books';
 import { CopiesModule } from '../copies/copies.module';
@@ -17,7 +17,12 @@ import { HoldsResolver } from './holds.resolver';
 import { HoldsDataLoader } from './holds.loader';
 
 @Module({
-  imports: [PrismaModule, BooksModule, CopiesModule, ClockModule],
+  imports: [
+    PrismaModule,
+    BooksModule,
+    forwardRef(() => CopiesModule),
+    ClockModule,
+  ],
   providers: [
     HoldsService,
     HoldsResolver,

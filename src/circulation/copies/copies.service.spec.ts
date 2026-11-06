@@ -13,6 +13,7 @@ import {
   CopyStatusChangedEvent,
   CopyRetiredEvent,
 } from './events';
+import { COPY_AVAILABILITY_LISTENER } from './ports';
 
 describe('CopiesService', () => {
   let service: CopiesService;
@@ -721,6 +722,87 @@ describe('CopiesService', () => {
       );
 
       expect(eventEmitter.emit).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('CopyAvailabilityListener integration', () => {
+    let availabilityListenerMock: { onCopyAvailable: jest.Mock };
+    let serviceWithListener: CopiesService;
+
+    beforeEach(async () => {
+      availabilityListenerMock = {
+        onCopyAvailable: jest.fn().mockResolvedValue({ consumed: true }),
+      };
+
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          CopiesService,
+          { provide: PrismaService, useValue: prisma },
+          { provide: BooksService, useValue: booksService },
+          { provide: EventEmitter2, useValue: eventEmitter },
+          {
+            provide: COPY_AVAILABILITY_LISTENER,
+            useValue: availabilityListenerMock,
+          },
+        ],
+      }).compile();
+
+      serviceWithListener = module.get<CopiesService>(CopiesService);
+    });
+
+    it('notifies availability listener when transitioning copy to AVAILABLE', async () => {
+      prisma.copy.findUnique.mockResolvedValueOnce({
+        ...mockCopy,
+        id: 5,
+        bookId: 10,
+        status: CopyStatus.DAMAGED,
+        retiredAt: null,
+      });
+
+      prisma.copy.findUniqueOrThrow.mockResolvedValueOnce({
+        ...mockCopy,
+        id: 5,
+        bookId: 10,
+        status: CopyStatus.AVAILABLE,
+        retiredAt: null,
+      });
+
+      prisma.copy.updateMany.mockResolvedValue({ count: 1 });
+      prisma.copyStatusHistory.create.mockResolvedValue(mockHistory);
+
+      await serviceWithListener.transitionStatus(
+        5,
+        [CopyStatus.DAMAGED],
+        CopyStatus.AVAILABLE,
+        { reason: 'Repaired' },
+      );
+
+      expect(availabilityListenerMock.onCopyAvailable).toHaveBeenCalledWith(
+        5,
+        10,
+        expect.anything(),
+        undefined,
+      );
+    });
+
+    it('notifies availability listener when adding new copy as AVAILABLE', async () => {
+      booksService.exists.mockResolvedValue(true);
+      prisma.$queryRaw.mockResolvedValue([{ nextval: 20 }]);
+      prisma.copy.create.mockResolvedValue({
+        ...mockCopy,
+        id: 20,
+        bookId: 10,
+        status: CopyStatus.AVAILABLE,
+      });
+      prisma.copyStatusHistory.create.mockResolvedValue(mockHistory);
+
+      await serviceWithListener.addCopy(10);
+
+      expect(availabilityListenerMock.onCopyAvailable).toHaveBeenCalledWith(
+        20,
+        10,
+        expect.anything(),
+      );
     });
   });
 });

@@ -15,10 +15,13 @@ import {
   Loan,
   LoanStatus,
   Prisma,
+  ReservationCancelReason,
   ReturnCondition,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ClockService } from '../../common/clock/clock.service';
+import { withTransactionRetry } from '../../common/database';
+import { cancelWaitingForUserAndBook } from '../reservations/utils/supersede-reservation.helper';
 import {
   DEFAULT_LIBRARY_TIMEZONE,
   LOAN_DAYS,
@@ -151,132 +154,135 @@ export class LoansService implements LoansPublicApi {
     };
 
     try {
-      result = await this.prisma.$transaction(async (tx) => {
-        // 1. Read hold without locking to discover userId
-        const preliminary = await tx.hold.findUnique({
-          where: { id: holdId },
-          select: { userId: true },
-        });
+      result = await withTransactionRetry(() =>
+        this.prisma.$transaction(async (tx) => {
+          // 1. Read hold without locking to discover userId
+          const preliminary = await tx.hold.findUnique({
+            where: { id: holdId },
+            select: { userId: true },
+          });
 
-        if (!preliminary) {
-          throw new HoldNotFoundError(holdId);
-        }
+          if (!preliminary) {
+            throw new HoldNotFoundError(holdId);
+          }
 
-        // Take per-member advisory lock first
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(${HOLD_ADVISORY_NAMESPACE}::int, ${preliminary.userId}::int)`;
+          // Take per-member advisory lock first
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(${HOLD_ADVISORY_NAMESPACE}::int, ${preliminary.userId}::int)`;
 
-        // 2. Re-read hold with FOR UPDATE
-        const lockedHolds = await tx.$queryRaw<
-          Array<{
-            id: number;
-            userId: number;
-            bookId: number;
-            copyId: number;
-            status: HoldStatus;
-            expiresAt: Date;
-          }>
-        >`
+          // 2. Re-read hold with FOR UPDATE
+          const lockedHolds = await tx.$queryRaw<
+            Array<{
+              id: number;
+              userId: number;
+              bookId: number;
+              copyId: number;
+              status: HoldStatus;
+              expiresAt: Date;
+            }>
+          >`
           SELECT id, "userId", "bookId", "copyId", status, "expiresAt"
           FROM "Hold"
           WHERE id = ${holdId}
           FOR UPDATE
         `;
 
-        if (!lockedHolds || lockedHolds.length === 0) {
-          throw new HoldNotFoundError(holdId);
-        }
+          if (!lockedHolds || lockedHolds.length === 0) {
+            throw new HoldNotFoundError(holdId);
+          }
 
-        const lockedHold = lockedHolds[0];
+          const lockedHold = lockedHolds[0];
 
-        if (lockedHold.status !== HoldStatus.ACTIVE) {
-          throw new HoldNotActiveError(holdId, lockedHold.status);
-        }
+          if (lockedHold.status !== HoldStatus.ACTIVE) {
+            throw new HoldNotActiveError(holdId, lockedHold.status);
+          }
 
-        // 3. Expiry check using ClockService
-        const now = this.clockService.now();
-        if (lockedHold.expiresAt <= now) {
-          throw new HoldExpiredError(holdId, lockedHold.expiresAt);
-        }
+          // 3. Expiry check using ClockService
+          const now = this.clockService.now();
+          if (lockedHold.expiresAt <= now) {
+            throw new HoldExpiredError(holdId, lockedHold.expiresAt);
+          }
 
-        // 4. Lock copy row FOR UPDATE by held copyId and verify scanned barcode
-        const lockedCopies = await tx.$queryRaw<
-          Array<{
-            id: number;
-            bookId: number;
-            barcode: string;
-            status: CopyStatus;
-            retiredAt: Date | null;
-          }>
-        >`
+          // 4. Lock copy row FOR UPDATE by held copyId and verify scanned barcode
+          const lockedCopies = await tx.$queryRaw<
+            Array<{
+              id: number;
+              bookId: number;
+              barcode: string;
+              status: CopyStatus;
+              retiredAt: Date | null;
+            }>
+          >`
           SELECT id, "bookId", barcode, status, "retiredAt"
           FROM "Copy"
           WHERE id = ${lockedHold.copyId}
           FOR UPDATE
         `;
 
-        if (!lockedCopies || lockedCopies.length === 0) {
-          throw new CopyNotFoundError(lockedHold.copyId);
-        }
+          if (!lockedCopies || lockedCopies.length === 0) {
+            throw new CopyNotFoundError(lockedHold.copyId);
+          }
 
-        const lockedCopy = lockedCopies[0];
+          const lockedCopy = lockedCopies[0];
 
-        if (lockedCopy.barcode !== copyBarcode.trim()) {
-          throw new CopyMismatchError(copyBarcode.trim(), lockedCopy.barcode);
-        }
+          if (lockedCopy.barcode !== copyBarcode.trim()) {
+            throw new CopyMismatchError(copyBarcode.trim(), lockedCopy.barcode);
+          }
 
-        // 5. Run checkCheckoutEligibility
-        await this.eligibilityPolicy.checkCheckoutEligibility(
-          lockedHold.userId,
-          tx,
-        );
+          // 5. Run checkCheckoutEligibility
+          await this.eligibilityPolicy.checkCheckoutEligibility(
+            lockedHold.userId,
+            tx,
+          );
 
-        // 6. Call HoldsPublicApi.fulfillHold inside the transaction
-        await this.holdsPublicApi.fulfillHold(holdId, tx);
+          // 6. Call HoldsPublicApi.fulfillHold inside the transaction
+          await this.holdsPublicApi.fulfillHold(holdId, tx);
 
-        // 7. Call transitionStatus for the copy ON_HOLD -> BORROWED
-        await this.copiesService.transitionStatus(
-          lockedCopy.id,
-          [CopyStatus.ON_HOLD],
-          CopyStatus.BORROWED,
-          {
-            reason: `Hold #${holdId} picked up by member #${lockedHold.userId}`,
-            changedById: staffId,
-          },
-          tx,
-        );
+          // 7. Call transitionStatus for the copy ON_HOLD -> BORROWED
+          await this.copiesService.transitionStatus(
+            lockedCopy.id,
+            [CopyStatus.ON_HOLD],
+            CopyStatus.BORROWED,
+            {
+              reason: `Hold #${holdId} picked up by member #${lockedHold.userId}`,
+              changedById: staffId,
+            },
+            tx,
+          );
 
-        // 8. Snapshot book replacement price via Catalog public API
-        const bookPriceMap = await this.catalogPublicApi.getBookPricesMinor([
-          lockedCopy.bookId,
-        ]);
-        const priceMinorAtBorrow = bookPriceMap.get(lockedCopy.bookId) ?? null;
+          // 8. Snapshot book replacement price via Catalog public API
+          const bookPriceMap = await this.catalogPublicApi.getBookPricesMinor([
+            lockedCopy.bookId,
+          ]);
+          const priceMinorAtBorrow =
+            bookPriceMap.get(lockedCopy.bookId) ?? null;
 
-        // Insert Loan record
-        const dueAt = computeDueDate(now, this.libraryTimezone, LOAN_DAYS);
-        const createdLoan = await tx.loan.create({
-          data: {
+          // Insert Loan record
+          const dueAt = computeDueDate(now, this.libraryTimezone, LOAN_DAYS);
+          const createdLoan = await tx.loan.create({
+            data: {
+              userId: lockedHold.userId,
+              copyId: lockedCopy.id,
+              bookId: lockedCopy.bookId,
+              holdId,
+              status: LoanStatus.ACTIVE,
+              borrowedAt: now,
+              dueAt,
+              checkedOutById: staffId,
+              priceMinorAtBorrow,
+            },
+            include: { copy: true },
+          });
+
+          return {
+            loan: createdLoan,
             userId: lockedHold.userId,
             copyId: lockedCopy.id,
             bookId: lockedCopy.bookId,
-            holdId,
-            status: LoanStatus.ACTIVE,
             borrowedAt: now,
             dueAt,
-            checkedOutById: staffId,
-            priceMinorAtBorrow,
-          },
-          include: { copy: true },
-        });
-
-        return {
-          loan: createdLoan,
-          userId: lockedHold.userId,
-          copyId: lockedCopy.id,
-          bookId: lockedCopy.bookId,
-          borrowedAt: now,
-          dueAt,
-        };
-      }, INTERACTIVE_TX_OPTIONS);
+          };
+        }, INTERACTIVE_TX_OPTIONS),
+      );
     } catch (error) {
       if (error instanceof HoldExpiredError) {
         // Self-healing: execute expireHold in a separate transaction post-rollback
@@ -329,123 +335,139 @@ export class LoansService implements LoansPublicApi {
     copyBarcode: string,
     staffId: number,
   ): Promise<Loan> {
-    const result = await this.prisma.$transaction(async (tx) => {
-      // 1. Take member lock first
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(${HOLD_ADVISORY_NAMESPACE}::int, ${memberId}::int)`;
+    const result = await withTransactionRetry(({ onCommit }) =>
+      this.prisma.$transaction(async (tx) => {
+        // 1. Take member lock first
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(${HOLD_ADVISORY_NAMESPACE}::int, ${memberId}::int)`;
 
-      // Look up member via IdentityPublicApi
-      const members = await this.identityPublicApi.getMembersByIds([memberId]);
-      if (!members || members.length === 0) {
-        throw new MemberNotFoundError(memberId);
-      }
+        // Look up member via IdentityPublicApi
+        const members = await this.identityPublicApi.getMembersByIds([
+          memberId,
+        ]);
+        if (!members || members.length === 0) {
+          throw new MemberNotFoundError(memberId);
+        }
 
-      // 2. Lock copy row FOR UPDATE by barcode
-      const normalizedBarcode = copyBarcode.trim();
-      const lockedCopies = await tx.$queryRaw<
-        Array<{
-          id: number;
-          bookId: number;
-          barcode: string;
-          status: CopyStatus;
-          retiredAt: Date | null;
-        }>
-      >`
+        // 2. Lock copy row FOR UPDATE by barcode
+        const normalizedBarcode = copyBarcode.trim();
+        const lockedCopies = await tx.$queryRaw<
+          Array<{
+            id: number;
+            bookId: number;
+            barcode: string;
+            status: CopyStatus;
+            retiredAt: Date | null;
+          }>
+        >`
         SELECT id, "bookId", barcode, status, "retiredAt"
         FROM "Copy"
         WHERE barcode = ${normalizedBarcode}
         FOR UPDATE
       `;
 
-      if (!lockedCopies || lockedCopies.length === 0) {
-        throw new CopyNotFoundError(normalizedBarcode);
-      }
+        if (!lockedCopies || lockedCopies.length === 0) {
+          throw new CopyNotFoundError(normalizedBarcode);
+        }
 
-      const copy = lockedCopies[0];
+        const copy = lockedCopies[0];
 
-      if (copy.retiredAt !== null) {
-        throw new CopyNotAvailableError(
-          `Copy with barcode '${normalizedBarcode}' is retired.`,
+        if (copy.retiredAt !== null) {
+          throw new CopyNotAvailableError(
+            `Copy with barcode '${normalizedBarcode}' is retired.`,
+          );
+        }
+
+        // 3. Verify copy is AVAILABLE
+        if (copy.status === CopyStatus.ON_HOLD) {
+          throw new CopyOnHoldError(normalizedBarcode);
+        }
+
+        if (copy.status !== CopyStatus.AVAILABLE) {
+          throw new CopyNotAvailableError(
+            `Copy with barcode '${normalizedBarcode}' is not available (status: ${copy.status}).`,
+          );
+        }
+
+        // 4. Verify member does not already have an ACTIVE hold on the same book
+        const existingHold = await tx.hold.findFirst({
+          where: {
+            userId: memberId,
+            bookId: copy.bookId,
+            status: HoldStatus.ACTIVE,
+          },
+          select: { id: true },
+        });
+
+        if (existingHold) {
+          throw new HoldExistsUsePickupError(
+            memberId,
+            copy.bookId,
+            existingHold.id,
+          );
+        }
+
+        // 5. Run checkCheckoutEligibility
+        await this.eligibilityPolicy.checkCheckoutEligibility(memberId, tx);
+
+        // 6. transitionStatus AVAILABLE -> BORROWED
+        await this.copiesService.transitionStatus(
+          copy.id,
+          [CopyStatus.AVAILABLE],
+          CopyStatus.BORROWED,
+          {
+            reason: `Walk-in checkout to member #${memberId}`,
+            changedById: staffId,
+          },
+          tx,
         );
-      }
 
-      // 3. Verify copy is AVAILABLE
-      if (copy.status === CopyStatus.ON_HOLD) {
-        throw new CopyOnHoldError(normalizedBarcode);
-      }
+        // 7. Snapshot book replacement price via Catalog public API
+        const bookPriceMap = await this.catalogPublicApi.getBookPricesMinor([
+          copy.bookId,
+        ]);
+        const priceMinorAtBorrow = bookPriceMap.get(copy.bookId) ?? null;
 
-      if (copy.status !== CopyStatus.AVAILABLE) {
-        throw new CopyNotAvailableError(
-          `Copy with barcode '${normalizedBarcode}' is not available (status: ${copy.status}).`,
-        );
-      }
+        // Insert Loan with holdId = null
+        const now = this.clockService.now();
+        const dueAt = computeDueDate(now, this.libraryTimezone, LOAN_DAYS);
 
-      // 4. Verify member does not already have an ACTIVE hold on the same book
-      const existingHold = await tx.hold.findFirst({
-        where: {
-          userId: memberId,
-          bookId: copy.bookId,
-          status: HoldStatus.ACTIVE,
-        },
-        select: { id: true },
-      });
+        const createdLoan = await tx.loan.create({
+          data: {
+            userId: memberId,
+            copyId: copy.id,
+            bookId: copy.bookId,
+            holdId: null,
+            status: LoanStatus.ACTIVE,
+            borrowedAt: now,
+            dueAt,
+            checkedOutById: staffId,
+            priceMinorAtBorrow,
+          },
+          include: { copy: true },
+        });
 
-      if (existingHold) {
-        throw new HoldExistsUsePickupError(
+        // Cancel any active WAITING reservation for this user and book (SUPERSEDED)
+        await cancelWaitingForUserAndBook(
+          tx,
           memberId,
           copy.bookId,
-          existingHold.id,
+          this.clockService,
+          this.eventEmitter,
+          ReservationCancelReason.SUPERSEDED,
+          staffId,
+          onCommit,
         );
-      }
 
-      // 5. Run checkCheckoutEligibility
-      await this.eligibilityPolicy.checkCheckoutEligibility(memberId, tx);
-
-      // 6. transitionStatus AVAILABLE -> BORROWED
-      await this.copiesService.transitionStatus(
-        copy.id,
-        [CopyStatus.AVAILABLE],
-        CopyStatus.BORROWED,
-        {
-          reason: `Walk-in checkout to member #${memberId}`,
-          changedById: staffId,
-        },
-        tx,
-      );
-
-      // 7. Snapshot book replacement price via Catalog public API
-      const bookPriceMap = await this.catalogPublicApi.getBookPricesMinor([
-        copy.bookId,
-      ]);
-      const priceMinorAtBorrow = bookPriceMap.get(copy.bookId) ?? null;
-
-      // Insert Loan with holdId = null
-      const now = this.clockService.now();
-      const dueAt = computeDueDate(now, this.libraryTimezone, LOAN_DAYS);
-
-      const createdLoan = await tx.loan.create({
-        data: {
+        return {
+          loan: createdLoan,
           userId: memberId,
           copyId: copy.id,
           bookId: copy.bookId,
-          holdId: null,
-          status: LoanStatus.ACTIVE,
           borrowedAt: now,
           dueAt,
-          checkedOutById: staffId,
-          priceMinorAtBorrow,
-        },
-        include: { copy: true },
-      });
-
-      return {
-        loan: createdLoan,
-        userId: memberId,
-        copyId: copy.id,
-        bookId: copy.bookId,
-        borrowedAt: now,
-        dueAt,
-      };
-    }, INTERACTIVE_TX_OPTIONS);
+        };
+      }, INTERACTIVE_TX_OPTIONS),
+    );
 
     // Emit domain event post-commit
     this.eventEmitter.emit(
@@ -644,135 +666,137 @@ export class LoansService implements LoansPublicApi {
       }
     }
 
-    const txResult = await this.prisma.$transaction(async (tx) => {
-      // Step 1: Member advisory lock
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(${HOLD_ADVISORY_NAMESPACE}::int, ${memberId}::int)`;
+    const txResult = await withTransactionRetry(({ onCommit }) =>
+      this.prisma.$transaction(async (tx) => {
+        // Step 1: Member advisory lock
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(${HOLD_ADVISORY_NAMESPACE}::int, ${memberId}::int)`;
 
-      // Step 2: Lock loan row FOR UPDATE
-      const lockedLoans = await tx.$queryRaw<Loan[]>`
+        // Step 2: Lock loan row FOR UPDATE
+        const lockedLoans = await tx.$queryRaw<Loan[]>`
           SELECT * FROM "Loan" WHERE id = ${activeLoan.id} FOR UPDATE
         `;
-      const loan = lockedLoans[0];
+        const loan = lockedLoans[0];
 
-      if (!loan || loan.status !== LoanStatus.ACTIVE) {
-        throw new LoanNotActiveError(activeLoan.id, loan?.status);
-      }
+        if (!loan || loan.status !== LoanStatus.ACTIVE) {
+          throw new LoanNotActiveError(activeLoan.id, loan?.status);
+        }
 
-      // Step 3: Lock copy row FOR UPDATE
-      const lockedCopies = await tx.$queryRaw<Copy[]>`
+        // Step 3: Lock copy row FOR UPDATE
+        const lockedCopies = await tx.$queryRaw<Copy[]>`
           SELECT * FROM "Copy" WHERE id = ${copy.id} FOR UPDATE
         `;
-      const lockedCopy = lockedCopies[0];
+        const lockedCopy = lockedCopies[0];
 
-      if (!lockedCopy) {
-        throw new CopyNotFoundError(input.copyBarcode.trim());
-      }
+        if (!lockedCopy) {
+          throw new CopyNotFoundError(input.copyBarcode.trim());
+        }
 
-      const returnedAt = this.clockService.now();
-      const daysLate = computeDaysLate(
-        loan.dueAt,
-        returnedAt,
-        this.libraryTimezone,
-      );
-
-      // Step 4: Update loan record
-      const updatedLoan = await tx.loan.update({
-        where: { id: loan.id },
-        data: {
-          status: LoanStatus.RETURNED,
+        const returnedAt = this.clockService.now();
+        const daysLate = computeDaysLate(
+          loan.dueAt,
           returnedAt,
-          returnCondition: input.condition,
-          conditionNote: input.conditionNote?.trim() || null,
-          returnedById: input.staffId,
-        },
-      });
-
-      // Step 5: If overdue, assess late fee fine
-      let lateFine: any = null;
-      if (daysLate > 0) {
-        let bookCurrentPriceMinor: number | null = null;
-        if (
-          loan.priceMinorAtBorrow === null ||
-          loan.priceMinorAtBorrow === undefined
-        ) {
-          const bookPrices = await this.catalogPublicApi.getBookPricesMinor([
-            loan.bookId,
-          ]);
-          bookCurrentPriceMinor = bookPrices.get(loan.bookId) ?? null;
-        }
-
-        const capMinor = resolveLateFeeCapMinor({
-          loanSnapshotMinor: loan.priceMinorAtBorrow,
-          bookCurrentPriceMinor,
-          globalCapRs: this.globalLateFeeCapRs,
-        });
-
-        const calculation = calculateLateFee({
-          daysLate,
-          ratePerDayRs: LATE_FEE_PER_DAY_RS,
-          capMinor,
-        });
-
-        if (calculation.amountMinor > 0) {
-          lateFine = await this.finesService.createFine(
-            {
-              userId: loan.userId,
-              reason: FineReason.LATE_RETURN,
-              amountMinor: calculation.amountMinor,
-              uncappedAmountMinor: calculation.uncappedAmountMinor,
-              capMinor: calculation.capMinor,
-              loanId: loan.id,
-              daysLate,
-              dedupeKey: FinesService.buildLateReturnDedupeKey(loan.id),
-              createdById: input.staffId,
-            },
-            tx,
-          );
-        }
-      }
-
-      // Step 6: Condition handling
-      let damagedFine: any = null;
-      if (input.condition === ReturnCondition.GOOD) {
-        await this.copyReleasePort.release(lockedCopy.id, tx);
-      } else if (input.condition === ReturnCondition.DAMAGED) {
-        const note = input.conditionNote!.trim();
-        await this.copiesService.transitionStatus(
-          lockedCopy.id,
-          [CopyStatus.BORROWED],
-          CopyStatus.DAMAGED,
-          {
-            reason: note,
-            changedById: input.staffId,
-          },
-          tx,
+          this.libraryTimezone,
         );
 
-        if (damageFeeMinor !== undefined && damageFeeMinor > 0) {
-          damagedFine = await this.finesService.createFine(
+        // Step 4: Update loan record
+        const updatedLoan = await tx.loan.update({
+          where: { id: loan.id },
+          data: {
+            status: LoanStatus.RETURNED,
+            returnedAt,
+            returnCondition: input.condition,
+            conditionNote: input.conditionNote?.trim() || null,
+            returnedById: input.staffId,
+          },
+        });
+
+        // Step 5: If overdue, assess late fee fine
+        let lateFine: any = null;
+        if (daysLate > 0) {
+          let bookCurrentPriceMinor: number | null = null;
+          if (
+            loan.priceMinorAtBorrow === null ||
+            loan.priceMinorAtBorrow === undefined
+          ) {
+            const bookPrices = await this.catalogPublicApi.getBookPricesMinor([
+              loan.bookId,
+            ]);
+            bookCurrentPriceMinor = bookPrices.get(loan.bookId) ?? null;
+          }
+
+          const capMinor = resolveLateFeeCapMinor({
+            loanSnapshotMinor: loan.priceMinorAtBorrow,
+            bookCurrentPriceMinor,
+            globalCapRs: this.globalLateFeeCapRs,
+          });
+
+          const calculation = calculateLateFee({
+            daysLate,
+            ratePerDayRs: LATE_FEE_PER_DAY_RS,
+            capMinor,
+          });
+
+          if (calculation.amountMinor > 0) {
+            lateFine = await this.finesService.createFine(
+              {
+                userId: loan.userId,
+                reason: FineReason.LATE_RETURN,
+                amountMinor: calculation.amountMinor,
+                uncappedAmountMinor: calculation.uncappedAmountMinor,
+                capMinor: calculation.capMinor,
+                loanId: loan.id,
+                daysLate,
+                dedupeKey: FinesService.buildLateReturnDedupeKey(loan.id),
+                createdById: input.staffId,
+              },
+              tx,
+            );
+          }
+        }
+
+        // Step 6: Condition handling
+        let damagedFine: any = null;
+        if (input.condition === ReturnCondition.GOOD) {
+          await this.copyReleasePort.release(lockedCopy.id, tx, onCommit);
+        } else if (input.condition === ReturnCondition.DAMAGED) {
+          const note = input.conditionNote!.trim();
+          await this.copiesService.transitionStatus(
+            lockedCopy.id,
+            [CopyStatus.BORROWED],
+            CopyStatus.DAMAGED,
             {
-              userId: loan.userId,
-              reason: FineReason.DAMAGED_BOOK,
-              amountMinor: damageFeeMinor,
-              loanId: loan.id,
-              note,
-              dedupeKey: FinesService.buildDamagedDedupeKey(loan.id),
-              createdById: input.staffId,
+              reason: note,
+              changedById: input.staffId,
             },
             tx,
           );
-        }
-      }
 
-      return {
-        updatedLoan,
-        loan,
-        returnedAt,
-        daysLate,
-        lateFine,
-        damagedFine,
-      };
-    }, INTERACTIVE_TX_OPTIONS);
+          if (damageFeeMinor !== undefined && damageFeeMinor > 0) {
+            damagedFine = await this.finesService.createFine(
+              {
+                userId: loan.userId,
+                reason: FineReason.DAMAGED_BOOK,
+                amountMinor: damageFeeMinor,
+                loanId: loan.id,
+                note,
+                dedupeKey: FinesService.buildDamagedDedupeKey(loan.id),
+                createdById: input.staffId,
+              },
+              tx,
+            );
+          }
+        }
+
+        return {
+          updatedLoan,
+          loan,
+          returnedAt,
+          daysLate,
+          lateFine,
+          damagedFine,
+        };
+      }, INTERACTIVE_TX_OPTIONS),
+    );
 
     // Step 7: Emit domain events post-commit
     this.eventEmitter.emit(
@@ -887,70 +911,72 @@ export class LoansService implements LoansPublicApi {
 
     const memberId = loan.userId;
 
-    const txResult = await this.prisma.$transaction(async (tx) => {
-      // Step 1: Member advisory lock
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(${HOLD_ADVISORY_NAMESPACE}::int, ${memberId}::int)`;
+    const txResult = await withTransactionRetry(() =>
+      this.prisma.$transaction(async (tx) => {
+        // Step 1: Member advisory lock
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(${HOLD_ADVISORY_NAMESPACE}::int, ${memberId}::int)`;
 
-      // Step 2: Lock loan row FOR UPDATE
-      const lockedLoans = await tx.$queryRaw<Loan[]>`
+        // Step 2: Lock loan row FOR UPDATE
+        const lockedLoans = await tx.$queryRaw<Loan[]>`
           SELECT * FROM "Loan" WHERE id = ${loan.id} FOR UPDATE
         `;
-      const currentLoan = lockedLoans[0];
+        const currentLoan = lockedLoans[0];
 
-      if (!currentLoan || currentLoan.status !== LoanStatus.ACTIVE) {
-        throw new LoanNotActiveError(loan.id, currentLoan?.status);
-      }
+        if (!currentLoan || currentLoan.status !== LoanStatus.ACTIVE) {
+          throw new LoanNotActiveError(loan.id, currentLoan?.status);
+        }
 
-      // Step 3: Lock copy row FOR UPDATE
-      const lockedCopies = await tx.$queryRaw<Copy[]>`
+        // Step 3: Lock copy row FOR UPDATE
+        const lockedCopies = await tx.$queryRaw<Copy[]>`
           SELECT * FROM "Copy" WHERE id = ${currentLoan.copyId} FOR UPDATE
         `;
-      const lockedCopy = lockedCopies[0];
+        const lockedCopy = lockedCopies[0];
 
-      if (!lockedCopy) {
-        throw new NotFoundException(`Copy #${currentLoan.copyId} not found`);
-      }
+        if (!lockedCopy) {
+          throw new NotFoundException(`Copy #${currentLoan.copyId} not found`);
+        }
 
-      const now = this.clockService.now();
-      const note = input.note.trim();
+        const now = this.clockService.now();
+        const note = input.note.trim();
 
-      // Step 4: Update loan to LOST
-      const updatedLoan = await tx.loan.update({
-        where: { id: currentLoan.id },
-        data: {
-          status: LoanStatus.LOST,
-          lostAt: now,
-        },
-      });
+        // Step 4: Update loan to LOST
+        const updatedLoan = await tx.loan.update({
+          where: { id: currentLoan.id },
+          data: {
+            status: LoanStatus.LOST,
+            lostAt: now,
+          },
+        });
 
-      // Step 5: Transition copy BORROWED -> LOST
-      await this.copiesService.transitionStatus(
-        lockedCopy.id,
-        [CopyStatus.BORROWED],
-        CopyStatus.LOST,
-        {
-          reason: note,
-          changedById: input.staffId,
-        },
-        tx,
-      );
+        // Step 5: Transition copy BORROWED -> LOST
+        await this.copiesService.transitionStatus(
+          lockedCopy.id,
+          [CopyStatus.BORROWED],
+          CopyStatus.LOST,
+          {
+            reason: note,
+            changedById: input.staffId,
+          },
+          tx,
+        );
 
-      // Step 6: Create LOST_BOOK fine (no late fee is charged!)
-      const lostFine = await this.finesService.createFine(
-        {
-          userId: currentLoan.userId,
-          reason: FineReason.LOST_BOOK,
-          amountMinor: assessedMinor,
-          loanId: currentLoan.id,
-          note,
-          dedupeKey: FinesService.buildLostDedupeKey(currentLoan.id),
-          createdById: input.staffId,
-        },
-        tx,
-      );
+        // Step 6: Create LOST_BOOK fine (no late fee is charged!)
+        const lostFine = await this.finesService.createFine(
+          {
+            userId: currentLoan.userId,
+            reason: FineReason.LOST_BOOK,
+            amountMinor: assessedMinor,
+            loanId: currentLoan.id,
+            note,
+            dedupeKey: FinesService.buildLostDedupeKey(currentLoan.id),
+            createdById: input.staffId,
+          },
+          tx,
+        );
 
-      return { updatedLoan, currentLoan, lostFine, now };
-    }, INTERACTIVE_TX_OPTIONS);
+        return { updatedLoan, currentLoan, lostFine, now };
+      }, INTERACTIVE_TX_OPTIONS),
+    );
 
     // Step 7: Emit domain events post-commit
     this.eventEmitter.emit(

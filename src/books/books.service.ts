@@ -79,6 +79,10 @@ export class BooksService implements CatalogPublicApi {
     return this.mapToModel(book);
   }
 
+  async findBookById(id: number): Promise<BookModel | null> {
+    return this.findById(id);
+  }
+
   async exists(id: number): Promise<boolean> {
     const count = await this.prisma.book.count({
       where: { id },

@@ -16,12 +16,19 @@ import { CopyReleasePort } from './copy-release.port';
 export class DefaultCopyReleaseAdapter implements CopyReleasePort {
   constructor(private readonly copiesService: CopiesService) {}
 
-  async release(copyId: number, tx: Prisma.TransactionClient): Promise<void> {
+  async release(
+    copyId: number,
+    tx: Prisma.TransactionClient,
+    onCommit?: (cb: () => void) => void,
+  ): Promise<void> {
     await this.copiesService.transitionStatus(
       copyId,
       [CopyStatus.BORROWED],
       CopyStatus.AVAILABLE,
-      { reason: 'Loan returned in good condition' },
+      {
+        reason: 'Loan returned in good condition',
+        onCommit,
+      },
       tx,
     );
   }

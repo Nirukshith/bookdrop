@@ -18,6 +18,7 @@ import { CopiesModule } from './circulation/copies/copies.module';
 import { HoldsModule } from './circulation/holds/holds.module';
 import { LoansModule } from './circulation/loans/loans.module';
 import { FinesModule } from './circulation/fines/fines.module';
+import { ReservationsModule } from './circulation/reservations/reservations.module';
 import { ClockModule } from './common/clock/clock.module';
 import { DomainEventsModule } from './common/events/domain-events.module';
 import { GqlThrottlerGuard } from './auth/guards/gql-throttler.guard';
@@ -113,6 +114,7 @@ import { envValidationSchema } from './config/env.validation';
     CopiesModule,
     LoansModule,
     FinesModule,
+    ReservationsModule,
   ],
   controllers: [AppController],
   providers: [

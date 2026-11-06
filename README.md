@@ -25,8 +25,8 @@ Bookdrop enforces declarative Role-Based Access Control (RBAC) via global guards
 
 | Role          | Permissions & Capabilities                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | :------------ | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **MEMBER**    | • View catalog books and single book details (`books`, `book` - public)<br>• Register and authenticate (`register`, `login`, `refreshTokens`, `logout`)<br>• View own authenticated profile (`me`)<br>• Request remote holds on titles (`requestHold`)<br>• View own active and historical holds (`myHolds`)<br>• Cancel own active hold (`cancelMyHold`)<br>• View own loans with dynamic overdue fees (`myLoans`)<br>• View own outstanding and historical fines with book title (`myFines`)<br>• _Forbidden from modifying catalog books, managing physical copy inventory, viewing physical copy barcodes (masked), cancelling other patrons' holds, returning loans, declaring lost books, recording payments, waiving fines, or administrative user operations._                                                                                                                                                                                                                                                                                                                                                             |
-| **LIBRARIAN** | • All MEMBER permissions<br>• Manage catalog inventory: create new books (`createBook`) and update existing book details/authors/categories (`updateBook`)<br>• Manage physical copy inventory: add copies (`addCopies`), update location (`updateCopy`), manually change condition status (`transitionCopyStatus`), and retire copies (`retireCopy`)<br>• Query physical copy inventory and inspect unmasked barcodes (`copies`, `copy`, `bookCopies`, `Book.copies`)<br>• Manage remote holds across the system: view all member holds (`holds`, `hold`) and administratively cancel holds with staff audit notes (`cancelHold`)<br>• Circulation desk operations: pickup desk fulfillment (`confirmPickup`), walk-in checkouts (`checkoutCopy`), loan returns (`returnLoan`), declaring lost books (`markLoanLost`), viewing active overdue loans (`overdueLoans`), and loan ledger lookups (`loans`, `loan`)<br>• Fine desk operations: record fine payments (`recordFinePayment`), query fine ledger and member fines (`fines`, `fine`, `memberFines`)<br>• _Forbidden from waiving fines or administrative user operations._ |
+| **MEMBER**    | • View catalog books and single book details (`books`, `book` - public)<br>• Register and authenticate (`register`, `login`, `refreshTokens`, `logout`)<br>• View own authenticated profile (`me`)<br>• Request remote holds on titles (`requestHold`)<br>• View own active and historical holds (`myHolds`)<br>• Cancel own active hold (`cancelMyHold`)<br>• View own loans with dynamic overdue fees (`myLoans`)<br>• View own outstanding and historical fines with book title (`myFines`)<br>• Join waiting queue for titles with zero available copies (`joinReservationQueue`)<br>• View own waiting reservations with queue position (`myReservations`)<br>• Cancel own waiting reservation (`cancelReservation`)<br>• _Forbidden from modifying catalog books, managing physical copy inventory, viewing physical copy barcodes (masked), cancelling other patrons' holds/reservations, viewing full book queues, returning loans, declaring lost books, recording payments, waiving fines, or administrative user operations._                                                                |
+| **LIBRARIAN** | • All MEMBER permissions<br>• Manage catalog inventory: create new books (`createBook`) and update existing book details/authors/categories (`updateBook`)<br>• Manage physical copy inventory: add copies (`addCopies`), update location (`updateCopy`), manually change condition status (`transitionCopyStatus`), and retire copies (`retireCopy`)<br>• Query physical copy inventory and inspect unmasked barcodes (`copies`, `copy`, `bookCopies`, `Book.copies`)<br>• Manage remote holds across the system: view all member holds (`holds`, `hold`) and administratively cancel holds with staff audit notes (`cancelHold`)<br>• Circulation desk operations: pickup desk fulfillment (`confirmPickup`), walk-in checkouts (`checkoutCopy`), loan returns (`returnLoan`), declaring lost books (`markLoanLost`), viewing active overdue loans (`overdueLoans`), and loan ledger lookups (`loans`, `loan`)<br>• Fine desk operations: record fine payments (`recordFinePayment`), query fine ledger and member fines (`fines`, `fine`, `memberFines`)<br>• Reservation queue operations: inspect FIFO queue for any book (`queueForBook`), lookup individual reservation (`reservation`), inspect title queue length (`Book.queueLength`), and cancel patron reservations with staff audit reason (`cancelReservation`)<br>• _Forbidden from waiving fines or administrative user operations._ |
 | **ADMIN**     | • Full system administration<br>• All LIBRARIAN and MEMBER capabilities<br>• Waive patron fines with justification reason (`waiveFine`)<br>• List all registered users (`users`)<br>• Update any user's role (`updateUserRole`)<br>• _Self-Demotion Lockout: An admin is strictly prohibited from removing their own admin status to prevent administrative lockouts._                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 
 ---
@@ -1243,21 +1243,21 @@ Bookdrop is structured into distinct bounded contexts designed for seamless deco
 ### Domain Ports & Extensibility (Open-Closed Principle)
 
 - **`CopyReleasePort` (`src/circulation/loans/ports/copy-release.port.ts`)**:
-  - An abstract interface with `release(copyId: number, tx: PrismaTransaction): Promise<void>`.
-  - The Stage 7 default implementation (`DefaultCopyReleaseAdapter`) transitions the returned copy `BORROWED -> AVAILABLE` with `transitionStatus` inside the transaction.
-  - _Stage 8 Extensibility_: Stage 8 will introduce a reservation queue adapter that inspects waiting holds for the title, assigns the copy directly to the next waiting patron (`ON_HOLD`), and emits notification events — without requiring any modifications to the core `returnLoan` domain logic.
+  - An abstract interface with `release(copyId: number, tx: PrismaTransaction, onCommit?: (cb: () => void) => void): Promise<void>`.
+  - In Stage 8, `DefaultCopyReleaseAdapter` delegates copy availability to `CopiesService.transitionStatus(copyId, [BORROWED], AVAILABLE, ..., tx)`. Through the `CopyAvailabilityListener` port (`PromotionService`), the copy is immediately and atomically offered to the reservation queue. If an eligible member is waiting, the copy transitions `AVAILABLE -> ON_HOLD` for that patron and creates a `QUEUE_PROMOTION` hold without committing an unreserved available state.
 - **`FinesPublicApi.createFine` (`src/circulation/fines/fines-public-api.interface.ts`)**:
   - Clean boundary interface exposed by Fines to Circulation and external modules.
   - Accepts structured input including a required idempotent `dedupeKey` (e.g. `late-return:<loanId>`, `lost:<loanId>`, `damaged:<loanId>`).
   - If a fine with the key already exists, returns the existing record without raising duplicate-entry errors, guaranteeing idempotency during network retries or concurrent operations.
 
 > [!NOTE]
-> **PostgreSQL Partial Unique Indexes in Circulation (Holds & Loans)**:
+> **PostgreSQL Partial Unique Indexes in Circulation (Holds, Loans, & Reservations)**:
 > Prisma schema does not natively represent conditional/partial SQL indexes with `WHERE` clauses. Therefore, critical business invariants are managed via raw SQL in migrations:
 >
 > - `hold_one_active_per_copy`: `CREATE UNIQUE INDEX hold_one_active_per_copy ON "Hold" ("copyId") WHERE status = 'ACTIVE';` (prevents double-allocation of a physical copy to multiple active holds)
 > - `hold_one_active_per_user_book`: `CREATE UNIQUE INDEX hold_one_active_per_user_book ON "Hold" ("userId", "bookId") WHERE status = 'ACTIVE';` (prevents a member from holding the same title multiple times concurrently, while allowing re-holds after resolution)
 > - `loan_one_active_per_copy`: `CREATE UNIQUE INDEX loan_one_active_per_copy ON "Loan" ("copyId") WHERE status = 'ACTIVE';` (guarantees a physical copy cannot be checked out to two patrons simultaneously)
+> - `reservation_one_waiting_per_user_book`: `CREATE UNIQUE INDEX reservation_one_waiting_per_user_book ON "Reservation" ("userId", "bookId") WHERE status = 'WAITING';` (prevents a member from having more than one active waiting reservation per book while preserving historical audit entries)
 >
 > `prisma migrate dev` and `prisma migrate deploy` track these indexes through the migration history. Because Prisma only alters indexes declared in `schema.prisma`, it safely ignores these unmanaged partial indexes without generating drift or dropping them.
 
@@ -1265,6 +1265,137 @@ Bookdrop is structured into distinct bounded contexts designed for seamless deco
 > **Lost Book Lifecycle & Limitations (Stage 7)**:
 > Once an active loan is declared lost via `markLoanLost`, its status transitions to `LOST`, its copy transitions to `LOST`, and an assessed replacement fee (`LOST_BOOK`) is generated without late fee penalties.
 > A loan marked `LOST` is terminal and cannot be returned through `returnLoan`. Handling a lost book that is later found or recovered is out of scope for the current circulation lifecycle. A future stage will introduce a dedicated found-copy workflow (re-cataloging, physical condition assessment, and replacement fine adjustment).
+
+---
+
+## 📋 Stage 8: Reservation Queue (Waiting List) & Promotion Engine
+
+Stage 8 implements a high-concurrency waiting list system for titles with zero available physical copies, featuring atomic FIFO queue promotion, automatic copy handoff, patron ineligibility skipping, and deadlock-resilient transaction execution.
+
+### Core Domain Rules & Policies
+
+1. **Strict FIFO Queue Order**:
+   - There is exactly one queue per book, ordered strictly first-in-first-out by reservation `id` ASC.
+   - Queue position is dynamic and calculated on demand using PostgreSQL window functions: `ROW_NUMBER() OVER (PARTITION BY "bookId" ORDER BY "id" ASC)` across active `WAITING` rows.
+
+2. **Joining Eligibility & Invariants**:
+   - A patron may join a book's queue only when the book has **0 AVAILABLE** copies. If any copy is available, the request fails with `COPY_AVAILABLE` ("request a hold instead").
+   - A patron cannot join if they already have an active hold on the book (`ALREADY_HELD`) or are already queued for that book (`ALREADY_QUEUED`).
+   - Active loan/hold limits (`MAX_ACTIVE_LOANS = 3`, `MAX_ACTIVE_HOLDS = 3`) are **not** checked when joining the queue; they are evaluated when promotion occurs.
+   - Patrons with overdue loans (`OVERDUE_LOANS`) or unpaid fines (`UNPAID_FINES`) are blocked from joining.
+   - Active queue quota: A member can have at most `MAX_ACTIVE_RESERVATIONS = 5` active `WAITING` reservations across the library (`QUEUE_LIMIT_REACHED`).
+   - Queue entries never expire by time. They remain active until promoted or cancelled.
+
+3. **Atomic FIFO Promotion Engine**:
+   - **Zero-Unassigned Availability Invariant**: Every path that makes a physical copy `AVAILABLE` immediately and atomically offers it to the reservation queue within the **SAME transaction**:
+     - Loan return in `GOOD` condition (via `DefaultCopyReleaseAdapter` / `CopyReleasePort`).
+     - Patron or staff hold cancellation (`cancelHold`, `cancelMyHold`).
+     - Scheduled pickup hold expiration (`expireHold`).
+     - Copy condition status transitions back to `AVAILABLE` (`changeStatus`).
+     - Catalog additions of new copies (`addCopy`, `addCopies`).
+   - **Promotion Lifecycle**:
+     - When offered, the copy transitions `AVAILABLE -> ON_HOLD` for the first eligible waiting member.
+     - Creates a `Hold` record with `source: QUEUE_PROMOTION` and a pickup deadline of `PICKUP_HOLD_DAYS` (1 day) from the moment of promotion.
+     - The reservation record transitions `WAITING -> PROMOTED`, recording `promotedAt` and linking `holdId`.
+     - Post-commit domain events `reservation.promoted` and `hold.created` are emitted.
+   - **Ineligibility Skipping & Place Retention**:
+     - If candidate patron at position 1 fails eligibility (`checkRequestEligibility`: hold limit, loan limit, unpaid fines, overdue loans), they are **skipped** and **retain their WAITING place**.
+     - The engine evaluates the next candidate in FIFO order until an eligible patron is found.
+     - If all waiting patrons are ineligible, the copy remains `AVAILABLE`.
+
+4. **Queue Superseding**:
+   - If a queued member acquires the book through another channel (e.g., walk-in checkout via `checkoutCopy`, or a remote hold via `requestHold`), their active `WAITING` reservation on that book is automatically and atomically cancelled in the same transaction with `cancelReason = SUPERSEDED` (`reservation.cancelled` emitted post-commit).
+
+5. **Advisory Lock Hierarchy & Deadlock Retry**:
+   - To eliminate deadlock risks during cross-member promotions and multi-resource updates, transactions adhere strictly to a top-down lock ordering hierarchy:
+     $$\text{Member Advisory Lock (4201)} \longrightarrow \text{Book Reservation Advisory Lock (4202)} \longrightarrow \text{Row Locks (Reservation, Copy, Hold)}$$
+   - All transactions triggering queue updates or copy transitions are wrapped in `withTransactionRetry` with exponential jitter backoff, retrying automatically on PostgreSQL transient serialization failures (`40001`) or deadlocks (`40P01`).
+   - Side-effect safety: Domain event emission is deferred to `onCommit()` callbacks, guaranteeing zero phantom events on transaction retries or rollbacks.
+
+### Reservation Lifecycle State Machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> WAITING: joinReservationQueue (Book has 0 AVAILABLE copies)
+    WAITING --> PROMOTED: Copy becomes AVAILABLE & Patron is ELIGIBLE (Hold created)
+    WAITING --> CANCELLED: cancelReservation (by MEMBER, STAFF, or SUPERSEDED)
+    PROMOTED --> [*]: Hold fulfilled to LOAN or expired/cancelled in Stage 9
+    CANCELLED --> [*]: Terminal state
+```
+
+### GraphQL API Reference (Stage 8)
+
+#### Queries
+```graphql
+# Patron's own active and historical reservations with dynamic queue position
+query {
+  myReservations {
+    id
+    bookId
+    book { title }
+    status
+    position # 1-based queue position if WAITING, null otherwise
+    createdAt
+    promotedAt
+    cancelledAt
+    cancelReason
+    holdId
+  }
+}
+
+# Staff inspection of FIFO reservation queue for a specific title
+query {
+  queueForBook(bookId: 101) {
+    id
+    userId
+    user { email name }
+    status
+    position
+    createdAt
+  }
+}
+
+# Single reservation lookup
+query {
+  reservation(id: 42) {
+    id
+    status
+    position
+    holdId
+  }
+}
+
+# Field on Book: Total active waiting patrons
+query {
+  book(id: 101) {
+    title
+    queueLength
+  }
+}
+```
+
+#### Mutations
+```graphql
+# Join waiting list for a title with 0 available copies
+mutation {
+  joinReservationQueue(bookId: 101) {
+    id
+    status
+    position
+    createdAt
+  }
+}
+
+# Cancel an active reservation (Member can cancel own; Staff can cancel any)
+mutation {
+  cancelReservation(reservationId: 42, reason: "No longer needed") {
+    id
+    status
+    cancelReason
+    cancelledAt
+  }
+}
+```
 
 ---
 
@@ -1290,6 +1421,9 @@ Bookdrop implements an event-driven architecture using asynchronous domain event
 | `fine.payment_recorded` | `fine`        | Payment recorded against an outstanding fine                 | `{ fineId: number, paymentId: number, userId: number, amountMinor: number, paidMinor: number, remainingMinor: number, receivedById: number }`                                    |
 | `fine.settled`          | `fine`        | Fine settled in full (PAID) or administratively WAIVED       | `{ fineId: number, userId: number, reason: FineReason, status: 'PAID' \| 'WAIVED', settledAt: Date }`                                                                            |
 | `book.price_changed`    | `catalog`     | Replacement price set, updated, or cleared on a catalog book | `{ bookId: number, oldPriceMinor: number \| null, newPriceMinor: number \| null, actorId: number \| null, occurredAt: Date }`                                                    |
+| `reservation.joined`    | `reservation` | Member joined reservation queue for title                    | `{ reservationId: number, userId: number, bookId: number, position: number, occurredAt: Date }`                                                                                  |
+| `reservation.cancelled` | `reservation` | Active reservation cancelled (member, staff, or superseded)  | `{ reservationId: number, userId: number, bookId: number, reason: ReservationCancelReason, cancelledById: number, occurredAt: Date }`                                            |
+| `reservation.promoted`  | `reservation` | Waiting reservation promoted to active hold upon copy avail  | `{ reservationId: number, userId: number, bookId: number, holdId: number, copyId: number, occurredAt: Date }`                                                                    |
 
 ### Observability & Subscriber
 
@@ -1300,6 +1434,7 @@ A centralized subscriber ([`src/common/events/domain-events.subscriber.ts`](src/
 - `@OnEvent('loan.*')`
 - `@OnEvent('fine.*')`
 - `@OnEvent('book.*')`
+- `@OnEvent('reservation.*')`
 
 All received events are formatted as structured JSON via [`JsonLogger`](src/common/logger/json-logger.ts) including standard timestamps, log levels, event domain names, and payloads. This provides seamless out-of-the-box ingestion for log aggregation tools (e.g., Datadog, ELK, CloudWatch).
 
@@ -1308,7 +1443,7 @@ All received events are formatted as structured JSON via [`JsonLogger`](src/comm
 ## Security Hardening
 
 - **Helmet**: Sets defensive HTTP headers (`X-Content-Type-Options`, `X-Frame-Options`, `Strict-Transport-Security`). In development, Content Security Policy (CSP) is relaxed so the Apollo Sandbox UI loads properly; in production, strict CSP is enforced.
-- **Rate Limiting (`@nestjs/throttler`)**: GraphQL-aware throttling with default quota of 100 requests/minute, strict throttling (10 requests/minute) on sensitive authentication endpoints (`login`, `register`, `refreshTokens`), and staff desk throttling (20 requests/minute) on circulation mutations (`confirmPickup`, `checkoutCopy`, `returnLoan`, `markLoanLost`, `recordFinePayment`, `waiveFine`).
+- **Rate Limiting (`@nestjs/throttler`)**: GraphQL-aware throttling with default quota of 100 requests/minute, strict throttling (10 requests/minute) on sensitive authentication endpoints (`login`, `register`, `refreshTokens`), and staff desk throttling (20 requests/minute) on circulation mutations (`confirmPickup`, `checkoutCopy`, `returnLoan`, `markLoanLost`, `recordFinePayment`, `waiveFine`, `joinReservationQueue`, `cancelReservation`).
 - **Query Depth Limiting**: Protects against denial-of-service query nesting attacks by capping GraphQL AST depth at 5 (`depthLimit(5)`).
 - **Production Protection**: GraphQL Introspection and Playground are automatically disabled when `NODE_ENV=production`.
 - **Field-Level Access Control**: Sensitive fields (`Book.copyCounts`, `Loan.copyBarcode`) are guarded independently at the GraphQL field resolver level using `@UseGuards(RolesGuard)` and field resolvers.
@@ -1323,7 +1458,7 @@ All received events are formatted as structured JSON via [`JsonLogger`](src/comm
 npm test
 ```
 
-_Executes 529 unit tests across 34 test suites covering pure due-date calculation, days-late arithmetic, fee capping, currency parsing/formatting, domain state machines (Copies, Holds, Fines), eligibility policies, clock deadlines, services, loaders, guards, and validators._
+_Executes 608 unit tests across 41 test suites covering pure due-date calculation, days-late arithmetic, fee capping, currency parsing/formatting, domain state machines (Copies, Holds, Fines, Reservations), transaction retry helper with jitter backoff, eligibility policies, clock deadlines, services, loaders, guards, and validators._
 
 ### Run End-to-End (E2E) Tests
 
@@ -1331,7 +1466,7 @@ _Executes 529 unit tests across 34 test suites covering pure due-date calculatio
 npm run test:e2e
 ```
 
-_Executes 134 integration tests across 9 suites sequentially against the real PostgreSQL container (Returns & Fines lifecycle, advisory lock concurrency loops, payment ledger, raw SQL check constraints, Loans lifecycle, pickup desk, walk-in checkouts, holds lifecycle, 20-member copy contention, CAS race conditions, database partial unique indexes, Auth, RBAC, Catalog, Security headers, Rate limiting, Depth limits)._
+_Executes 160 integration tests across 10 suites sequentially against the real PostgreSQL container (Reservation queue FIFO lifecycle, atomic copy promotion across all availability triggers, ineligibility skipping, active reservation superseding, concurrent join races, Returns & Fines lifecycle, advisory lock concurrency loops, payment ledger, raw SQL check constraints, Loans lifecycle, pickup desk, walk-in checkouts, holds lifecycle, 20-member copy contention, CAS race conditions, database partial unique indexes, Auth, RBAC, Catalog, Security headers, Rate limiting, Depth limits)._
 
 ### Run Code Linter & Boundary Check
 

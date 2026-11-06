@@ -8,6 +8,7 @@ import {
   LoanStatus,
   ReturnCondition,
   Role,
+  ReservationCancelReason,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ClockService } from '../../common/clock/clock.service';
@@ -62,6 +63,7 @@ describe('LoansService (Step 5)', () => {
     exists: jest.Mock;
     findTitlesByIds: jest.Mock;
     getBookPricesMinor: jest.Mock;
+    findBookById?: jest.Mock;
   };
   let eventEmitterMock: { emit: jest.Mock };
 
@@ -86,6 +88,10 @@ describe('LoansService (Step 5)', () => {
       },
       loan: {
         create: jest.fn(),
+        update: jest.fn(),
+      },
+      reservation: {
+        findFirst: jest.fn().mockResolvedValue(null),
         update: jest.fn(),
       },
     };
@@ -164,6 +170,9 @@ describe('LoansService (Step 5)', () => {
       getBookPricesMinor: jest
         .fn()
         .mockResolvedValue(new Map([[bookId, 49900]])),
+      findBookById: jest
+        .fn()
+        .mockResolvedValue({ id: bookId, title: 'Test Book' }),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -497,6 +506,44 @@ describe('LoansService (Step 5)', () => {
       );
     });
 
+    it('supersedes any active WAITING reservation for the member on the same book', async () => {
+      txMock.reservation.findFirst.mockResolvedValueOnce({
+        id: 88,
+        userId: memberId,
+        bookId,
+        status: 'WAITING',
+      });
+      txMock.reservation.update.mockResolvedValueOnce({
+        id: 88,
+        userId: memberId,
+        bookId,
+        status: 'CANCELLED',
+        cancelReason: ReservationCancelReason.SUPERSEDED,
+        cancelledById: staffId,
+        cancelledAt: fixedNow,
+      });
+
+      await service.checkoutCopy(memberId, validBarcode, staffId);
+
+      expect(txMock.reservation.update).toHaveBeenCalledWith({
+        where: { id: 88 },
+        data: {
+          status: 'CANCELLED',
+          cancelledAt: expect.any(Date),
+          cancelReason: ReservationCancelReason.SUPERSEDED,
+          cancelledById: staffId,
+        },
+      });
+
+      expect(eventEmitterMock.emit).toHaveBeenCalledWith(
+        'reservation.cancelled',
+        expect.objectContaining({
+          reservationId: 88,
+          reason: ReservationCancelReason.SUPERSEDED,
+        }),
+      );
+    });
+
     it('throws MemberNotFoundError if member does not exist in identity area', async () => {
       identityPublicApiMock.getMembersByIds.mockResolvedValue([]);
 
@@ -792,6 +839,7 @@ describe('LoansService (Step 5)', () => {
       expect(copyReleasePortMock.release).toHaveBeenCalledWith(
         copyId,
         expect.anything(),
+        expect.any(Function),
       );
       expect(finesServiceMock.createFine).not.toHaveBeenCalled();
       expect(eventEmitterMock.emit).toHaveBeenCalledWith(
@@ -848,6 +896,7 @@ describe('LoansService (Step 5)', () => {
       expect(copyReleasePortMock.release).toHaveBeenCalledWith(
         copyId,
         expect.anything(),
+        expect.any(Function),
       );
       expect(finesServiceMock.createFine).toHaveBeenCalledWith(
         expect.objectContaining({
