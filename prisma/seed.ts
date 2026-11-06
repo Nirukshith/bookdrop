@@ -35,6 +35,9 @@ async function main() {
 
   if (!isProduction) {
     // Clear existing records in reverse dependency order for repeatability in development/test
+    await prisma.jobLease.deleteMany();
+    await prisma.reminderMark.deleteMany();
+    await prisma.missedPickup.deleteMany();
     await prisma.finePayment.deleteMany();
     await prisma.fine.deleteMany();
     await prisma.reservation.deleteMany();
@@ -578,6 +581,8 @@ async function main() {
     const memberEmail = (process.env.SEED_MEMBER_EMAIL || 'member@bookdrop.local').trim().toLowerCase();
     const member2Email = (process.env.SEED_MEMBER2_EMAIL || 'member2@bookdrop.local').trim().toLowerCase();
     const member3Email = (process.env.SEED_MEMBER3_EMAIL || 'member3@bookdrop.local').trim().toLowerCase();
+    const member4Email = (process.env.SEED_MEMBER4_EMAIL || 'member4@bookdrop.local').trim().toLowerCase();
+    const member5Email = (process.env.SEED_MEMBER5_EMAIL || 'member5@bookdrop.local').trim().toLowerCase();
 
     const adminPassword = process.env.SEED_ADMIN_PASSWORD || 'AdminPassword123!';
     const librarianPassword = process.env.SEED_LIBRARIAN_PASSWORD || 'LibrarianPassword123!';
@@ -620,6 +625,18 @@ async function main() {
         role: Role.MEMBER,
         passwordHash: memberHash,
       },
+      {
+        email: member4Email,
+        name: 'Demo Member 4 (Missed Pickups & Reminders)',
+        role: Role.MEMBER,
+        passwordHash: memberHash,
+      },
+      {
+        email: member5Email,
+        name: 'Demo Member 5 (Assessed Fines)',
+        role: Role.MEMBER,
+        passwordHash: memberHash,
+      },
     ];
 
     for (const user of demoUsers) {
@@ -639,11 +656,14 @@ async function main() {
     // 5. Seed Demo Holds for Demo Member (ACTIVE, EXPIRED, CANCELLED)
     console.log('🔖 Seeding demo holds for demo member...');
 
-    const [demoMember, demoMember2, demoMember3] = await Promise.all([
-      prisma.user.findUnique({ where: { email: memberEmail } }),
-      prisma.user.findUnique({ where: { email: member2Email } }),
-      prisma.user.findUnique({ where: { email: member3Email } }),
-    ]);
+    const [demoMember, demoMember2, demoMember3, demoMember4, demoMember5] =
+      await Promise.all([
+        prisma.user.findUnique({ where: { email: memberEmail } }),
+        prisma.user.findUnique({ where: { email: member2Email } }),
+        prisma.user.findUnique({ where: { email: member3Email } }),
+        prisma.user.findUnique({ where: { email: member4Email } }),
+        prisma.user.findUnique({ where: { email: member5Email } }),
+      ]);
 
     if (demoMember) {
       const [book1984, bookAnimalFarm, bookBraveNewWorld] = await Promise.all([
@@ -1430,6 +1450,351 @@ async function main() {
       console.log(
         '✅ Seeded demo reservations: Book A queue (2 waiting), Book B queue (pos 1 with unpaid fines, pos 2 clean), 1 PROMOTED reservation linked to active hold, 1 CANCELLED reservation.',
       );
+
+      // 9. Seed Stage 9 Scenarios (Missed Pickups, Assessed Fine, Excused Pickup, Reminders)
+      if (demoMember4 && demoMember5) {
+        console.log('⏰ Seeding Stage 9 demo scenarios (Missed Pickups & Reminders)...');
+
+        const staffUser = await prisma.user.findUnique({
+          where: { email: librarianEmail },
+        });
+        const staffUserId = staffUser?.id ?? demoMember.id;
+
+        const [
+          bookCrime,
+          bookKaramazov,
+          bookSolitude,
+          bookCholera,
+          bookScarlet,
+          bookIdiot,
+          bookSign,
+          bookHound,
+        ] = await Promise.all([
+          prisma.book.findFirst({
+            where: { title: 'Crime and Punishment' },
+            include: { copies: { orderBy: { id: 'asc' } } },
+          }),
+          prisma.book.findFirst({
+            where: { title: 'The Brothers Karamazov' },
+            include: { copies: { orderBy: { id: 'asc' } } },
+          }),
+          prisma.book.findFirst({
+            where: { title: 'One Hundred Years of Solitude' },
+            include: { copies: { orderBy: { id: 'asc' } } },
+          }),
+          prisma.book.findFirst({
+            where: { title: 'Love in the Time of Cholera' },
+            include: { copies: { orderBy: { id: 'asc' } } },
+          }),
+          prisma.book.findFirst({
+            where: { title: 'A Study in Scarlet' },
+            include: { copies: { orderBy: { id: 'asc' } } },
+          }),
+          prisma.book.findFirst({
+            where: { title: 'The Idiot' },
+            include: { copies: { orderBy: { id: 'asc' } } },
+          }),
+          prisma.book.findFirst({
+            where: { title: 'The Sign of the Four' },
+            include: { copies: { orderBy: { id: 'asc' } } },
+          }),
+          prisma.book.findFirst({
+            where: { title: 'The Hound of the Baskervilles' },
+            include: { copies: { orderBy: { id: 'asc' } } },
+          }),
+        ]);
+
+        // Scenario 1: A member with 2 unassessed missed pickups (one away from a fine)
+        if (
+          bookCrime &&
+          bookCrime.copies[0] &&
+          bookKaramazov &&
+          bookKaramazov.copies[0]
+        ) {
+          const hold1CreatedAt = new Date(
+            now.getTime() - 5 * 24 * 60 * 60 * 1000,
+          );
+          const hold1ExpiresAt = new Date(
+            now.getTime() - 3 * 24 * 60 * 60 * 1000,
+          );
+          const hold1 = await prisma.hold.create({
+            data: {
+              userId: demoMember4.id,
+              bookId: bookCrime.id,
+              copyId: bookCrime.copies[0].id,
+              status: HoldStatus.EXPIRED,
+              source: HoldSource.REQUEST,
+              createdAt: hold1CreatedAt,
+              expiresAt: hold1ExpiresAt,
+              resolvedAt: hold1ExpiresAt,
+              resolvedNote: 'Expired due to missed pickup deadline',
+            },
+          });
+          await prisma.missedPickup.create({
+            data: {
+              userId: demoMember4.id,
+              holdId: hold1.id,
+              excused: false,
+              fineId: null,
+              createdAt: hold1ExpiresAt,
+            },
+          });
+
+          const hold2CreatedAt = new Date(
+            now.getTime() - 4 * 24 * 60 * 60 * 1000,
+          );
+          const hold2ExpiresAt = new Date(
+            now.getTime() - 2 * 24 * 60 * 60 * 1000,
+          );
+          const hold2 = await prisma.hold.create({
+            data: {
+              userId: demoMember4.id,
+              bookId: bookKaramazov.id,
+              copyId: bookKaramazov.copies[0].id,
+              status: HoldStatus.EXPIRED,
+              source: HoldSource.REQUEST,
+              createdAt: hold2CreatedAt,
+              expiresAt: hold2ExpiresAt,
+              resolvedAt: hold2ExpiresAt,
+              resolvedNote: 'Expired due to missed pickup deadline',
+            },
+          });
+          await prisma.missedPickup.create({
+            data: {
+              userId: demoMember4.id,
+              holdId: hold2.id,
+              excused: false,
+              fineId: null,
+              createdAt: hold2ExpiresAt,
+            },
+          });
+        }
+
+        // Scenario 2: A member with 3 missed pickups that HAVE been assessed into a paid fine
+        if (
+          bookSolitude &&
+          bookSolitude.copies[0] &&
+          bookCholera &&
+          bookCholera.copies[0] &&
+          bookScarlet &&
+          bookScarlet.copies[0]
+        ) {
+          const h3Created = new Date(now.getTime() - 10 * 24 * 60 * 60 * 1000);
+          const h3Expired = new Date(now.getTime() - 8 * 24 * 60 * 60 * 1000);
+          const hold3 = await prisma.hold.create({
+            data: {
+              userId: demoMember5.id,
+              bookId: bookSolitude.id,
+              copyId: bookSolitude.copies[0].id,
+              status: HoldStatus.EXPIRED,
+              source: HoldSource.REQUEST,
+              createdAt: h3Created,
+              expiresAt: h3Expired,
+              resolvedAt: h3Expired,
+              resolvedNote: 'Expired due to missed pickup deadline',
+            },
+          });
+
+          const h4Created = new Date(now.getTime() - 9 * 24 * 60 * 60 * 1000);
+          const h4Expired = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+          const hold4 = await prisma.hold.create({
+            data: {
+              userId: demoMember5.id,
+              bookId: bookCholera.id,
+              copyId: bookCholera.copies[0].id,
+              status: HoldStatus.EXPIRED,
+              source: HoldSource.REQUEST,
+              createdAt: h4Created,
+              expiresAt: h4Expired,
+              resolvedAt: h4Expired,
+              resolvedNote: 'Expired due to missed pickup deadline',
+            },
+          });
+
+          const h5Created = new Date(now.getTime() - 8 * 24 * 60 * 60 * 1000);
+          const h5Expired = new Date(now.getTime() - 6 * 24 * 60 * 60 * 1000);
+          const hold5 = await prisma.hold.create({
+            data: {
+              userId: demoMember5.id,
+              bookId: bookScarlet.id,
+              copyId: bookScarlet.copies[0].id,
+              status: HoldStatus.EXPIRED,
+              source: HoldSource.REQUEST,
+              createdAt: h5Created,
+              expiresAt: h5Expired,
+              resolvedAt: h5Expired,
+              resolvedNote: 'Expired due to missed pickup deadline',
+            },
+          });
+
+          const mp3 = await prisma.missedPickup.create({
+            data: {
+              userId: demoMember5.id,
+              holdId: hold3.id,
+              excused: false,
+              createdAt: h3Expired,
+            },
+          });
+          const mp4 = await prisma.missedPickup.create({
+            data: {
+              userId: demoMember5.id,
+              holdId: hold4.id,
+              excused: false,
+              createdAt: h4Expired,
+            },
+          });
+          const mp5 = await prisma.missedPickup.create({
+            data: {
+              userId: demoMember5.id,
+              holdId: hold5.id,
+              excused: false,
+              createdAt: h5Expired,
+            },
+          });
+
+          const fineAssessedAt = h5Expired;
+          const fineSettledAt = new Date(
+            now.getTime() - 5 * 24 * 60 * 60 * 1000,
+          );
+          const assessedFine = await prisma.fine.create({
+            data: {
+              userId: demoMember5.id,
+              reason: FineReason.MISSED_PICKUPS,
+              amountMinor: 10000,
+              paidMinor: 10000,
+              status: FineStatus.PAID,
+              note: `Missed pickups for holds: #${hold3.id}, #${hold4.id}, #${hold5.id}`,
+              dedupeKey: `missed-pickups:${demoMember5.id}:${mp3.id}`,
+              createdAt: fineAssessedAt,
+              settledAt: fineSettledAt,
+              payments: {
+                create: {
+                  amountMinor: 10000,
+                  receivedById: staffUserId,
+                  note: 'Paid at desk',
+                  createdAt: fineSettledAt,
+                },
+              },
+            },
+          });
+
+          await prisma.missedPickup.updateMany({
+            where: { id: { in: [mp3.id, mp4.id, mp5.id] } },
+            data: { fineId: assessedFine.id },
+          });
+        }
+
+        // Scenario 3: One excused missed pickup (marked SYSTEM_DELAY)
+        if (bookIdiot && bookIdiot.copies[0]) {
+          const hold6Created = new Date(
+            now.getTime() - 6 * 24 * 60 * 60 * 1000,
+          );
+          const hold6ExpiresAt = new Date(
+            now.getTime() - 4 * 24 * 60 * 60 * 1000,
+          );
+          const hold6 = await prisma.hold.create({
+            data: {
+              userId: demoMember4.id,
+              bookId: bookIdiot.id,
+              copyId: bookIdiot.copies[0].id,
+              status: HoldStatus.EXPIRED,
+              source: HoldSource.REQUEST,
+              createdAt: hold6Created,
+              expiresAt: hold6ExpiresAt,
+              resolvedAt: new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000),
+              resolvedNote:
+                'Expired due to missed pickup deadline (excused system delay)',
+            },
+          });
+
+          await prisma.missedPickup.create({
+            data: {
+              userId: demoMember4.id,
+              holdId: hold6.id,
+              excused: true,
+              excusedReason: 'SYSTEM_DELAY',
+              fineId: null,
+              createdAt: new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000),
+            },
+          });
+        }
+
+        // Scenario 4: A loan due in 24 hours (candidate for loan.due_soon)
+        if (bookSign && bookSign.copies[0]) {
+          const loanCopy = bookSign.copies[0];
+          await prisma.copy.update({
+            where: { id: loanCopy.id },
+            data: { status: CopyStatus.BORROWED },
+          });
+
+          const borrowedAt = new Date(now.getTime() - 6 * 24 * 60 * 60 * 1000);
+          const dueAt = new Date(now.getTime() + 24 * 60 * 60 * 1000); // 24 hours from now
+
+          await prisma.copyStatusHistory.create({
+            data: {
+              copyId: loanCopy.id,
+              fromStatus: CopyStatus.AVAILABLE,
+              toStatus: CopyStatus.BORROWED,
+              reason: `Loan checkout to demo member #${demoMember4.id}`,
+              changedById: staffUserId,
+              createdAt: borrowedAt,
+            },
+          });
+
+          await prisma.loan.create({
+            data: {
+              userId: demoMember4.id,
+              bookId: bookSign.id,
+              copyId: loanCopy.id,
+              status: LoanStatus.ACTIVE,
+              borrowedAt,
+              dueAt,
+              checkedOutById: staffUserId,
+              priceMinorAtBorrow: bookSign.priceMinor,
+              createdAt: borrowedAt,
+            },
+          });
+        }
+
+        // Scenario 5: An active hold with 3 hours left (candidate for hold.expiring_soon)
+        if (bookHound && bookHound.copies[0]) {
+          const holdCopy = bookHound.copies[0];
+          await prisma.copy.update({
+            where: { id: holdCopy.id },
+            data: { status: CopyStatus.ON_HOLD },
+          });
+
+          const holdCreatedAt = new Date(now.getTime() - 45 * 60 * 60 * 1000);
+          const holdExpiresAt = new Date(now.getTime() + 3 * 60 * 60 * 1000); // 3 hours from now
+
+          await prisma.copyStatusHistory.create({
+            data: {
+              copyId: holdCopy.id,
+              fromStatus: CopyStatus.AVAILABLE,
+              toStatus: CopyStatus.ON_HOLD,
+              reason: `Hold requested by demo member #${demoMember4.id}`,
+              changedById: demoMember4.id,
+              createdAt: holdCreatedAt,
+            },
+          });
+
+          await prisma.hold.create({
+            data: {
+              userId: demoMember4.id,
+              bookId: bookHound.id,
+              copyId: holdCopy.id,
+              status: HoldStatus.ACTIVE,
+              source: HoldSource.REQUEST,
+              createdAt: holdCreatedAt,
+              expiresAt: holdExpiresAt,
+            },
+          });
+        }
+
+        console.log(
+          '✅ Seeded Stage 9 scenarios: Member 4 (2 unassessed missed pickups, 1 excused SYSTEM_DELAY pickup, 1 loan due in 24h, 1 hold expiring in 3h); Member 5 (3 assessed missed pickups in settled Rs 100 fine).',
+        );
+      }
     }
   } else {
     console.log('🔒 Production mode detected: Skipping demo users seed.');
