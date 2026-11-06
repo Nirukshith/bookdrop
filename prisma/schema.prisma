@@ -81,6 +81,7 @@ model Hold {
   copy         Copy       @relation(fields: [copyId], references: [id])
   loan         Loan?
   reservation  Reservation?
+  missedPickup MissedPickup?
   status       HoldStatus @default(ACTIVE)
   source       HoldSource @default(REQUEST)
   expiresAt    DateTime
@@ -165,6 +166,7 @@ model Fine {
   uncappedAmountMinor Int?
   capMinor            Int?
   payments            FinePayment[]
+  missedPickups       MissedPickup[]
 
   @@index([userId, status])
   @@index([loanId])
@@ -252,3 +254,47 @@ model Reservation {
   @@index([bookId, status, id])
   @@index([userId, status])
 }
+
+model MissedPickup {
+  id             Int      @id @default(autoincrement())
+  userId         Int      // plain user id, deliberately NOT a foreign key
+  holdId         Int      @unique
+  hold           Hold     @relation(fields: [holdId], references: [id])
+  excused        Boolean  @default(false)
+  excusedReason  String?
+  fineId         Int?
+  fine           Fine?    @relation(fields: [fineId], references: [id])
+  createdAt      DateTime @default(now())
+
+  @@index([userId, fineId])
+}
+
+enum ReminderKind {
+  LOAN_DUE_SOON
+  LOAN_OVERDUE
+  HOLD_EXPIRING_SOON
+}
+
+model ReminderMark {
+  id        Int          @id @default(autoincrement())
+  kind      ReminderKind
+  userId    Int          // plain user id, NOT a foreign key
+  loanId    Int?
+  holdId    Int?
+  createdAt DateTime     @default(now())
+
+  @@unique([kind, loanId])
+  @@unique([kind, holdId])
+}
+
+model JobLease {
+  name           String    @id
+  lockedUntil    DateTime?
+  lockedBy       String?
+  lastStartedAt  DateTime?
+  lastFinishedAt DateTime?
+  lastStatus     String?
+  lastError      String?
+  lastStats      Json?
+}
+
