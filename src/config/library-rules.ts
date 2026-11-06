@@ -9,6 +9,14 @@ export const MEMBER_ADVISORY_NAMESPACE = 4201;
 export const BOOK_RESERVATION_ADVISORY_NAMESPACE = 4202;
 export const MISSED_PICKUPS_BEFORE_FINE = 3;
 export const MISSED_PICKUP_FINE_RS = 100;
+export const MISSED_PICKUP_GRACE_MINUTES = 60;
+export const DUE_SOON_HOURS = 48;
+export const HOLD_REMINDER_HOURS = 6;
+export const JOB_BATCH_SIZE = 100;
+export const JOB_MAX_RUN_SECONDS = 50;
+export const LEASE_SECONDS = 120;
+export const EXPIRE_HOLDS_INTERVAL_SECONDS = 60;
+export const REMINDERS_INTERVAL_SECONDS = 900; // 15 minutes
 export const LATE_FEE_PER_DAY_RS = 10;
 export const LATE_FEE_CAP_RS: number | null = null;
 export const MAX_ASSESSED_FINE_RS = 100000;
@@ -315,4 +323,165 @@ export function computeLateFeeMinor(
   }
 
   return calculateLateFee({ daysLate, ratePerDayRs, capMinor }).amountMinor;
+}
+
+/**
+ * Result of partitioning unassessed missed pickups into groups eligible for fines.
+ */
+export interface MissedPickupsAssessmentResult<T> {
+  groups: T[][];
+  toAssess: T[][]; // Convenient alias for groups
+  remainder: T[];
+}
+
+/**
+ * Groups unassessed, non-excused missed pickups (oldest first) into batches of `threshold`
+ * (default 3) for fine assessment, leaving any remainder for future accumulation.
+ *
+ * @param unassessed Array of unassessed missed pickups sorted oldest-first.
+ * @param threshold Number of missed pickups required to trigger a fine (default: 3).
+ * @returns Groups of items to be fined, plus the remainder.
+ */
+export function selectMissedPickupsToAssess<T>(
+  unassessed: T[],
+  threshold: number = MISSED_PICKUPS_BEFORE_FINE,
+): MissedPickupsAssessmentResult<T> {
+  if (!Number.isInteger(threshold) || threshold <= 0) {
+    throw new Error(
+      `threshold must be a positive integer, received: ${threshold}`,
+    );
+  }
+
+  const groups: T[][] = [];
+  const total = unassessed.length;
+  const numGroups = Math.floor(total / threshold);
+
+  for (let i = 0; i < numGroups; i++) {
+    const start = i * threshold;
+    groups.push(unassessed.slice(start, start + threshold));
+  }
+
+  const remainder = unassessed.slice(numGroups * threshold);
+
+  return {
+    groups,
+    toAssess: groups,
+    remainder,
+  };
+}
+
+/**
+ * Evaluates whether an expired hold's processing was delayed beyond the system grace period.
+ * If the system caught up late (e.g. server shutdown or backlog > graceMinutes),
+ * the hold is excused so the member is not penalized for infrastructure downtime.
+ *
+ * @param expiresAt The hold's scheduled expiration instant.
+ * @param processedAt The current instant at which the expiration job runs.
+ * @param graceMinutes Grace threshold in minutes (default: MISSED_PICKUP_GRACE_MINUTES = 60).
+ * @returns true if delay > graceMinutes, false otherwise.
+ */
+export function isExcusedAsSystemDelay(
+  expiresAt: Date,
+  processedAt: Date,
+  graceMinutes: number = MISSED_PICKUP_GRACE_MINUTES,
+): boolean {
+  if (isNaN(expiresAt.getTime()) || isNaN(processedAt.getTime())) {
+    throw new Error('Invalid Date provided to isExcusedAsSystemDelay');
+  }
+  const delayMs = processedAt.getTime() - expiresAt.getTime();
+  const graceMs = graceMinutes * 60 * 1000;
+  return delayMs > graceMs;
+}
+
+export interface ReminderQueryWindows {
+  dueSoon: { from: Date; to: Date };
+  overdue: { before: Date };
+  holdExpiringSoon: { from: Date; to: Date };
+}
+
+/**
+ * Computes database query timestamp ranges for reminder candidate selection.
+ *
+ * @param now Current clock instant.
+ * @param options Configurable window hours.
+ */
+export function selectReminderWindows(
+  now: Date,
+  options?: { dueSoonHours?: number; holdReminderHours?: number },
+): ReminderQueryWindows {
+  if (isNaN(now.getTime())) {
+    throw new Error('Invalid Date provided to selectReminderWindows');
+  }
+  const dueSoonHours = options?.dueSoonHours ?? DUE_SOON_HOURS;
+  const holdReminderHours = options?.holdReminderHours ?? HOLD_REMINDER_HOURS;
+
+  return {
+    dueSoon: {
+      from: now,
+      to: new Date(now.getTime() + dueSoonHours * 60 * 60 * 1000),
+    },
+    overdue: {
+      before: now,
+    },
+    holdExpiringSoon: {
+      from: now,
+      to: new Date(now.getTime() + holdReminderHours * 60 * 60 * 1000),
+    },
+  };
+}
+
+/**
+ * Checks if a loan is due soon (i.e. due within windowHours from now, and not already overdue).
+ */
+export function isLoanDueSoon(
+  dueAt: Date,
+  now: Date,
+  windowHours: number = DUE_SOON_HOURS,
+): boolean {
+  const diffMs = dueAt.getTime() - now.getTime();
+  const windowMs = windowHours * 60 * 60 * 1000;
+  return diffMs >= 0 && diffMs <= windowMs;
+}
+
+/**
+ * Checks if a loan is overdue (i.e. current time is strictly after due date).
+ */
+export function isLoanOverdue(dueAt: Date, now: Date): boolean {
+  return now.getTime() > dueAt.getTime();
+}
+
+/**
+ * Checks if an active hold is expiring soon (i.e. expiring within windowHours from now, and not already expired).
+ */
+export function isHoldExpiringSoon(
+  expiresAt: Date,
+  now: Date,
+  windowHours: number = HOLD_REMINDER_HOURS,
+): boolean {
+  const diffMs = expiresAt.getTime() - now.getTime();
+  const windowMs = windowHours * 60 * 60 * 1000;
+  return diffMs >= 0 && diffMs <= windowMs;
+}
+
+/**
+ * Pure helper for lease validity.
+ */
+export function isLeaseActive(
+  lockedUntil: Date | null | undefined,
+  now: Date,
+): boolean {
+  if (!lockedUntil || isNaN(lockedUntil.getTime())) {
+    return false;
+  }
+  return lockedUntil.getTime() > now.getTime();
+}
+
+/**
+ * Computes future lease expiration instant.
+ */
+export function computeLeaseExpiry(
+  now: Date,
+  leaseSeconds: number = LEASE_SECONDS,
+): Date {
+  return new Date(now.getTime() + leaseSeconds * 1000);
 }
