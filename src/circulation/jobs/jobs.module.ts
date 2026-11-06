@@ -8,6 +8,7 @@ import { JobRunnerService } from './job-runner.service';
 import { JobsScheduler } from './jobs.scheduler';
 import { ExpireHoldsJob } from './implementations/expire-holds.job';
 import { SendRemindersJob } from './implementations/send-reminders.job';
+import { JobsResolver } from './jobs.resolver';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { SendRemindersJob } from './implementations/send-reminders.job';
     JobsScheduler,
     ExpireHoldsJob,
     SendRemindersJob,
+    JobsResolver,
   ],
   exports: [JobRunnerService, JobsScheduler, ExpireHoldsJob, SendRemindersJob],
 })
