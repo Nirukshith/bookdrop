@@ -16,6 +16,16 @@ describe('envValidationSchema', () => {
     expect(value.NODE_ENV).toBe('development');
     expect(value.TRUST_PROXY).toBe(false);
     expect(value.ALLOWED_ORIGINS).toBe('');
+    expect(value.SCHEDULER_ENABLED).toBe(false);
+  });
+
+  it('parses SCHEDULER_ENABLED=true correctly', () => {
+    const { error, value } = envValidationSchema.validate({
+      ...validConfig,
+      SCHEDULER_ENABLED: true,
+    });
+    expect(error).toBeUndefined();
+    expect(value.SCHEDULER_ENABLED).toBe(true);
   });
 
   it('parses custom TRUST_PROXY and ALLOWED_ORIGINS correctly', () => {
