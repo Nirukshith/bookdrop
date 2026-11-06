@@ -215,7 +215,10 @@ export interface MissedPickupRecordedPayload {
   domain?: string;
   userId: number;
   holdId: number;
+  bookId?: number;
+  missedAt?: Date;
   excused: boolean;
+  reason?: string | null;
   unassessedCount: number;
   threshold: number;
   occurredAt?: Date;
@@ -227,6 +230,7 @@ export interface MissedPickupFineAssessedPayload {
   userId: number;
   fineId: number;
   holdIds: number[];
+  missedPickupIds?: number[];
   amountMinor: number;
   occurredAt?: Date;
 }

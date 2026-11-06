@@ -401,6 +401,7 @@ export class HoldsService implements HoldsPublicApi {
           fineId: number;
           holdIds: number[];
           amountMinor: number;
+          missedPickupIds?: number[];
         }[] = [];
 
         if (!excused) {
@@ -448,6 +449,7 @@ export class HoldsService implements HoldsPublicApi {
               fineId: fine.id,
               holdIds,
               amountMinor,
+              missedPickupIds: group.map((p) => p.id),
             });
           }
         } else {
@@ -494,6 +496,9 @@ export class HoldsService implements HoldsPublicApi {
               unassessedCount,
               MISSED_PICKUPS_BEFORE_FINE,
               now,
+              hold.bookId,
+              now,
+              excused ? 'SYSTEM_DELAY' : null,
             ),
           );
 
@@ -506,6 +511,7 @@ export class HoldsService implements HoldsPublicApi {
                 fe.holdIds,
                 fe.amountMinor,
                 now,
+                fe.missedPickupIds,
               ),
             );
           }

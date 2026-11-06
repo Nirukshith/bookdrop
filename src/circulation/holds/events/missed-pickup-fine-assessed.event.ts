@@ -10,5 +10,6 @@ export class MissedPickupFineAssessedEvent implements MissedPickupFineAssessedPa
     public readonly holdIds: number[],
     public readonly amountMinor: number,
     public readonly occurredAt: Date = new Date(),
+    public readonly missedPickupIds?: number[],
   ) {}
 }

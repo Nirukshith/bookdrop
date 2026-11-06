@@ -11,5 +11,8 @@ export class MissedPickupRecordedEvent implements MissedPickupRecordedPayload {
     public readonly unassessedCount: number,
     public readonly threshold: number,
     public readonly occurredAt: Date = new Date(),
+    public readonly bookId?: number,
+    public readonly missedAt?: Date,
+    public readonly reason?: string | null,
   ) {}
 }
