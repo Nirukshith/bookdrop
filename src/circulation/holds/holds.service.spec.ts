@@ -22,7 +22,10 @@ import {
   HoldCancelledEvent,
   HoldExpiredEvent,
   HoldFulfilledEvent,
+  MissedPickupRecordedEvent,
+  MissedPickupFineAssessedEvent,
 } from './events';
+import { FINES_PUBLIC_API } from '../fines/fines-public-api.interface';
 import {
   HoldNotFoundError,
   NoCopiesAvailableError,
@@ -37,11 +40,18 @@ describe('HoldsService (Step 5)', () => {
   let fakeClock: FakeClockService;
   let eligibilityPolicyMock: any;
   let eventEmitterMock: any;
+  let finesPublicApiMock: any;
 
   const fixedNow = new Date('2026-10-21T10:00:00.000Z');
 
   beforeEach(async () => {
     fakeClock = new FakeClockService(fixedNow);
+
+    finesPublicApiMock = {
+      createFine: jest.fn().mockResolvedValue({ id: 99, amountMinor: 10000 }),
+      getOutstandingFines: jest.fn().mockResolvedValue([]),
+      getOutstandingTotalMinor: jest.fn().mockResolvedValue(0),
+    };
 
     booksServiceMock = {
       exists: jest.fn().mockResolvedValue(true),
@@ -88,6 +98,13 @@ describe('HoldsService (Step 5)', () => {
         findFirst: jest.fn().mockResolvedValue(null),
         update: jest.fn(),
       },
+      missedPickup: {
+        findMany: jest.fn().mockResolvedValue([]),
+        findUnique: jest.fn().mockResolvedValue(null),
+        findUniqueOrThrow: jest.fn().mockResolvedValue({ id: 1 }),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+        count: jest.fn().mockResolvedValue(0),
+      },
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -99,6 +116,7 @@ describe('HoldsService (Step 5)', () => {
         { provide: ClockService, useValue: fakeClock },
         { provide: MemberEligibilityPolicy, useValue: eligibilityPolicyMock },
         { provide: EventEmitter2, useValue: eventEmitterMock },
+        { provide: FINES_PUBLIC_API, useValue: finesPublicApiMock },
       ],
     }).compile();
 
@@ -386,11 +404,11 @@ describe('HoldsService (Step 5)', () => {
     });
   });
 
-  describe('expireHold (Idempotent single expiration)', () => {
+  describe('expireHold (Idempotent single expiration with MissedPickup & Fines)', () => {
     const holdId = 88;
-    const expiredDeadline = new Date('2026-10-21T09:00:00.000Z'); // in past
+    const expiredDeadline = new Date('2026-10-21T09:30:00.000Z'); // 30 mins before fixedNow -> not excused
 
-    it('expires active hold past deadline, releases copy to AVAILABLE, and emits event', async () => {
+    it('expires active hold past deadline, records missed pickup, releases copy, and emits events', async () => {
       prismaMock.hold.findUnique.mockResolvedValue({
         id: holdId,
         userId: 1,
@@ -399,7 +417,20 @@ describe('HoldsService (Step 5)', () => {
         status: HoldStatus.ACTIVE,
         expiresAt: expiredDeadline,
       });
-      prismaMock.hold.updateMany.mockResolvedValue({ count: 1 });
+      prismaMock.$queryRaw.mockResolvedValue([
+        {
+          id: holdId,
+          userId: 1,
+          bookId: 1,
+          copyId: 10,
+          status: HoldStatus.ACTIVE,
+          expiresAt: expiredDeadline,
+        },
+      ]);
+      prismaMock.$executeRaw.mockResolvedValue(1);
+      prismaMock.missedPickup.findMany.mockResolvedValue([
+        { id: 101, holdId, userId: 1, excused: false, fineId: null },
+      ]);
       prismaMock.hold.findUniqueOrThrow.mockResolvedValue({
         id: holdId,
         userId: 1,
@@ -421,6 +452,127 @@ describe('HoldsService (Step 5)', () => {
       expect(eventEmitterMock.emit).toHaveBeenCalledWith(
         HoldExpiredEvent.EVENT_NAME,
         expect.any(HoldExpiredEvent),
+      );
+      expect(eventEmitterMock.emit).toHaveBeenCalledWith(
+        MissedPickupRecordedEvent.EVENT_NAME,
+        expect.objectContaining({
+          userId: 1,
+          holdId,
+          excused: false,
+          unassessedCount: 1,
+        }),
+      );
+    });
+
+    it('marks missed pickup as excused when delayed > 60m due to system delay', async () => {
+      // 90 minutes before fixedNow (10:00 - 08:30 = 90 min > 60 min grace)
+      const oldDeadline = new Date('2026-10-21T08:30:00.000Z');
+
+      prismaMock.hold.findUnique.mockResolvedValue({
+        id: holdId,
+        userId: 1,
+        bookId: 1,
+        copyId: 10,
+        status: HoldStatus.ACTIVE,
+        expiresAt: oldDeadline,
+      });
+      prismaMock.$queryRaw.mockResolvedValue([
+        {
+          id: holdId,
+          userId: 1,
+          bookId: 1,
+          copyId: 10,
+          status: HoldStatus.ACTIVE,
+          expiresAt: oldDeadline,
+        },
+      ]);
+      prismaMock.$executeRaw.mockResolvedValue(1);
+      prismaMock.missedPickup.count.mockResolvedValue(0);
+      prismaMock.hold.findUniqueOrThrow.mockResolvedValue({
+        id: holdId,
+        userId: 1,
+        bookId: 1,
+        copyId: 10,
+        status: HoldStatus.EXPIRED,
+      });
+
+      await service.expireHold(holdId);
+
+      expect(eventEmitterMock.emit).toHaveBeenCalledWith(
+        MissedPickupRecordedEvent.EVENT_NAME,
+        expect.objectContaining({
+          userId: 1,
+          holdId,
+          excused: true,
+          unassessedCount: 0,
+        }),
+      );
+      expect(finesPublicApiMock.createFine).not.toHaveBeenCalled();
+    });
+
+    it('assesses Rs 100 fine when member reaches threshold of 3 unassessed missed pickups', async () => {
+      prismaMock.hold.findUnique.mockResolvedValue({
+        id: holdId,
+        userId: 1,
+        bookId: 1,
+        copyId: 10,
+        status: HoldStatus.ACTIVE,
+        expiresAt: expiredDeadline,
+      });
+      prismaMock.$queryRaw.mockResolvedValue([
+        {
+          id: holdId,
+          userId: 1,
+          bookId: 1,
+          copyId: 10,
+          status: HoldStatus.ACTIVE,
+          expiresAt: expiredDeadline,
+        },
+      ]);
+      prismaMock.$executeRaw.mockResolvedValue(1);
+      // Member now has 3 unassessed pickups
+      prismaMock.missedPickup.findMany.mockResolvedValue([
+        { id: 10, holdId: 80, userId: 1, excused: false, fineId: null },
+        { id: 11, holdId: 85, userId: 1, excused: false, fineId: null },
+        { id: 12, holdId: 88, userId: 1, excused: false, fineId: null },
+      ]);
+      finesPublicApiMock.createFine.mockResolvedValue({
+        id: 500,
+        amountMinor: 10000,
+      });
+      prismaMock.hold.findUniqueOrThrow.mockResolvedValue({
+        id: holdId,
+        userId: 1,
+        bookId: 1,
+        copyId: 10,
+        status: HoldStatus.EXPIRED,
+      });
+
+      await service.expireHold(holdId);
+
+      expect(finesPublicApiMock.createFine).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: 1,
+          reason: 'MISSED_PICKUPS',
+          amountMinor: 10000,
+          dedupeKey: 'missed-pickups:1:10',
+        }),
+        prismaMock,
+      );
+
+      expect(prismaMock.missedPickup.updateMany).toHaveBeenCalledWith({
+        where: { id: { in: [10, 11, 12] } },
+        data: { fineId: 500 },
+      });
+
+      expect(eventEmitterMock.emit).toHaveBeenCalledWith(
+        MissedPickupFineAssessedEvent.EVENT_NAME,
+        expect.objectContaining({
+          userId: 1,
+          fineId: 500,
+          holdIds: [80, 85, 88],
+          amountMinor: 10000,
+        }),
       );
     });
 
@@ -453,10 +605,31 @@ describe('HoldsService (Step 5)', () => {
     });
   });
 
-  describe('expireDueHolds (Batch Expiration with FOR UPDATE SKIP LOCKED)', () => {
+  describe('expireDueHolds (Batch Expiration through expireHold)', () => {
+    const expiredDeadline = new Date('2026-10-21T09:30:00.000Z');
+
     it('processes due holds and returns count', async () => {
       prismaMock.hold.findMany.mockResolvedValue([{ id: 101 }, { id: 102 }]);
-      prismaMock.$queryRaw.mockResolvedValue([{ id: 101, copyId: 21 }]);
+      prismaMock.hold.findUnique.mockResolvedValue({
+        id: 101,
+        userId: 1,
+        bookId: 1,
+        copyId: 21,
+        status: HoldStatus.ACTIVE,
+        expiresAt: expiredDeadline,
+      });
+      prismaMock.$queryRaw.mockResolvedValue([
+        {
+          id: 101,
+          userId: 1,
+          bookId: 1,
+          copyId: 21,
+          status: HoldStatus.ACTIVE,
+          expiresAt: expiredDeadline,
+        },
+      ]);
+      prismaMock.$executeRaw.mockResolvedValue(1);
+      prismaMock.missedPickup.findMany.mockResolvedValue([]);
       prismaMock.hold.findUniqueOrThrow.mockResolvedValue({
         id: 101,
         userId: 1,

@@ -2,6 +2,7 @@ import { forwardRef, Module } from '@nestjs/common';
 import { PrismaModule } from '../../prisma/prisma.module';
 import { BooksModule } from '../../books';
 import { CopiesModule } from '../copies/copies.module';
+import { FinesModule } from '../fines/fines.module';
 import { ClockModule } from '../../common/clock/clock.module';
 import { HoldsService } from './holds.service';
 import { MemberEligibilityPolicy } from './member-eligibility.policy';
@@ -21,6 +22,7 @@ import { HoldsDataLoader } from './holds.loader';
     PrismaModule,
     BooksModule,
     forwardRef(() => CopiesModule),
+    forwardRef(() => FinesModule),
     ClockModule,
   ],
   providers: [

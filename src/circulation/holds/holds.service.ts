@@ -9,6 +9,7 @@ import {
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   CopyStatus,
+  FineReason,
   Hold,
   HoldSource,
   HoldStatus,
@@ -20,10 +21,23 @@ import { withTransactionRetry } from '../../common/database';
 import { BooksService } from '../../books';
 import { CopiesService } from '../copies/copies.service';
 import { ClockService } from '../../common/clock';
-import { computePickupDeadline } from '../../config/library-rules';
+import {
+  computePickupDeadline,
+  MEMBER_ADVISORY_NAMESPACE,
+  MISSED_PICKUPS_BEFORE_FINE,
+  MISSED_PICKUP_FINE_RS,
+  MISSED_PICKUP_GRACE_MINUTES,
+  rsToMinor,
+  selectMissedPickupsToAssess,
+  isExcusedAsSystemDelay,
+} from '../../config/library-rules';
 import { cancelWaitingForUserAndBook } from '../reservations/utils/supersede-reservation.helper';
 import { MemberEligibilityPolicy } from './member-eligibility.policy';
 import { HoldsPublicApi } from './holds-public-api.interface';
+import {
+  FINES_PUBLIC_API,
+  FinesPublicApi,
+} from '../fines/fines-public-api.interface';
 import { PaginationArgs, StaffHoldFilter } from './dto/hold-query.dto';
 import { CancelledBy } from '../../contracts/events';
 import {
@@ -31,6 +45,8 @@ import {
   HoldCancelledEvent,
   HoldExpiredEvent,
   HoldFulfilledEvent,
+  MissedPickupRecordedEvent,
+  MissedPickupFineAssessedEvent,
 } from './events';
 import {
   HoldNotFoundError,
@@ -58,6 +74,8 @@ export class HoldsService implements HoldsPublicApi {
     private readonly clockService: ClockService,
     private readonly eligibilityPolicy: MemberEligibilityPolicy,
     private readonly eventEmitter: EventEmitter2,
+    @Inject(forwardRef(() => FINES_PUBLIC_API))
+    private readonly finesPublicApi: FinesPublicApi,
   ) {}
 
   /**
@@ -282,31 +300,73 @@ export class HoldsService implements HoldsPublicApi {
 
   /**
    * expireHold: Idempotently expires a single hold if its deadline has elapsed.
-   * Releases copy to AVAILABLE and emits hold.expired.
+   * Lock order:
+   * 1. Read hold snapshot without lock to identify member and verify eligibility
+   * 2. Per-member advisory lock (pg_advisory_xact_lock)
+   * 3. Hold row lock (FOR UPDATE)
+   * 4. Updates hold to EXPIRED
+   * 5. Inserts MissedPickup (marked excused if >60m system delay), assesses fine if threshold reached
+   * 6. Releases copy to AVAILABLE (which offers copy to waiting reservation queue)
+   * 7. Post-commit emits hold.expired, missed_pickup.recorded, missed_pickup.fine_assessed
    */
   async expireHold(holdId: number): Promise<Hold | null> {
     const now = this.clockService.now();
 
+    // 1. Read hold without a lock to learn member and check initial eligibility
+    const holdSnapshot = await this.prisma.hold.findUnique({
+      where: { id: holdId },
+      select: {
+        id: true,
+        userId: true,
+        bookId: true,
+        copyId: true,
+        status: true,
+        expiresAt: true,
+      },
+    });
+
+    if (
+      !holdSnapshot ||
+      holdSnapshot.status !== HoldStatus.ACTIVE ||
+      holdSnapshot.expiresAt > now
+    ) {
+      return null;
+    }
+
     const result = await withTransactionRetry(({ onCommit }) =>
       this.prisma.$transaction(async (tx) => {
-        const existing = await tx.hold.findUnique({
+        // 2. Take member advisory lock first
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(${MEMBER_ADVISORY_NAMESPACE}, ${holdSnapshot.userId})`;
+
+        // 3. Lock the hold row
+        const lockedHolds = await tx.$queryRaw<
+          {
+            id: number;
+            userId: number;
+            bookId: number;
+            copyId: number;
+            status: HoldStatus;
+            expiresAt: Date;
+          }[]
+        >`
+          SELECT id, "userId", "bookId", "copyId", status, "expiresAt"
+          FROM "Hold"
+          WHERE id = ${holdId}
+          FOR UPDATE
+        `;
+
+        if (!lockedHolds || lockedHolds.length === 0) {
+          return null;
+        }
+
+        const hold = lockedHolds[0];
+        if (hold.status !== HoldStatus.ACTIVE || hold.expiresAt > now) {
+          return null;
+        }
+
+        // 4. Update hold to EXPIRED
+        await tx.hold.update({
           where: { id: holdId },
-        });
-
-        if (!existing) {
-          return null;
-        }
-
-        if (existing.status !== HoldStatus.ACTIVE || existing.expiresAt > now) {
-          return null;
-        }
-
-        const updateResult = await tx.hold.updateMany({
-          where: {
-            id: holdId,
-            status: HoldStatus.ACTIVE,
-            expiresAt: { lte: now },
-          },
           data: {
             status: HoldStatus.EXPIRED,
             resolvedAt: now,
@@ -314,12 +374,95 @@ export class HoldsService implements HoldsPublicApi {
           },
         });
 
-        if (updateResult.count === 0) {
-          return null;
+        // 5. BEFORE copy release: MissedPickup tracking & fines
+        const excused = isExcusedAsSystemDelay(
+          hold.expiresAt,
+          now,
+          MISSED_PICKUP_GRACE_MINUTES,
+        );
+        const excusedReason = excused ? 'SYSTEM_DELAY' : null;
+
+        const insertedCount = await tx.$executeRaw`
+          INSERT INTO "MissedPickup" ("userId", "holdId", "excused", "excusedReason", "createdAt")
+          VALUES (${hold.userId}, ${hold.id}, ${excused}, ${excusedReason}, ${now})
+          ON CONFLICT ("holdId") DO NOTHING
+        `;
+
+        if (insertedCount === 0) {
+          // Already recorded, treat whole expiry as already processed
+          return tx.hold.findUnique({
+            where: { id: holdId },
+            include: { copy: true },
+          });
         }
 
+        let unassessedCount = 0;
+        const fineEventsToEmit: {
+          fineId: number;
+          holdIds: number[];
+          amountMinor: number;
+        }[] = [];
+
+        if (!excused) {
+          const unassessed = await tx.missedPickup.findMany({
+            where: {
+              userId: hold.userId,
+              fineId: null,
+              excused: false,
+            },
+            orderBy: { id: 'asc' }, // oldest first
+          });
+
+          const { groups, remainder } = selectMissedPickupsToAssess(
+            unassessed,
+            MISSED_PICKUPS_BEFORE_FINE,
+          );
+
+          unassessedCount = remainder.length;
+
+          for (const group of groups) {
+            const oldestPickup = group[0];
+            const holdIds = group.map((p) => p.holdId);
+            const note = `Missed pickups for holds: ${holdIds.map((hid) => '#' + hid).join(', ')}`;
+            const dedupeKey = `missed-pickups:${hold.userId}:${oldestPickup.id}`;
+            const amountMinor = rsToMinor(MISSED_PICKUP_FINE_RS);
+
+            const fine = await this.finesPublicApi.createFine(
+              {
+                userId: hold.userId,
+                reason: FineReason.MISSED_PICKUPS,
+                amountMinor,
+                note,
+                dedupeKey,
+                createdById: null,
+              },
+              tx,
+            );
+
+            await tx.missedPickup.updateMany({
+              where: { id: { in: group.map((p) => p.id) } },
+              data: { fineId: fine.id },
+            });
+
+            fineEventsToEmit.push({
+              fineId: fine.id,
+              holdIds,
+              amountMinor,
+            });
+          }
+        } else {
+          unassessedCount = await tx.missedPickup.count({
+            where: {
+              userId: hold.userId,
+              fineId: null,
+              excused: false,
+            },
+          });
+        }
+
+        // 6. Release copy to AVAILABLE (triggers queue promotion if reservation waiting)
         await this.copiesService.transitionStatus(
-          existing.copyId,
+          hold.copyId,
           [CopyStatus.ON_HOLD],
           CopyStatus.AVAILABLE,
           {
@@ -329,6 +472,45 @@ export class HoldsService implements HoldsPublicApi {
           tx,
         );
 
+        // 7. Post-commit event notifications
+        onCommit(() => {
+          this.eventEmitter.emit(
+            HoldExpiredEvent.EVENT_NAME,
+            new HoldExpiredEvent(
+              hold.id,
+              hold.userId,
+              hold.bookId,
+              hold.copyId,
+              now,
+            ),
+          );
+
+          this.eventEmitter.emit(
+            MissedPickupRecordedEvent.EVENT_NAME,
+            new MissedPickupRecordedEvent(
+              hold.userId,
+              hold.id,
+              excused,
+              unassessedCount,
+              MISSED_PICKUPS_BEFORE_FINE,
+              now,
+            ),
+          );
+
+          for (const fe of fineEventsToEmit) {
+            this.eventEmitter.emit(
+              MissedPickupFineAssessedEvent.EVENT_NAME,
+              new MissedPickupFineAssessedEvent(
+                hold.userId,
+                fe.fineId,
+                fe.holdIds,
+                fe.amountMinor,
+                now,
+              ),
+            );
+          }
+        });
+
         return tx.hold.findUniqueOrThrow({
           where: { id: holdId },
           include: { copy: true },
@@ -336,26 +518,12 @@ export class HoldsService implements HoldsPublicApi {
       }, INTERACTIVE_TX_OPTIONS),
     );
 
-    if (result) {
-      this.eventEmitter.emit(
-        HoldExpiredEvent.EVENT_NAME,
-        new HoldExpiredEvent(
-          result.id,
-          result.userId,
-          result.bookId,
-          result.copyId,
-          now,
-        ),
-      );
-    }
-
     return result;
   }
 
   /**
    * expireDueHolds: Batch expires all ACTIVE holds with expiresAt <= now().
-   * Processes each hold in its own separate transaction using FOR UPDATE SKIP LOCKED
-   * to guarantee concurrent safety without blocking or duplicate processing.
+   * Processes each hold in its own separate transaction through expireHold.
    */
   async expireDueHolds(
     batchSize = 50,
@@ -377,7 +545,7 @@ export class HoldsService implements HoldsPublicApi {
 
     for (const candidate of candidates) {
       try {
-        const expired = await this.expireSingleHoldWithLock(candidate.id, now);
+        const expired = await this.expireHold(candidate.id);
         if (expired) {
           processed++;
         }
@@ -395,70 +563,6 @@ export class HoldsService implements HoldsPublicApi {
       errors,
       totalCandidates: candidates.length,
     };
-  }
-
-  /**
-   * Helper: Expire a single candidate hold within its own isolated transaction with skip lock.
-   */
-  private async expireSingleHoldWithLock(
-    holdId: number,
-    now: Date,
-  ): Promise<Hold | null> {
-    const expired = await withTransactionRetry(({ onCommit }) =>
-      this.prisma.$transaction(async (tx) => {
-        const locked = await tx.$queryRaw<{ id: number; copyId: number }[]>`
-        SELECT id, "copyId" FROM "Hold"
-        WHERE id = ${holdId}
-          AND status = 'ACTIVE'
-          AND "expiresAt" <= ${now}
-        FOR UPDATE SKIP LOCKED
-      `;
-
-        if (!locked || locked.length === 0) {
-          return null;
-        }
-
-        await tx.hold.update({
-          where: { id: holdId },
-          data: {
-            status: HoldStatus.EXPIRED,
-            resolvedAt: now,
-            resolvedNote: 'Expired due to missed pickup deadline',
-          },
-        });
-
-        await this.copiesService.transitionStatus(
-          locked[0].copyId,
-          [CopyStatus.ON_HOLD],
-          CopyStatus.AVAILABLE,
-          {
-            reason: `Hold #${holdId} expired at pickup deadline`,
-            onCommit,
-          },
-          tx,
-        );
-
-        return tx.hold.findUniqueOrThrow({
-          where: { id: holdId },
-          include: { copy: true },
-        });
-      }, INTERACTIVE_TX_OPTIONS),
-    );
-
-    if (expired) {
-      this.eventEmitter.emit(
-        HoldExpiredEvent.EVENT_NAME,
-        new HoldExpiredEvent(
-          expired.id,
-          expired.userId,
-          expired.bookId,
-          expired.copyId,
-          now,
-        ),
-      );
-    }
-
-    return expired;
   }
 
   /**

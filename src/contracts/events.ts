@@ -27,6 +27,11 @@ export const DOMAIN_EVENT_NAMES = {
   RESERVATION_JOINED: 'reservation.joined',
   RESERVATION_CANCELLED: 'reservation.cancelled',
   RESERVATION_PROMOTED: 'reservation.promoted',
+  MISSED_PICKUP_RECORDED: 'missed_pickup.recorded',
+  MISSED_PICKUP_FINE_ASSESSED: 'missed_pickup.fine_assessed',
+  LOAN_DUE_SOON: 'loan.due_soon',
+  LOAN_OVERDUE: 'loan.overdue',
+  HOLD_EXPIRING_SOON: 'hold.expiring_soon',
 } as const;
 
 export type DomainEventName =
@@ -202,5 +207,57 @@ export interface ReservationPromotedPayload {
   bookId: number;
   holdId: number;
   copyId: number;
+  occurredAt?: Date;
+}
+
+export interface MissedPickupRecordedPayload {
+  eventName?: string;
+  domain?: string;
+  userId: number;
+  holdId: number;
+  excused: boolean;
+  unassessedCount: number;
+  threshold: number;
+  occurredAt?: Date;
+}
+
+export interface MissedPickupFineAssessedPayload {
+  eventName?: string;
+  domain?: string;
+  userId: number;
+  fineId: number;
+  holdIds: number[];
+  amountMinor: number;
+  occurredAt?: Date;
+}
+
+export interface LoanDueSoonPayload {
+  eventName?: string;
+  domain?: string;
+  loanId: number;
+  userId: number;
+  bookId: number;
+  dueAt: Date;
+  occurredAt?: Date;
+}
+
+export interface LoanOverduePayload {
+  eventName?: string;
+  domain?: string;
+  loanId: number;
+  userId: number;
+  bookId: number;
+  dueAt: Date;
+  daysLate: number;
+  occurredAt?: Date;
+}
+
+export interface HoldExpiringSoonPayload {
+  eventName?: string;
+  domain?: string;
+  holdId: number;
+  userId: number;
+  bookId: number;
+  expiresAt: Date;
   occurredAt?: Date;
 }
