@@ -212,6 +212,27 @@ input HoldsPaginationInput {
   take: Int = 20
 }
 
+type JobRunResult {
+  durationMs: Int!
+  error: String
+  jobName: String!
+  skipped: Boolean!
+  stats: String
+  status: String!
+}
+
+type JobStatus {
+  isLeased: Boolean!
+  lastError: String
+  lastFinishedAt: DateTime
+  lastStartedAt: DateTime
+  lastStats: String
+  lastStatus: String
+  lockedBy: String
+  lockedUntil: DateTime
+  name: String!
+}
+
 type Loan {
   accruedLateFeeRs: Float!
   bookId: Int!
@@ -263,6 +284,12 @@ input LoginInput {
   password: String!
 }
 
+type MissedPickupsSummary {
+  recent: [RecentMissedPickup!]!
+  threshold: Int!
+  unassessedCount: Int!
+}
+
 type Mutation {
   addCopies(bookId: Int!, quantity: Int!, shelfLocation: String): [Copy!]!
   addCopy(input: AddCopyInput!): Copy!
@@ -283,6 +310,11 @@ type Mutation {
   requestHold(bookId: Int!): Hold!
   retireCopy(id: Int!, reason: String): Copy!
   returnLoan(condition: ReturnCondition!, conditionNote: String, copyBarcode: String!, damageFeeRs: Float): Loan!
+
+  """
+  ADMIN mutation: Manually triggers an immediate run of a registered background job with strict rate limiting.
+  """
+  runJob(name: String!): JobRunResult!
   updateBook(id: Int!, input: UpdateBookInput!): Book!
   updateCopy(id: Int!, input: UpdateCopyInput!): Copy!
   updateUserRole(role: Role!, userId: Int!): User!
@@ -356,19 +388,44 @@ type Query {
   fines(filter: FineFilterInput, pagination: FinePaginationInput): [Fine!]!
   hold(id: Int!): Hold!
   holds(filter: HoldFilterInput, pagination: HoldsPaginationInput): [Hold!]!
+
+  """
+  ADMIN query: Returns the status, lease state, and recent execution details of all registered background jobs.
+  """
+  jobStatuses: [JobStatus!]!
   loan(id: Int!): Loan!
   loans(filter: LoanFilterInput, pagination: LoanPaginationInput): [Loan!]!
   me: User!
   memberFines(memberEmail: String!, status: FineStatus): [Fine!]!
+
+  """
+  Staff query to look up a member missed-pickup history by email address.
+  """
+  memberMissedPickups(memberEmail: String!): MissedPickupsSummary!
   myFines(status: FineStatus): [MyFine!]!
   myHolds(status: HoldStatus): [Hold!]!
   myLoans(status: LoanStatus): [Loan!]!
+
+  """
+  Returns the authenticated member unassessed missed-pickup count, fine threshold, and recent missed pickups.
+  """
+  myMissedPickups: MissedPickupsSummary!
   myReservations: [Reservation!]!
   overdueLoans(pagination: LoanPaginationInput): [Loan!]!
   pickupDeskHolds(copyBarcode: String, memberEmail: String): [PickupDeskHold!]!
   queueForBook(bookId: Int!): [Reservation!]!
   reservation(id: Int!): Reservation
   users: [User!]!
+}
+
+type RecentMissedPickup {
+  bookId: Int!
+  bookTitle: String
+  excused: Boolean!
+  excusedReason: String
+  holdId: Int!
+  id: ID!
+  missedAt: DateTime!
 }
 
 input RegisterInput {

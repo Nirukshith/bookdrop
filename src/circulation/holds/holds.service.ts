@@ -336,7 +336,7 @@ export class HoldsService implements HoldsPublicApi {
     const result = await withTransactionRetry(({ onCommit }) =>
       this.prisma.$transaction(async (tx) => {
         // 2. Take member advisory lock first
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(${MEMBER_ADVISORY_NAMESPACE}, ${holdSnapshot.userId})`;
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(${MEMBER_ADVISORY_NAMESPACE}::int, ${holdSnapshot.userId}::int)`;
 
         // 3. Lock the hold row
         const lockedHolds = await tx.$queryRaw<

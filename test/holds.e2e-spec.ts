@@ -244,6 +244,14 @@ describe('Holds (Circulation Remote Requests E2E - Step 9 Comprehensive Suite)',
     });
     const testUserIds = testUsers.map((u) => u.id);
 
+    await prisma.missedPickup.deleteMany({
+      where: {
+        OR: [
+          { hold: { bookId: { in: [singleCopyBookId, multiCopyBookId] } } },
+          { userId: { in: testUserIds } },
+        ],
+      },
+    });
     await prisma.hold.deleteMany({
       where: {
         OR: [
@@ -881,6 +889,7 @@ describe('Holds (Circulation Remote Requests E2E - Step 9 Comprehensive Suite)',
       expect(['FULFILLED', 'EXPIRED']).toContain(finalHold.status);
 
       // Clean up the race hold and restore copy to AVAILABLE so global invariants remain clean
+      await prisma.missedPickup.deleteMany({ where: { holdId: hold.id } });
       await prisma.hold.deleteMany({ where: { id: hold.id } });
       await prisma.copy.update({
         where: { id: copy.id },
@@ -929,6 +938,9 @@ describe('Holds (Circulation Remote Requests E2E - Step 9 Comprehensive Suite)',
       ).rejects.toThrow();
 
       // Clean up raw SQL hold immediately
+      await prisma.missedPickup.deleteMany({
+        where: { hold: { bookId: rawSqlBook.id } },
+      });
       await prisma.hold.deleteMany({ where: { bookId: rawSqlBook.id } });
     });
 
@@ -955,6 +967,9 @@ describe('Holds (Circulation Remote Requests E2E - Step 9 Comprehensive Suite)',
       const deadline = new Date(now.getTime() + 24 * 3600 * 1000);
 
       // Clean up any existing holds for rawSqlBook2 to isolate test
+      await prisma.missedPickup.deleteMany({
+        where: { hold: { bookId: rawSqlBook2.id } },
+      });
       await prisma.hold.deleteMany({ where: { bookId: rawSqlBook2.id } });
 
       // 1. Insert 1st active hold for member1 on rawSqlBook2
@@ -972,6 +987,9 @@ describe('Holds (Circulation Remote Requests E2E - Step 9 Comprehensive Suite)',
       ).rejects.toThrow();
 
       // Clean up raw sql holds
+      await prisma.missedPickup.deleteMany({
+        where: { hold: { bookId: rawSqlBook2.id } },
+      });
       await prisma.hold.deleteMany({ where: { bookId: rawSqlBook2.id } });
     });
   });

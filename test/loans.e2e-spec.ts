@@ -245,6 +245,8 @@ describe('Loans & Desk Circulation E2E (Step 9 Comprehensive Suite)', () => {
   beforeEach(async () => {
     fakeClock.setTime('2026-11-01T10:00:00.000Z');
     // Clean up test-created loans, holds, and books in strict child-to-parent FK order
+    await prisma.reminderMark.deleteMany();
+    await prisma.missedPickup.deleteMany();
     await prisma.loan.deleteMany({
       where: {
         OR: [
@@ -277,6 +279,8 @@ describe('Loans & Desk Circulation E2E (Step 9 Comprehensive Suite)', () => {
 
   afterAll(async () => {
     // Teardown test users and created resources
+    await prisma.reminderMark.deleteMany();
+    await prisma.missedPickup.deleteMany();
     await prisma.loan.deleteMany({
       where: {
         OR: [

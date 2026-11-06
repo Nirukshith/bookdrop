@@ -12,3 +12,4 @@ export class LoanDueSoonEvent implements LoanDueSoonPayload {
     public readonly occurredAt: Date = new Date(),
   ) {}
 }
+

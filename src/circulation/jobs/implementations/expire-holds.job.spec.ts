@@ -96,3 +96,4 @@ describe('ExpireHoldsJob (Unit Tests)', () => {
     expect(holdsServiceMock.expireHold).toHaveBeenCalledWith(202);
   });
 });
+
