@@ -89,9 +89,9 @@ module.exports = {
                   'Notifications must not import Identity internals. Use the public interface (IdentityPublicApi).',
               },
               {
-                group: ['**/auth', '**/auth/*'],
+                group: ['**/auth/*', '!**/auth', '!**/auth/index'],
                 message:
-                  'Notifications must not import Auth internals. Use Identity public interface.',
+                  'Notifications must not import Auth internals. Use the public auth interface.',
               },
             ],
           },

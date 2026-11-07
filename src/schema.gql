@@ -309,6 +309,7 @@ type Mutation {
   register(input: RegisterInput!): AuthPayload!
   requestHold(bookId: Int!): Hold!
   retireCopy(id: Int!, reason: String): Copy!
+  retryNotification(id: Int!): Notification!
   returnLoan(condition: ReturnCondition!, conditionNote: String, copyBarcode: String!, damageFeeRs: Float): Loan!
 
   """
@@ -357,6 +358,47 @@ type MyFine {
   wasCapped: Boolean!
 }
 
+type Notification {
+  createdAt: DateTime!
+  id: ID!
+  sentAt: DateTime
+  status: NotificationStatus!
+  template: NotificationTemplate!
+}
+
+input NotificationPaginationInput {
+  skip: Int = 0
+  take: Int = 20
+}
+
+"""Delivery lifecycle status of an email notification"""
+enum NotificationStatus {
+  CANCELLED
+  FAILED
+  PENDING
+  SENDING
+  SENT
+}
+
+"""Email template types supported by Bookdrop"""
+enum NotificationTemplate {
+  FINE_ASSESSED
+  FINE_PAID
+  FINE_WAIVED
+  HOLD_CANCELLED_BY_STAFF
+  HOLD_CONFIRMED
+  HOLD_EXPIRED_EXCUSED
+  HOLD_EXPIRED_MISSED
+  HOLD_EXPIRING_SOON
+  LOAN_DUE_SOON
+  LOAN_OVERDUE
+  LOAN_STARTED
+  MISSED_PICKUP_FINE
+  RESERVATION_READY
+  RETURN_RECEIPT
+  WELCOME
+}
+
 type PickupDeskHold {
   bookId: Int!
 
@@ -402,6 +444,7 @@ type Query {
   Staff query to look up a member missed-pickup history by email address.
   """
   memberMissedPickups(memberEmail: String!): MissedPickupsSummary!
+  memberNotifications(memberEmail: String!, pagination: NotificationPaginationInput): [Notification!]!
   myFines(status: FineStatus): [MyFine!]!
   myHolds(status: HoldStatus): [Hold!]!
   myLoans(status: LoanStatus): [Loan!]!
@@ -410,6 +453,7 @@ type Query {
   Returns the authenticated member unassessed missed-pickup count, fine threshold, and recent missed pickups.
   """
   myMissedPickups: MissedPickupsSummary!
+  myNotifications(pagination: NotificationPaginationInput): [Notification!]!
   myReservations: [Reservation!]!
   overdueLoans(pagination: LoanPaginationInput): [Loan!]!
   pickupDeskHolds(copyBarcode: String, memberEmail: String): [PickupDeskHold!]!

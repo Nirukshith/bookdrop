@@ -3,6 +3,7 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { UsersModule } from '../users';
 import { BooksModule } from '../books';
 import { NotificationsSubscriber } from './notifications.subscriber';
+import { NotificationsResolver } from './notifications.resolver';
 import { SendNotificationsJob } from './jobs/send-notifications.job';
 import { ConsoleEmailProvider } from './providers/console-email.provider';
 import { SmtpEmailProvider } from './providers/smtp-email.provider';
@@ -15,6 +16,7 @@ import { EmailProvider } from './providers/email-provider.interface';
   imports: [PrismaModule, UsersModule, BooksModule],
   providers: [
     NotificationsSubscriber,
+    NotificationsResolver,
     SendNotificationsJob,
     ConsoleEmailProvider,
     SmtpEmailProvider,

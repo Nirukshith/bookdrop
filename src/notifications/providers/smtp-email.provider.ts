@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
 import {
   EmailProvider,
@@ -23,7 +23,7 @@ export class SmtpEmailProvider implements EmailProvider {
   private readonly transporter: nodemailer.Transporter;
   private readonly defaultFrom: string;
 
-  constructor(config?: Partial<SmtpConfig>) {
+  constructor(@Optional() config?: Partial<SmtpConfig>) {
     const host = config?.host || process.env.SMTP_HOST || 'localhost';
     const port = config?.port || Number(process.env.SMTP_PORT) || 587;
     const user = config?.user || process.env.SMTP_USER;
