@@ -55,4 +55,3 @@ export class FakeEmailProvider implements EmailProvider {
     this.persistentFailure = error;
   }
 }
-

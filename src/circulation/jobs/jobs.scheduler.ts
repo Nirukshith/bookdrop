@@ -43,6 +43,12 @@ export class JobsScheduler implements OnModuleInit, OnModuleDestroy {
   }
 
   scheduleJob(jobName: string, intervalSeconds: number): void {
+    const isEnabled =
+      this.configService.get<boolean>('SCHEDULER_ENABLED') === true;
+    if (!isEnabled) {
+      return;
+    }
+
     const intervalMs = intervalSeconds * 1000;
     const intervalName = `job:${jobName}`;
 

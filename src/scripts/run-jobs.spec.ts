@@ -17,6 +17,12 @@ describe('runJobs CLI argument parsing', () => {
     expect(parseJobArg(['--other-flag', '--job=reminders'])).toBe('reminders');
   });
 
+  it('parses --job=send-notifications syntax', () => {
+    expect(parseJobArg(['--job=send-notifications'])).toBe(
+      'send-notifications',
+    );
+  });
+
   it('parses --job=all explicitly', () => {
     expect(parseJobArg(['--job=all'])).toBe('all');
   });

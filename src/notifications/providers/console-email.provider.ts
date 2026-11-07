@@ -21,4 +21,3 @@ export class ConsoleEmailProvider implements EmailProvider {
     return { messageId };
   }
 }
-
