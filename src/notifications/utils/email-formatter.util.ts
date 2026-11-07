@@ -6,15 +6,19 @@ import { DEFAULT_LIBRARY_TIMEZONE, formatRs } from '../../config/library-rules';
  * e.g. "Fri 7 Nov, 5:00 PM"
  */
 export function formatDateTime(
-  date: Date,
+  date: Date | string | number,
   timezone: string = DEFAULT_LIBRARY_TIMEZONE,
 ): string {
-  if (!date || isNaN(date.getTime())) {
+  if (!date) {
     return '';
   }
-  const local = DateTime.fromJSDate(date, { zone: timezone });
+  const d = date instanceof Date ? date : new Date(date);
+  if (isNaN(d.getTime())) {
+    return '';
+  }
+  const local = DateTime.fromJSDate(d, { zone: timezone });
   if (!local.isValid) {
-    return date.toISOString();
+    return d.toISOString();
   }
   return local.toFormat('ccc d LLL, h:mm a');
 }
