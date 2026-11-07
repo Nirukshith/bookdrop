@@ -159,11 +159,10 @@ export default function StaffDeskPage() {
         <button
           type="button"
           onClick={() => setDeskMode('pickup')}
-          className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-2 ${
-            deskMode === 'pickup'
+          className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-2 ${deskMode === 'pickup'
               ? 'bg-white text-indigo-700 shadow-sm'
               : 'text-slate-600 hover:text-slate-900'
-          }`}
+            }`}
         >
           <PackageCheck className="w-4 h-4" />
           Hold Pickup Queue
@@ -172,11 +171,10 @@ export default function StaffDeskPage() {
         <button
           type="button"
           onClick={() => setDeskMode('checkout')}
-          className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-2 ${
-            deskMode === 'checkout'
+          className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-2 ${deskMode === 'checkout'
               ? 'bg-white text-indigo-700 shadow-sm'
               : 'text-slate-600 hover:text-slate-900'
-          }`}
+            }`}
         >
           <QrCode className="w-4 h-4" />
           Walk-in Direct Checkout

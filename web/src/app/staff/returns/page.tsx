@@ -143,11 +143,10 @@ export default function StaffReturnsPage() {
                 <button
                   type="button"
                   onClick={() => setCondition('GOOD')}
-                  className={`p-3 rounded-xl border text-left transition-all ${
-                    condition === 'GOOD'
+                  className={`p-3 rounded-xl border text-left transition-all ${condition === 'GOOD'
                       ? 'border-emerald-500 bg-emerald-50 text-emerald-900 ring-2 ring-emerald-500'
                       : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
-                  }`}
+                    }`}
                 >
                   <div className="flex items-center justify-between mb-1">
                     <span className="font-bold text-xs">Good Condition</span>
@@ -163,11 +162,10 @@ export default function StaffReturnsPage() {
                 <button
                   type="button"
                   onClick={() => setCondition('DAMAGED')}
-                  className={`p-3 rounded-xl border text-left transition-all ${
-                    condition === 'DAMAGED'
+                  className={`p-3 rounded-xl border text-left transition-all ${condition === 'DAMAGED'
                       ? 'border-rose-500 bg-rose-50 text-rose-900 ring-2 ring-rose-500'
                       : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
-                  }`}
+                    }`}
                 >
                   <div className="flex items-center justify-between mb-1">
                     <span className="font-bold text-xs">Damaged</span>
@@ -294,9 +292,8 @@ export default function StaffReturnsPage() {
               <div className="flex justify-between items-center">
                 <span className="text-slate-600">Accrued Late Fee:</span>
                 <span
-                  className={`font-semibold ${
-                    returnReceipt.accruedLateFeeRs > 0 ? 'text-rose-600' : 'text-slate-800'
-                  }`}
+                  className={`font-semibold ${returnReceipt.accruedLateFeeRs > 0 ? 'text-rose-600' : 'text-slate-800'
+                    }`}
                 >
                   {formatCurrency(returnReceipt.accruedLateFeeRs)}
                 </span>

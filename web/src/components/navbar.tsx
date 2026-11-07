@@ -44,11 +44,10 @@ export function Navbar() {
 
   const navLinkClass = (path: string) => {
     const isActive = pathname === path;
-    return `inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-      isActive
+    return `inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${isActive
         ? 'bg-indigo-50 text-indigo-700 font-semibold'
         : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-    }`;
+      }`;
   };
 
   const roleBadgeVariant = (r: Role | null) => {
@@ -97,11 +96,10 @@ export function Navbar() {
                   type="button"
                   onClick={() => setIsStaffMenuOpen(!isStaffMenuOpen)}
                   onBlur={() => setTimeout(() => setIsStaffMenuOpen(false), 200)}
-                  className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                    pathname?.startsWith('/staff')
+                  className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${pathname?.startsWith('/staff')
                       ? 'bg-indigo-50 text-indigo-700 font-semibold'
                       : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-                  }`}
+                    }`}
                 >
                   <ShieldCheck className="w-4 h-4 text-indigo-600" />
                   Staff Circulation Desk

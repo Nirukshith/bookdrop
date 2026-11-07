@@ -217,9 +217,8 @@ export default function PatronDashboardPage() {
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         <Card
           onClick={() => setActiveTab('loans')}
-          className={`cursor-pointer transition-all ${
-            activeTab === 'loans' ? 'ring-2 ring-indigo-600 shadow-md' : 'hover:border-indigo-200'
-          }`}
+          className={`cursor-pointer transition-all ${activeTab === 'loans' ? 'ring-2 ring-indigo-600 shadow-md' : 'hover:border-indigo-200'
+            }`}
         >
           <CardContent className="p-5 flex items-center justify-between">
             <div>
@@ -234,9 +233,8 @@ export default function PatronDashboardPage() {
 
         <Card
           onClick={() => setActiveTab('holds')}
-          className={`cursor-pointer transition-all ${
-            activeTab === 'holds' ? 'ring-2 ring-indigo-600 shadow-md' : 'hover:border-indigo-200'
-          }`}
+          className={`cursor-pointer transition-all ${activeTab === 'holds' ? 'ring-2 ring-indigo-600 shadow-md' : 'hover:border-indigo-200'
+            }`}
         >
           <CardContent className="p-5 flex items-center justify-between">
             <div>
@@ -251,9 +249,8 @@ export default function PatronDashboardPage() {
 
         <Card
           onClick={() => setActiveTab('queue')}
-          className={`cursor-pointer transition-all ${
-            activeTab === 'queue' ? 'ring-2 ring-indigo-600 shadow-md' : 'hover:border-indigo-200'
-          }`}
+          className={`cursor-pointer transition-all ${activeTab === 'queue' ? 'ring-2 ring-indigo-600 shadow-md' : 'hover:border-indigo-200'
+            }`}
         >
           <CardContent className="p-5 flex items-center justify-between">
             <div>
@@ -268,27 +265,24 @@ export default function PatronDashboardPage() {
 
         <Card
           onClick={() => setActiveTab('fines')}
-          className={`cursor-pointer transition-all ${
-            activeTab === 'fines' ? 'ring-2 ring-indigo-600 shadow-md' : 'hover:border-indigo-200'
-          }`}
+          className={`cursor-pointer transition-all ${activeTab === 'fines' ? 'ring-2 ring-indigo-600 shadow-md' : 'hover:border-indigo-200'
+            }`}
         >
           <CardContent className="p-5 flex items-center justify-between">
             <div>
               <div className="text-xs text-slate-500 font-medium">Outstanding Fines</div>
               <div
-                className={`text-xl font-bold mt-1 ${
-                  totalOutstandingFines > 0 ? 'text-rose-600' : 'text-slate-900'
-                }`}
+                className={`text-xl font-bold mt-1 ${totalOutstandingFines > 0 ? 'text-rose-600' : 'text-slate-900'
+                  }`}
               >
                 {formatCurrency(totalOutstandingFines)}
               </div>
             </div>
             <div
-              className={`w-10 h-10 rounded-xl flex items-center justify-center ${
-                totalOutstandingFines > 0
+              className={`w-10 h-10 rounded-xl flex items-center justify-center ${totalOutstandingFines > 0
                   ? 'bg-rose-50 text-rose-600'
                   : 'bg-slate-100 text-slate-500'
-              }`}
+                }`}
             >
               <DollarSign className="w-5 h-5" />
             </div>
@@ -300,11 +294,10 @@ export default function PatronDashboardPage() {
       <div className="flex border-b border-slate-200 space-x-6 text-sm font-medium overflow-x-auto">
         <button
           onClick={() => setActiveTab('loans')}
-          className={`pb-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap ${
-            activeTab === 'loans'
+          className={`pb-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap ${activeTab === 'loans'
               ? 'border-indigo-600 text-indigo-600 font-semibold'
               : 'border-transparent text-slate-500 hover:text-slate-800'
-          }`}
+            }`}
         >
           <Clock className="w-4 h-4" />
           Active Loans ({loans.length})
@@ -312,11 +305,10 @@ export default function PatronDashboardPage() {
 
         <button
           onClick={() => setActiveTab('holds')}
-          className={`pb-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap ${
-            activeTab === 'holds'
+          className={`pb-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap ${activeTab === 'holds'
               ? 'border-indigo-600 text-indigo-600 font-semibold'
               : 'border-transparent text-slate-500 hover:text-slate-800'
-          }`}
+            }`}
         >
           <BookmarkCheck className="w-4 h-4" />
           Desk Holds ({holds.length})
@@ -324,11 +316,10 @@ export default function PatronDashboardPage() {
 
         <button
           onClick={() => setActiveTab('queue')}
-          className={`pb-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap ${
-            activeTab === 'queue'
+          className={`pb-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap ${activeTab === 'queue'
               ? 'border-indigo-600 text-indigo-600 font-semibold'
               : 'border-transparent text-slate-500 hover:text-slate-800'
-          }`}
+            }`}
         >
           <Users className="w-4 h-4" />
           Waitlist Queue ({reservations.length})
@@ -336,11 +327,10 @@ export default function PatronDashboardPage() {
 
         <button
           onClick={() => setActiveTab('fines')}
-          className={`pb-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap ${
-            activeTab === 'fines'
+          className={`pb-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap ${activeTab === 'fines'
               ? 'border-indigo-600 text-indigo-600 font-semibold'
               : 'border-transparent text-slate-500 hover:text-slate-800'
-          }`}
+            }`}
         >
           <DollarSign className="w-4 h-4" />
           Fines & Fees ({fines.length})
@@ -348,11 +338,10 @@ export default function PatronDashboardPage() {
 
         <button
           onClick={() => setActiveTab('notifications')}
-          className={`pb-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap ${
-            activeTab === 'notifications'
+          className={`pb-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap ${activeTab === 'notifications'
               ? 'border-indigo-600 text-indigo-600 font-semibold'
               : 'border-transparent text-slate-500 hover:text-slate-800'
-          }`}
+            }`}
         >
           <Mail className="w-4 h-4" />
           Notifications ({notifications.length})
@@ -606,8 +595,8 @@ export default function PatronDashboardPage() {
                             fine.status === 'PAID'
                               ? 'success'
                               : fine.status === 'WAIVED'
-                              ? 'secondary'
-                              : 'danger'
+                                ? 'secondary'
+                                : 'danger'
                           }
                         >
                           {fine.status}
@@ -660,8 +649,8 @@ export default function PatronDashboardPage() {
                             notif.status === 'SENT'
                               ? 'success'
                               : notif.status === 'FAILED'
-                              ? 'danger'
-                              : 'info'
+                                ? 'danger'
+                                : 'info'
                           }
                         >
                           {notif.status}

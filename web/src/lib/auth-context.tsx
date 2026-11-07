@@ -103,7 +103,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         await fetchGraphQL(
           `mutation Logout($token: String!) { logout(refreshToken: $token) }`,
           { token: refreshToken }
-        ).catch(() => {});
+        ).catch(() => { });
       }
     } finally {
       localStorage.removeItem('bookdrop_access_token');

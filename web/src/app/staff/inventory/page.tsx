@@ -257,11 +257,10 @@ export default function StaffInventoryPage() {
             <button
               key={st}
               onClick={() => setStatusFilter(st)}
-              className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
-                statusFilter === st
+              className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${statusFilter === st
                   ? 'bg-indigo-600 text-white font-semibold'
                   : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-              }`}
+                }`}
             >
               {st}
             </button>
