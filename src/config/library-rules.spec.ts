@@ -37,6 +37,14 @@ import {
   LEASE_SECONDS,
   EXPIRE_HOLDS_INTERVAL_SECONDS,
   REMINDERS_INTERVAL_SECONDS,
+  NOTIFICATION_MAX_ATTEMPTS,
+  NOTIFICATION_BATCH_SIZE,
+  NOTIFICATION_LOCK_SECONDS,
+  NOTIFICATION_RETENTION_DAYS,
+  NOTIFICATION_JOB_INTERVAL_SECONDS,
+  NOTIFICATION_BASE_BACKOFF_MS,
+  NOTIFICATION_MAX_BACKOFF_MS,
+  computeBackoffMs,
 } from './library-rules';
 
 describe('library-rules', () => {
@@ -885,6 +893,64 @@ describe('library-rules', () => {
         const expiry = computeLeaseExpiry(now);
         expect(expiry.getTime() - now.getTime()).toBe(120 * 1000);
       });
+    });
+  });
+
+  describe('Notification rules & computeBackoffMs', () => {
+    it('defines expected notification constants', () => {
+      expect(NOTIFICATION_MAX_ATTEMPTS).toBe(5);
+      expect(NOTIFICATION_BATCH_SIZE).toBe(20);
+      expect(NOTIFICATION_LOCK_SECONDS).toBe(120);
+      expect(NOTIFICATION_RETENTION_DAYS).toBe(90);
+      expect(NOTIFICATION_JOB_INTERVAL_SECONDS).toBe(30);
+      expect(NOTIFICATION_BASE_BACKOFF_MS).toBe(30000);
+      expect(NOTIFICATION_MAX_BACKOFF_MS).toBe(3600000);
+    });
+
+    it('computes attempt 0 with zero jitter as 30s (30,000ms)', () => {
+      expect(computeBackoffMs(0, 0)).toBe(30000);
+    });
+
+    it('computes attempt 0 with 20% max jitter as 36s (36,000ms)', () => {
+      expect(computeBackoffMs(0, 1.0)).toBe(36000);
+    });
+
+    it('computes attempt 1 with zero jitter as 60s (60,000ms)', () => {
+      expect(computeBackoffMs(1, 0)).toBe(60000);
+    });
+
+    it('computes attempt 1 with 20% max jitter as 72s (72,000ms)', () => {
+      expect(computeBackoffMs(1, 1.0)).toBe(72000);
+    });
+
+    it('computes attempt 2 with zero jitter as 120s (120,000ms)', () => {
+      expect(computeBackoffMs(2, 0)).toBe(120000);
+    });
+
+    it('computes attempt 3 with zero jitter as 240s (240,000ms)', () => {
+      expect(computeBackoffMs(3, 0)).toBe(240000);
+    });
+
+    it('computes attempt 4 with zero jitter as 480s (480,000ms)', () => {
+      expect(computeBackoffMs(4, 0)).toBe(480000);
+    });
+
+    it('caps backoff at 1 hour (3,600,000ms) for high attempt numbers', () => {
+      // 30s * 2^7 = 3,840,000ms > 3,600,000ms
+      expect(computeBackoffMs(7, 0)).toBe(NOTIFICATION_MAX_BACKOFF_MS);
+      expect(computeBackoffMs(10, 1.0)).toBe(NOTIFICATION_MAX_BACKOFF_MS);
+      expect(computeBackoffMs(20, 0.5)).toBe(NOTIFICATION_MAX_BACKOFF_MS);
+    });
+
+    it('treats negative attempts safely as attempt 0', () => {
+      expect(computeBackoffMs(-1, 0)).toBe(30000);
+      expect(computeBackoffMs(-5, 1.0)).toBe(36000);
+    });
+
+    it('clamps random multiplier to [0, 1]', () => {
+      expect(computeBackoffMs(0, 2.0)).toBe(36000);
+      expect(computeBackoffMs(0, -1.0)).toBe(30000);
+      expect(computeBackoffMs(0, NaN)).toBe(30000);
     });
   });
 });

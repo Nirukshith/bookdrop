@@ -17,6 +17,13 @@ export const JOB_MAX_RUN_SECONDS = 50;
 export const LEASE_SECONDS = 120;
 export const EXPIRE_HOLDS_INTERVAL_SECONDS = 60;
 export const REMINDERS_INTERVAL_SECONDS = 900; // 15 minutes
+export const NOTIFICATION_MAX_ATTEMPTS = 5;
+export const NOTIFICATION_BATCH_SIZE = 20;
+export const NOTIFICATION_LOCK_SECONDS = 120;
+export const NOTIFICATION_RETENTION_DAYS = 90;
+export const NOTIFICATION_JOB_INTERVAL_SECONDS = 30;
+export const NOTIFICATION_BASE_BACKOFF_MS = 30 * 1000; // 30 seconds
+export const NOTIFICATION_MAX_BACKOFF_MS = 60 * 60 * 1000; // 1 hour
 export const LATE_FEE_PER_DAY_RS = 10;
 export const LATE_FEE_CAP_RS: number | null = null;
 export const MAX_ASSESSED_FINE_RS = 100000;
@@ -484,4 +491,22 @@ export function computeLeaseExpiry(
   leaseSeconds: number = LEASE_SECONDS,
 ): Date {
   return new Date(now.getTime() + leaseSeconds * 1000);
+}
+
+/**
+ * Computes exponential backoff with up to 20% random jitter, capped at 1 hour:
+ * backoff = min(30s × 2^attempt + random jitter up to 20%, 1 hour)
+ *
+ * @param attempt 0-indexed attempt count (e.g. 0, 1, 2...)
+ * @param random A deterministic or pseudorandom float between 0 and 1 (default: Math.random())
+ */
+export function computeBackoffMs(
+  attempt: number,
+  random: number = Math.random(),
+): number {
+  const safeAttempt = Math.max(0, Math.floor(attempt));
+  const baseMs = NOTIFICATION_BASE_BACKOFF_MS * Math.pow(2, safeAttempt);
+  const clampedRandom = Math.max(0, Math.min(1, isNaN(random) ? 0 : random));
+  const jitterMs = baseMs * 0.2 * clampedRandom;
+  return Math.min(Math.round(baseMs + jitterMs), NOTIFICATION_MAX_BACKOFF_MS);
 }

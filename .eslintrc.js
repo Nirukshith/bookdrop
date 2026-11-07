@@ -51,15 +51,47 @@ module.exports = {
       },
     },
     {
-      files: ['src/books/**/*.ts', 'src/users/**/*.ts', 'src/auth/**/*.ts'],
+      files: ['src/books/**/*.ts', 'src/users/**/*.ts', 'src/auth/**/*.ts', 'src/circulation/**/*.ts'],
       rules: {
         'no-restricted-imports': [
           'error',
           {
             patterns: [
               {
-                group: ['**/circulation/*'],
-                message: 'Must not import Circulation internals.',
+                group: ['**/notifications', '**/notifications/*'],
+                message: 'Other areas must not import Notifications. Reach it only through domain events.',
+              },
+            ],
+          },
+        ],
+      },
+    },
+    {
+      files: ['src/notifications/**/*.ts'],
+      rules: {
+        'no-restricted-imports': [
+          'error',
+          {
+            patterns: [
+              {
+                group: ['**/circulation', '**/circulation/*'],
+                message:
+                  'Notifications must not import Circulation internals. Use plain IDs and domain events.',
+              },
+              {
+                group: ['**/books/*', '!**/books', '!**/books/index'],
+                message:
+                  'Notifications must not import Catalog internals. Use the public interface.',
+              },
+              {
+                group: ['**/users/*', '!**/users', '!**/users/index'],
+                message:
+                  'Notifications must not import Identity internals. Use the public interface (IdentityPublicApi).',
+              },
+              {
+                group: ['**/auth', '**/auth/*'],
+                message:
+                  'Notifications must not import Auth internals. Use Identity public interface.',
               },
             ],
           },

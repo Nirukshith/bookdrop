@@ -13,4 +13,3 @@ export class LoanOverdueEvent implements LoanOverduePayload {
     public readonly occurredAt: Date = new Date(),
   ) {}
 }
-
