@@ -4,11 +4,13 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { JwtService } from '@nestjs/jwt';
 import { Test, TestingModule } from '@nestjs/testing';
 import { Role } from '@prisma/client';
 import * as argon2 from 'argon2';
 import * as crypto from 'crypto';
+import { DOMAIN_EVENT_NAMES } from '../contracts/events';
 import { PrismaService } from '../prisma/prisma.service';
 import { UsersService } from '../users/users.service';
 import { AuthService } from './auth.service';
@@ -32,6 +34,9 @@ describe('AuthService', () => {
   };
   let configService: {
     get: jest.Mock;
+  };
+  let eventEmitter: {
+    emit: jest.Mock;
   };
 
   const mockUser = {
@@ -74,6 +79,10 @@ describe('AuthService', () => {
       }),
     };
 
+    eventEmitter = {
+      emit: jest.fn(),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AuthService,
@@ -81,6 +90,7 @@ describe('AuthService', () => {
         { provide: PrismaService, useValue: prismaMock },
         { provide: JwtService, useValue: jwtService },
         { provide: ConfigService, useValue: configService },
+        { provide: EventEmitter2, useValue: eventEmitter },
       ],
     }).compile();
 
@@ -117,6 +127,16 @@ describe('AuthService', () => {
         role: Role.MEMBER,
       });
       expect(prismaMock.refreshToken.create).toHaveBeenCalled();
+      expect(eventEmitter.emit).toHaveBeenCalledWith(
+        DOMAIN_EVENT_NAMES.USER_REGISTERED,
+        expect.objectContaining({
+          eventName: DOMAIN_EVENT_NAMES.USER_REGISTERED,
+          domain: 'user',
+          userId: mockUser.id,
+          email: mockUser.email,
+          name: mockUser.name,
+        }),
+      );
       expect(result.accessToken).toBe('mock-jwt-access-token');
       expect(result.refreshToken).toBeDefined();
       expect(result.user).toEqual(mockUser);

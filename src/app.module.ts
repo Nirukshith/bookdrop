@@ -1,5 +1,5 @@
 import { join } from 'path';
-import { Module } from '@nestjs/common';
+import { Module, OnModuleInit } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { GraphQLModule } from '@nestjs/graphql';
@@ -20,6 +20,10 @@ import { LoansModule } from './circulation/loans/loans.module';
 import { FinesModule } from './circulation/fines/fines.module';
 import { ReservationsModule } from './circulation/reservations/reservations.module';
 import { JobsModule } from './circulation/jobs/jobs.module';
+import { JobRunnerService } from './circulation/jobs/job-runner.service';
+import { JobsScheduler } from './circulation/jobs/jobs.scheduler';
+import { NotificationsModule } from './notifications/notifications.module';
+import { SendNotificationsJob } from './notifications/jobs/send-notifications.job';
 import { ClockModule } from './common/clock/clock.module';
 import { DomainEventsModule } from './common/events/domain-events.module';
 import { GqlThrottlerGuard } from './auth/guards/gql-throttler.guard';
@@ -117,6 +121,7 @@ import { envValidationSchema } from './config/env.validation';
     LoansModule,
     FinesModule,
     ReservationsModule,
+    NotificationsModule,
   ],
   controllers: [AppController],
   providers: [
@@ -135,4 +140,18 @@ import { envValidationSchema } from './config/env.validation';
     },
   ],
 })
-export class AppModule {}
+export class AppModule implements OnModuleInit {
+  constructor(
+    private readonly jobRunner: JobRunnerService,
+    private readonly jobsScheduler: JobsScheduler,
+    private readonly sendNotificationsJob: SendNotificationsJob,
+  ) {}
+
+  onModuleInit(): void {
+    this.jobRunner.registerJob(this.sendNotificationsJob);
+    this.jobsScheduler.scheduleJob(
+      this.sendNotificationsJob.name,
+      this.sendNotificationsJob.intervalSeconds,
+    );
+  }
+}

@@ -86,6 +86,25 @@ describe('envValidationSchema', () => {
     );
   });
 
+  it('defaults email notification variables correctly', () => {
+    const { error, value } = envValidationSchema.validate(validConfig);
+    expect(error).toBeUndefined();
+    expect(value.EMAIL_PROVIDER).toBe('console');
+    expect(value.EMAIL_MAX_PER_SECOND).toBe(1);
+    expect(value.EMAIL_FROM).toBe('noreply@bookdrop.io');
+    expect(value.EMAIL_FROM_NAME).toBe('Bookdrop Library');
+    expect(value.SES_REGION).toBe('ap-south-1');
+  });
+
+  it('rejects invalid EMAIL_PROVIDER values', () => {
+    const { error } = envValidationSchema.validate({
+      ...validConfig,
+      EMAIL_PROVIDER: 'sendgrid',
+    });
+    expect(error).toBeDefined();
+    expect(error?.message).toContain('EMAIL_PROVIDER');
+  });
+
   it('fails validation when DATABASE_URL is missing', () => {
     const { error } = envValidationSchema.validate({
       JWT_ACCESS_SECRET: validConfig.JWT_ACCESS_SECRET,

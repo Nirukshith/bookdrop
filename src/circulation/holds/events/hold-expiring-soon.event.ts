@@ -12,4 +12,3 @@ export class HoldExpiringSoonEvent implements HoldExpiringSoonPayload {
     public readonly occurredAt: Date = new Date(),
   ) {}
 }
-

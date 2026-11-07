@@ -108,4 +108,3 @@ describe('JobsResolver (Unit Tests)', () => {
     });
   });
 });
-

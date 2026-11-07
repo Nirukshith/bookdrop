@@ -50,4 +50,3 @@ export class JobRunResultModel {
   @Field(() => String, { nullable: true })
   stats?: string | null;
 }
-

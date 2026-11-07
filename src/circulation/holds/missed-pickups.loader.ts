@@ -20,4 +20,3 @@ export class MissedPickupsDataLoader {
     return this.bookTitleLoader.load(bookId);
   }
 }
-

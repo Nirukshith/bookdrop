@@ -70,8 +70,9 @@ describe('Stage 9 Scheduled Jobs, Missed Pickups, and Reminders (E2E Integration
     jobRunner = app.get<JobRunnerService>(JobRunnerService);
     eventEmitter = app.get<EventEmitter2>(EventEmitter2);
 
-    // Clean up any stale job leases
+    // Clean up any stale job leases and notifications
     await prisma.jobLease.deleteMany();
+    await prisma.notification.deleteMany();
 
     // Create shared staff user
     staffUser = await prisma.user.create({
@@ -133,6 +134,7 @@ describe('Stage 9 Scheduled Jobs, Missed Pickups, and Reminders (E2E Integration
     await prisma.book.deleteMany({
       where: { title: { contains: testRunId } },
     });
+    await prisma.notification.deleteMany();
     await prisma.user.deleteMany({
       where: { email: { contains: testRunId } },
     });

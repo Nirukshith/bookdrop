@@ -32,6 +32,7 @@ export const DOMAIN_EVENT_NAMES = {
   LOAN_DUE_SOON: 'loan.due_soon',
   LOAN_OVERDUE: 'loan.overdue',
   HOLD_EXPIRING_SOON: 'hold.expiring_soon',
+  USER_REGISTERED: 'user.registered',
 } as const;
 
 export type DomainEventName =
@@ -43,6 +44,7 @@ export interface HoldCreatedPayload {
   bookId: number;
   copyId: number;
   expiresAt: Date;
+  source?: 'REQUEST' | 'QUEUE_PROMOTION' | string;
   createdAt?: Date;
 }
 
@@ -110,6 +112,8 @@ export interface FineCreatedPayload {
   reason: FineReason;
   amountMinor: number;
   loanId?: number | null;
+  bookId?: number | null;
+  daysLate?: number | null;
   occurredAt?: Date;
 }
 
@@ -207,6 +211,7 @@ export interface ReservationPromotedPayload {
   bookId: number;
   holdId: number;
   copyId: number;
+  expiresAt?: Date;
   occurredAt?: Date;
 }
 
@@ -263,5 +268,14 @@ export interface HoldExpiringSoonPayload {
   userId: number;
   bookId: number;
   expiresAt: Date;
+  occurredAt?: Date;
+}
+
+export interface UserRegisteredPayload {
+  eventName?: string;
+  domain?: string;
+  userId: number;
+  email: string;
+  name: string;
   occurredAt?: Date;
 }
