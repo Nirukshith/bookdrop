@@ -1,28 +1,6 @@
-export enum NotificationStatus {
-  PENDING = 'PENDING',
-  SENDING = 'SENDING',
-  SENT = 'SENT',
-  FAILED = 'FAILED',
-  CANCELLED = 'CANCELLED',
-}
+import { NotificationStatus, NotificationTemplate } from '@prisma/client';
 
-export enum NotificationTemplate {
-  HOLD_CONFIRMED = 'HOLD_CONFIRMED',
-  RESERVATION_READY = 'RESERVATION_READY',
-  HOLD_EXPIRING_SOON = 'HOLD_EXPIRING_SOON',
-  HOLD_CANCELLED_BY_STAFF = 'HOLD_CANCELLED_BY_STAFF',
-  HOLD_EXPIRED_MISSED = 'HOLD_EXPIRED_MISSED',
-  HOLD_EXPIRED_EXCUSED = 'HOLD_EXPIRED_EXCUSED',
-  MISSED_PICKUP_FINE = 'MISSED_PICKUP_FINE',
-  LOAN_STARTED = 'LOAN_STARTED',
-  LOAN_DUE_SOON = 'LOAN_DUE_SOON',
-  LOAN_OVERDUE = 'LOAN_OVERDUE',
-  RETURN_RECEIPT = 'RETURN_RECEIPT',
-  FINE_ASSESSED = 'FINE_ASSESSED',
-  FINE_PAID = 'FINE_PAID',
-  FINE_WAIVED = 'FINE_WAIVED',
-  WELCOME = 'WELCOME',
-}
+export { NotificationStatus, NotificationTemplate };
 
 export interface MappedNotification {
   userId: number;
