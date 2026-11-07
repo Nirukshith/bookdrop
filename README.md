@@ -1720,6 +1720,191 @@ All received events are formatted as structured JSON via [`JsonLogger`](src/comm
 
 ---
 
+## Notifications System: Email Delivery (Stage 10)
+
+Bookdrop features an asynchronous, decoupled email notification subsystem located in `src/notifications/`. Designed according to clean architecture and service-extraction principles, the notifications subsystem reacts to domain events emitted across the library lifecycle and dispatches customer communications via swappable email providers.
+
+```mermaid
+flowchart TD
+    subgraph Domain ["Domain Operations (Catalog / Circulation / Identity)"]
+        Tx["DB Transaction (Hold / Loan / Fine / User)"] -->|Commit| Evt["EventEmitter2.emit(domain.event)"]
+    end
+
+    subgraph Enqueue ["Step 1: Fast Enqueue (<1ms)"]
+        Evt -->|@OnEvent| Sub["NotificationsSubscriber"]
+        Sub -->|Pure Mapping Table| Map["mapEventToNotification(event)"]
+        Map -->|INSERT ON CONFLICT DO NOTHING| DBQueue[("Notification Table (Status: PENDING)")]
+    end
+
+    subgraph Dispatch ["Step 2: Scheduled Send Job (send-notifications)"]
+        Job["SendNotificationsJob (Every 30s)"] -->|Reclaim Expired Locks| DBQueue
+        Job -->|validUntil <= now| Cancel["Set status: CANCELLED"]
+        Job -->|FOR UPDATE SKIP LOCKED (batch 20)| DBQueue
+        Job -->|Resolve Fresh Data| Lookups["IdentityPublicApi & CatalogPublicApi"]
+        Job -->|Token Bucket Pacing (1/s)| Limiter["TokenBucketRateLimiter"]
+        Limiter -->|Send Email| Provider["EmailProvider (Console / SMTP / AWS SES)"]
+        Provider -->|Success| Sent["Set status: SENT"]
+        Provider -->|Transient Error (4xx, Timeout)| Retry["Set status: PENDING + Exponential Backoff"]
+        Provider -->|Permanent Error (5xx, Bounce)| Failed["Set status: FAILED"]
+    end
+```
+
+### Core Design Principles
+
+1. **Events Enqueue, a Background Job Sends**: Event subscribers never make outbound HTTP/SMTP network calls and never throw into the event bus. They only execute a rapid `INSERT ... ON CONFLICT (dedupeKey) DO NOTHING` (< 1ms). A transient network glitch or third-party email outage can never crash, delay, or roll back a patron's borrowing, return, or hold transaction.
+2. **Durable & Idempotent**: Every notification record generates a deterministic, business-derived `dedupeKey` (e.g., `loan-started:101`, `welcome:42`). If an event is re-emitted, the database unique constraint ensures zero duplicate records are enqueued.
+3. **Delivery Guarantees (Honest Analysis)**:
+   - **Event to Database Row**: Currently **at-most-once**. An unhandled node crash occurring in the brief sub-millisecond gap between a domain transaction commit and the event handler execution could lose that event (a future stage will upgrade this to a transactional outbox table).
+   - **Database Row to Dispatch**: **At-least-once**. The background worker claims notifications using atomic row locking (`FOR UPDATE SKIP LOCKED`). If the service crashes after the upstream email provider accepts the dispatch but before the local database marks the row `SENT`, the lock expires after `NOTIFICATION_LOCK_SECONDS` (120s) and at most one duplicate email will be re-sent.
+4. **Stale Notification Dropping (`validUntil`)**: Time-sensitive messages (such as `LOAN_DUE_SOON` or `HOLD_EXPIRING_SOON`) carry a `validUntil` expiration timestamp. If worker downtime causes processing to lag past this deadline, the job cancels the notification immediately without emailing the patron, preventing confusing and obsolete alerts.
+5. **Fresh Data Resolution at Send Time**: Stored notification payloads hold only immutable references and state. Patron email addresses are resolved fresh via `IdentityPublicApi` and book titles via `CatalogPublicApi` using batched lookups right before rendering, ensuring emails always reflect updated member emails or catalog title corrections.
+6. **Privacy & Security Hardening**:
+   - **Stored XSS Prevention**: User-controlled inputs (book titles, author names, patron names) are strictly HTML-escaped before injection into templates.
+   - **Header Injection Shield**: Outgoing email subject lines are sanitized to strip `\r` and `\n` control characters, preventing email header breakout attacks and unauthorized spam relaying.
+   - **Masked PII Logging**: Server logs record recipient emails only in masked form (e.g., `p***@example.com`). Internal database IDs and auth tokens are never included in message bodies.
+
+---
+
+### Notification Lifecycle State Machine
+
+The delivery lifecycle is governed by a strict, pure transition matrix with unit-tested invariants:
+
+```mermaid
+stateDiagram-v2
+    [*] --> PENDING: Event Enqueued (dedupeKey)
+    PENDING --> SENDING: Claimed by Worker (SKIP LOCKED)
+    PENDING --> CANCELLED: validUntil passed
+    SENDING --> SENT: Provider Dispatch Succeeded
+    SENDING --> PENDING: Transient Error (computeBackoffMs)
+    SENDING --> FAILED: Permanent Error or Attempts >= 5
+    FAILED --> PENDING: Admin retryNotification Mutation
+    SENT --> [*]
+    CANCELLED --> [*]
+```
+
+- **Exponential Backoff with Jitter**:
+  $$\text{backoffMs} = \min\left(30\text{s} \times 2^{\text{attempt}} + \text{jitter}(0\text{ to }20\%), 3600\text{s}\right)$$
+- **Max Attempts**: Up to 5 attempts before terminal transition to `FAILED`.
+
+---
+
+### The 15 Email Templates & Business Triggers
+
+| Domain Event | Condition | Template | `dedupeKey` | `validUntil` |
+| :--- | :--- | :--- | :--- | :--- |
+| `hold.created` | `source = 'REQUEST'` | `HOLD_CONFIRMED` | `hold-confirmed:<holdId>` | Hold `expiresAt` |
+| `hold.created` | `source = 'QUEUE_PROMOTION'` | _Skipped_ | — | Covered by `reservation.promoted` |
+| `reservation.promoted` | Always | `RESERVATION_READY` | `reservation-ready:<reservationId>` | Hold `expiresAt` |
+| `hold.expiring_soon` | Always | `HOLD_EXPIRING_SOON` | `hold-expiring:<holdId>` | Hold `expiresAt` |
+| `hold.cancelled` | `cancelledBy = 'staff'` | `HOLD_CANCELLED_BY_STAFF` | `hold-cancelled:<holdId>` | None |
+| `hold.cancelled` | `cancelledBy = 'member'` | _Skipped_ | — | Patron initiated own cancellation |
+| `hold.expired` | Always | _Skipped_ | — | Covered by `missed_pickup.recorded` |
+| `missed_pickup.recorded` | `excused = false` | `HOLD_EXPIRED_MISSED` | `hold-expired:<holdId>` | None |
+| `missed_pickup.recorded` | `excused = true` | `HOLD_EXPIRED_EXCUSED` | `hold-expired:<holdId>` | None |
+| `missed_pickup.fine_assessed` | Always | `MISSED_PICKUP_FINE` | `missed-fine:<fineId>` | None |
+| `loan.started` | Always | `LOAN_STARTED` | `loan-started:<loanId>` | None |
+| `loan.due_soon` | Always | `LOAN_DUE_SOON` | `loan-due-soon:<loanId>` | Loan `dueAt` |
+| `loan.overdue` | Always | `LOAN_OVERDUE` | `loan-overdue:<loanId>` | None |
+| `loan.returned` | `daysLate = 0` and `GOOD` | `RETURN_RECEIPT` | `return-receipt:<loanId>` | None |
+| `loan.returned` | Late return or damaged | _Skipped_ | — | Covered by `fine.created` notice |
+| `fine.created` | `reason != MISSED_PICKUPS` | `FINE_ASSESSED` | `fine-assessed:<fineId>` | None |
+| `fine.settled` | `status = 'PAID'` | `FINE_PAID` | `fine-settled:<fineId>` | None |
+| `fine.settled` | `status = 'WAIVED'` | `FINE_WAIVED` | `fine-settled:<fineId>` | None |
+| `user.registered` | Always | `WELCOME` | `welcome:<userId>` | None |
+
+---
+
+### Email Providers & Traffic Shaping
+
+Bookdrop supports three pluggable email providers:
+
+1. **`ConsoleEmailProvider` (`EMAIL_PROVIDER=console`)**:
+   - Default provider for local development, staging previews, and automated testing.
+   - Logs masked recipient addresses, message IDs, and subjects without making external network calls.
+2. **`SmtpEmailProvider` (`EMAIL_PROVIDER=smtp`)**:
+   - Standard RFC-compliant SMTP integration using Nodemailer.
+   - Categorizes SMTP 4xx response codes and network timeouts as `TransientEmailError` (triggers backoff retry), and 5xx response codes as `PermanentEmailError` (immediate `FAILED`).
+3. **`SesEmailProvider` (`EMAIL_PROVIDER=ses`)**:
+   - High-throughput AWS Simple Email Service (SES) integration using `@aws-sdk/client-ses`.
+   - **Strict Safety Guard**: Throws an unhandled fatal error and refuses to start if `NODE_ENV !== 'production'`. Real patron emails can never accidentally dispatch from local laptops or test suites.
+
+#### Token Bucket Rate Limiting
+
+AWS SES sandbox accounts enforce a hard ceiling of 1 email per second (`EMAIL_MAX_PER_SECOND=1`). To prevent `ThrottlingException` errors and failure cascades, all dispatches flow through a local in-memory **Token Bucket Rate Limiter** with fractional-millisecond token refill. When bursts occur, outbound requests are smoothly shaped and paced rather than dropped.
+
+---
+
+### GraphQL Inspection & Administrative Controls
+
+The Notifications system exposes inspection queries for members and staff, along with an administrative manual retry mutation:
+
+```graphql
+# 1. Member: Inspect own notification history
+query MyNotifications {
+  myNotifications(pagination: { take: 10, skip: 0 }) {
+    id
+    template
+    status
+    createdAt
+    sentAt
+  }
+}
+
+# 2. Staff: Inspect notifications for a specific member by email
+query MemberNotifications {
+  memberNotifications(memberEmail: "patron@example.com", pagination: { take: 20 }) {
+    id
+    template
+    status
+    createdAt
+    sentAt
+  }
+}
+
+# 3. Admin: Reset a FAILED notification back to PENDING for re-delivery
+mutation RetryFailedNotification {
+  retryNotification(id: 105) {
+    id
+    status
+  }
+}
+```
+
+---
+
+### AWS ECS & Terraform Configuration
+
+When deploying Bookdrop to AWS ECS in production, configure the following container environment variables and IAM permissions:
+
+```hcl
+# AWS ECS Task Definition Environment Snippet
+environment = [
+  { name = "EMAIL_PROVIDER",        value = "ses" },
+  { name = "EMAIL_FROM",            value = "notifications@bookdrop.io" },
+  { name = "EMAIL_FROM_NAME",       value = "Bookdrop Library" },
+  { name = "SES_REGION",            value = "us-east-1" },
+  { name = "EMAIL_MAX_PER_SECOND",   value = "14" }, # Production SES quota
+  { name = "NOTIFICATION_BATCH_SIZE", value = "20" }
+]
+```
+
+```hcl
+# AWS IAM Task Execution Policy for Amazon SES
+statement {
+  sid    = "AllowBookdropSESDispatch"
+  effect = "Allow"
+  actions = [
+    "ses:SendEmail",
+    "ses:SendRawEmail"
+  ]
+  resources = [
+    "arn:aws:ses:us-east-1:123456789012:identity/bookdrop.io"
+  ]
+}
+```
+
+---
+
 ## Security Hardening
 
 - **Helmet**: Sets defensive HTTP headers (`X-Content-Type-Options`, `X-Frame-Options`, `Strict-Transport-Security`). In development, Content Security Policy (CSP) is relaxed so the Apollo Sandbox UI loads properly; in production, strict CSP is enforced.
@@ -1738,7 +1923,7 @@ All received events are formatted as structured JSON via [`JsonLogger`](src/comm
 npm test
 ```
 
-_Executes 685 unit tests across 49 test suites covering pure due-date calculation, days-late arithmetic, fee capping, currency parsing/formatting, domain state machines (Copies, Holds, Fines, Reservations), transaction retry helper with jitter backoff, eligibility policies, clock deadlines, services, loaders, guards, validators, job runner, distributed leases, and scheduler._
+_Executes 810+ unit tests across 58 test suites covering pure due-date calculation, days-late arithmetic, fee capping, currency parsing/formatting, domain state machines (Copies, Holds, Fines, Reservations, Notifications), email formatting & sanitization, Token Bucket rate limiting, email providers, pure event-to-notification mapping, transaction retry helper with jitter backoff, eligibility policies, clock deadlines, services, loaders, guards, validators, job runner, distributed leases, and scheduler._
 
 ### Run End-to-End (E2E) Tests
 
@@ -1746,7 +1931,7 @@ _Executes 685 unit tests across 49 test suites covering pure due-date calculatio
 npm run test:e2e
 ```
 
-_Executes 171 integration tests across 11 suites sequentially against the real PostgreSQL container (Scheduled jobs runner, distributed JobLease atomic CAS, hold expiration batches, missed pickup 3-strike threshold and fine assessment, system-delay grace period, 250-hold backlog catch-up, reminder mark deduplication, hold expiry vs pickup desk CAS races, 3-hold simultaneous expiration concurrency with advisory locks, Reservation queue FIFO lifecycle, atomic copy promotion across all availability triggers, ineligibility skipping, active reservation superseding, concurrent join races, Returns & Fines lifecycle, advisory lock concurrency loops, payment ledger, raw SQL check constraints, Loans lifecycle, pickup desk, walk-in checkouts, holds lifecycle, 20-member copy contention, CAS race conditions, database partial unique indexes, Auth, RBAC, Catalog, Security headers, Rate limiting, Depth limits)._
+_Executes 179 integration tests across 12 suites sequentially against the real PostgreSQL container (Email notifications delivery & retry lifecycle, scheduled jobs runner, distributed JobLease atomic CAS, hold expiration batches, missed pickup 3-strike threshold and fine assessment, system-delay grace period, 250-hold backlog catch-up, reminder mark deduplication, hold expiry vs pickup desk CAS races, 3-hold simultaneous expiration concurrency with advisory locks, Reservation queue FIFO lifecycle, atomic copy promotion across all availability triggers, ineligibility skipping, active reservation superseding, concurrent join races, Returns & Fines lifecycle, advisory lock concurrency loops, payment ledger, raw SQL check constraints, Loans lifecycle, pickup desk, walk-in checkouts, holds lifecycle, 20-member copy contention, CAS race conditions, database partial unique indexes, Auth, RBAC, Catalog, Security headers, Rate limiting, Depth limits)._
 
 ### Run Code Linter & Boundary Check
 
