@@ -28,4 +28,3 @@ export class NotificationModel {
   @Field(() => Date, { nullable: true })
   sentAt: Date | null;
 }
-

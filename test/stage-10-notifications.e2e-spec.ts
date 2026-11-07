@@ -29,8 +29,6 @@ describe('Stage 10: Notifications (Email) E2E Integration', () => {
   let eventEmitter: EventEmitter2;
 
   let memberUser: { id: number; email: string };
-  let librarianUser: { id: number; email: string };
-  let adminUser: { id: number; email: string };
 
   let memberToken: string;
   let librarianToken: string;
@@ -69,6 +67,7 @@ describe('Stage 10: Notifications (Email) E2E Integration', () => {
 
     // Clean up job leases and notifications from any previous runs
     await prisma.jobLease.deleteMany();
+    await prisma.notification.deleteMany();
 
     // Create a test book
     const author = await prisma.author.create({
@@ -100,14 +99,14 @@ describe('Stage 10: Notifications (Email) E2E Integration', () => {
       role: Role.MEMBER,
     });
 
-    librarianUser = await usersService.create({
+    await usersService.create({
       name: 'E2E Notification Librarian',
       email: librarianEmail,
       password: 'Password123!',
       role: Role.LIBRARIAN,
     });
 
-    adminUser = await usersService.create({
+    await usersService.create({
       name: 'E2E Notification Admin',
       email: adminEmail,
       password: 'Password123!',
@@ -135,22 +134,18 @@ describe('Stage 10: Notifications (Email) E2E Integration', () => {
 
   afterAll(async () => {
     await prisma.jobLease.deleteMany();
-    await prisma.notification.deleteMany({
-      where: {
-        userId: { in: [memberUser.id, librarianUser.id, adminUser.id] },
-      },
-    });
+    await prisma.notification.deleteMany();
     await prisma.book.deleteMany({
       where: { id: testBookId },
     });
     await prisma.refreshToken.deleteMany({
       where: {
-        userId: { in: [memberUser.id, librarianUser.id, adminUser.id] },
+        user: { email: { contains: testPrefix } },
       },
     });
     await prisma.user.deleteMany({
       where: {
-        id: { in: [memberUser.id, librarianUser.id, adminUser.id] },
+        email: { contains: testPrefix },
       },
     });
     await app.close();

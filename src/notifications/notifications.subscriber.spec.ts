@@ -168,4 +168,3 @@ describe('NotificationsSubscriber (Unit Tests)', () => {
     ).resolves.toBeUndefined();
   });
 });
-

@@ -172,4 +172,3 @@ describe('SendNotificationsJob (Unit Tests with FakeEmailProvider)', () => {
     expect(fakeEmailProvider.getSentEmails()).toHaveLength(0);
   });
 });
-
