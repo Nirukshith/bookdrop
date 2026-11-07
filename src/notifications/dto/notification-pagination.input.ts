@@ -14,3 +14,4 @@ export class NotificationPaginationInput {
   @Max(100)
   take: number = 20;
 }
+
