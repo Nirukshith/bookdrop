@@ -53,10 +53,32 @@ export default function StaffInventoryPage() {
   const [bookYear, setBookYear] = useState('');
   const [bookPrice, setBookPrice] = useState('');
   const [bookDesc, setBookDesc] = useState('');
+  const [selectedAuthorId, setSelectedAuthorId] = useState<string>('1');
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string>('1');
   const [isSubmittingBook, setIsSubmittingBook] = useState(false);
 
   // Retiring copy
   const [retiringCopyId, setRetiringCopyId] = useState<string | null>(null);
+
+  const authorsList = React.useMemo(() => {
+    const map = new Map<number, string>();
+    for (const b of books) {
+      for (const a of b.authors || []) {
+        map.set(parseInt(a.id, 10), a.name);
+      }
+    }
+    return Array.from(map.entries()).map(([id, name]) => ({ id, name }));
+  }, [books]);
+
+  const categoriesList = React.useMemo(() => {
+    const map = new Map<number, string>();
+    for (const b of books) {
+      for (const c of b.categories || []) {
+        map.set(parseInt(c.id, 10), c.name);
+      }
+    }
+    return Array.from(map.entries()).map(([id, name]) => ({ id, name }));
+  }, [books]);
 
   const loadData = useCallback(async () => {
     try {
@@ -135,8 +157,8 @@ export default function StaffInventoryPage() {
           publishedYear: bookYear ? parseInt(bookYear, 10) : undefined,
           priceRs: bookPrice ? parseFloat(bookPrice) : undefined,
           description: bookDesc.trim() || undefined,
-          authorIds: [],
-          categoryIds: [],
+          authorIds: [parseInt(selectedAuthorId, 10) || 1],
+          categoryIds: [parseInt(selectedCategoryId, 10) || 1],
         },
       });
 
@@ -467,6 +489,45 @@ export default function StaffInventoryPage() {
                 placeholder="2023"
                 className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500"
               />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Author</label>
+              <select
+                value={selectedAuthorId}
+                onChange={(e) => setSelectedAuthorId(e.target.value)}
+                className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+              >
+                {authorsList.length > 0 ? (
+                  authorsList.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name}
+                    </option>
+                  ))
+                ) : (
+                  <option value="1">George Orwell</option>
+                )}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Category</label>
+              <select
+                value={selectedCategoryId}
+                onChange={(e) => setSelectedCategoryId(e.target.value)}
+                className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+              >
+                {categoriesList.length > 0 ? (
+                  categoriesList.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))
+                ) : (
+                  <option value="1">Classic Fiction</option>
+                )}
+              </select>
             </div>
           </div>
 
