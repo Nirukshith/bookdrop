@@ -12,3 +12,4 @@ export const envValidationSchema = Joi.object({
     .uri()
     .default('http://localhost:3002/graphql'),
 });
+
