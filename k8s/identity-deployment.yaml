@@ -1,0 +1,90 @@
+# Identity Service — Deployment + ClusterIP Service
+# Handles authentication, JWT, and user management (subgraph on port 3001)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: identity-service
+  namespace: bookdrop
+  labels:
+    app: identity-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: identity-service
+  template:
+    metadata:
+      labels:
+        app: identity-service
+    spec:
+      containers:
+        - name: identity-service
+          image: identity-service:k8s-local
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 3001
+              name: graphql
+          env:
+            - name: PORT
+              value: "3001"
+            - name: NODE_ENV
+              value: "production"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: bookdrop-secrets
+                  key: DATABASE_URL
+            - name: JWT_ACCESS_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: bookdrop-secrets
+                  key: JWT_ACCESS_SECRET
+            - name: JWT_REFRESH_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: bookdrop-secrets
+                  key: JWT_REFRESH_SECRET
+            - name: RABBITMQ_URL
+              valueFrom:
+                secretKeyRef:
+                  name: bookdrop-secrets
+                  key: RABBITMQ_URL
+          # TCP socket probe — GraphQL returns 400 on plain GET, so we just verify the port is open
+          readinessProbe:
+            tcpSocket:
+              port: 3001
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 5
+          livenessProbe:
+            tcpSocket:
+              port: 3001
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              memory: "150Mi"
+              cpu: "100m"
+            limits:
+              memory: "400Mi"
+              cpu: "500m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: identity-service
+  namespace: bookdrop
+  labels:
+    app: identity-service
+spec:
+  type: ClusterIP
+  selector:
+    app: identity-service
+  ports:
+    - name: graphql
+      port: 3001
+      targetPort: 3001
+

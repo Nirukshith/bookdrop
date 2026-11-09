@@ -34,4 +34,3 @@ export const envValidationSchema = Joi.object({
   NOTIFICATION_BURST_CAPACITY: Joi.number().integer().positive().default(5),
   SCHEDULER_ENABLED: Joi.boolean().default(true),
 });
-

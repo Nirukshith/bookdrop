@@ -1,0 +1,56 @@
+# Notifications Service — Deployment (headless worker, no HTTP port exposed)
+# Consumes RabbitMQ events and sends email/push notifications
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notifications-service
+  namespace: bookdrop
+  labels:
+    app: notifications-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: notifications-service
+  template:
+    metadata:
+      labels:
+        app: notifications-service
+    spec:
+      containers:
+        - name: notifications-service
+          image: notifications-service:k8s-local
+          imagePullPolicy: Never
+          # No ports — this is a pure message consumer
+          env:
+            - name: NODE_ENV
+              value: "production"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: bookdrop-secrets
+                  key: DATABASE_URL
+            - name: RABBITMQ_URL
+              valueFrom:
+                secretKeyRef:
+                  name: bookdrop-secrets
+                  key: RABBITMQ_URL
+          # Liveness: verify Node.js runtime can execute
+          livenessProbe:
+            exec:
+              command:
+                - node
+                - -e
+                - "process.exit(0)"
+            initialDelaySeconds: 20
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              memory: "100Mi"
+              cpu: "50m"
+            limits:
+              memory: "300Mi"
+              cpu: "300m"
+

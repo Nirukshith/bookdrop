@@ -131,3 +131,41 @@ jobs:
           exit-code: '1'
           trivyignores: '.trivyignore'
 
+  k8s-lint:
+    name: Kubernetes Manifest Validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: 'v1.31.0'
+
+      - name: Create Kind cluster for validation
+        run: kind create cluster --name k8s-validation
+
+      - name: Dry-run validate all K8s manifests
+        run: |
+          echo "Validating namespace and infrastructure..."
+          kubectl apply --dry-run=client -f k8s/namespace.yaml
+          kubectl apply --dry-run=client -f k8s/secrets.yaml
+          kubectl apply --dry-run=client -f k8s/postgres.yaml
+          kubectl apply --dry-run=client -f k8s/rabbitmq.yaml
+          kubectl apply --dry-run=client -f k8s/migration-job.yaml
+
+          echo "Validating microservice deployments..."
+          kubectl apply --dry-run=client -f k8s/identity-deployment.yaml
+          kubectl apply --dry-run=client -f k8s/library-core-deployment.yaml
+          kubectl apply --dry-run=client -f k8s/notifications-deployment.yaml
+          kubectl apply --dry-run=client -f k8s/gateway-deployment.yaml
+
+          echo "Validating HPA..."
+          kubectl apply --dry-run=client -f k8s/hpa.yaml
+
+          echo "Validating legacy monolith manifests (backward compat)..."
+          kubectl apply --dry-run=client -f k8s/deployment.yaml
+          kubectl apply --dry-run=client -f k8s/service.yaml
+
+          echo "All K8s manifests are valid"

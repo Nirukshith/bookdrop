@@ -9,4 +9,3 @@ export interface MappedNotification {
   payload: Record<string, any>;
   validUntil?: Date;
 }
-

@@ -38,7 +38,8 @@ describe('SendNotificationsJob (Unit Tests in Microservice)', () => {
     configService = {
       get: jest.fn((key: string, defaultValue?: any) => {
         if (key === 'SCHEDULER_ENABLED') return true;
-        if (key === 'EMAIL_FROM') return 'Bookdrop Library <no-reply@bookdrop.io>';
+        if (key === 'EMAIL_FROM')
+          return 'Bookdrop Library <no-reply@bookdrop.io>';
         return defaultValue;
       }),
     };

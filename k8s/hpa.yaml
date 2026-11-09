@@ -1,0 +1,30 @@
+# Horizontal Pod Autoscaler for library-core
+# Scales between 2 and 5 replicas based on CPU (70%) and Memory (80%) utilization
+# Requires metrics-server to be installed in the cluster
+# deploy-local.sh installs metrics-server automatically
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: library-core-hpa
+  namespace: bookdrop
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: library-core
+  minReplicas: 2
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+

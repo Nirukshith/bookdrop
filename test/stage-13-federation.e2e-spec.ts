@@ -14,11 +14,17 @@ describe('Stage 13: Apollo Federation Supergraph E2E Integration', () => {
   const testEmail = `stage13_patron_${Date.now()}@example.com`;
   let authToken: string;
 
-  async function waitForUrl(url: string, timeoutMs = 30000, procErrors?: { error: string }) {
+  async function waitForUrl(
+    url: string,
+    timeoutMs = 30000,
+    procErrors?: { error: string },
+  ) {
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
       if (procErrors && procErrors.error) {
-        throw new Error(`Process error detected while waiting for ${url}: ${procErrors.error}`);
+        throw new Error(
+          `Process error detected while waiting for ${url}: ${procErrors.error}`,
+        );
       }
       try {
         const res = await fetch(url);
@@ -30,7 +36,9 @@ describe('Stage 13: Apollo Federation Supergraph E2E Integration', () => {
       }
       await new Promise((r) => setTimeout(r, 400));
     }
-    throw new Error(`Timeout waiting for ${url}. Process errors: ${procErrors?.error || 'None'}`);
+    throw new Error(
+      `Timeout waiting for ${url}. Process errors: ${procErrors?.error || 'None'}`,
+    );
   }
 
   beforeAll(async () => {
@@ -43,7 +51,10 @@ describe('Stage 13: Apollo Federation Supergraph E2E Integration', () => {
       execSync('npm run build', { cwd: rootDir, stdio: 'inherit' });
     }
     if (!existsSync(resolve(identityDir, 'dist/main.js'))) {
-      execSync('npx prisma generate && npm run build', { cwd: identityDir, stdio: 'inherit' });
+      execSync('npx prisma generate && npm run build', {
+        cwd: identityDir,
+        stdio: 'inherit',
+      });
     }
     if (!existsSync(resolve(gatewayDir, 'dist/main.js'))) {
       execSync('npm run build', { cwd: gatewayDir, stdio: 'inherit' });
