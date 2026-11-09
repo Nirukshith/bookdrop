@@ -44,6 +44,12 @@ jobs:
       - run: npm test
       - run: npm run test:e2e
       - run: npm run build
+      - name: Verify Web Frontend
+        run: |
+          cd web
+          npm ci
+          npm run lint
+          npm run build
 
   docker-build:
     name: Docker Build & Vulnerability Scan

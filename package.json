@@ -21,7 +21,10 @@
     "create-admin": "if [ \"$NODE_ENV\" = \"production\" ] || [ -f dist/scripts/create-admin.js ]; then node dist/scripts/create-admin.js; else ts-node src/scripts/create-admin.ts; fi",
     "holds:expire-due": "if [ \"$NODE_ENV\" = \"production\" ] || [ -f dist/scripts/expire-due-holds.js ]; then node dist/scripts/expire-due-holds.js; else ts-node src/scripts/expire-due-holds.ts; fi",
     "jobs:run": "if [ \"$NODE_ENV\" = \"production\" ] || [ -f dist/scripts/run-jobs.js ]; then node dist/scripts/run-jobs.js; else ts-node src/scripts/run-jobs.ts; fi",
-    "seed": "ts-node prisma/seed.ts"
+    "seed": "ts-node prisma/seed.ts",
+    "web:dev": "npm --prefix web run dev",
+    "web:build": "npm --prefix web run build",
+    "web:lint": "npm --prefix web run lint"
   },
   "dependencies": {
     "@apollo/server": "^4.13.0",
