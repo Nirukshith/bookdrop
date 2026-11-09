@@ -54,6 +54,7 @@ All environment variables are validated at application boot-time using Joi schem
 | `ADMIN_EMAIL`             | Target email address when running the `npm run create-admin` bootstrap script                                                                 | `admin@bookdrop.io`                                                    |    Required for `create-admin`    |
 | `ADMIN_NAME`              | Full name when running the `npm run create-admin` bootstrap script                                                                            | `Primary Administrator`                                                |    Required for `create-admin`    |
 | `ADMIN_PASSWORD`          | Plaintext password (min. 8 characters) when running `npm run create-admin`                                                                    | `SecureProductionPassword123!`                                         |    Required for `create-admin`    |
+| `RABBITMQ_URL`            | AMQP connection URI for RabbitMQ message broker                                                                                                | `amqp://bookdrop:bookdrop@localhost:5672`                              | Optional (default: `amqp://bookdrop:bookdrop@localhost:5672`) |
 
 > [!WARNING]
 > **TRUST_PROXY Security Warning**:
@@ -1905,6 +1906,52 @@ statement {
 
 ---
 
+## Message Broker: RabbitMQ Event Streaming (Stage 11)
+
+In Stage 11, Bookdrop establishes an enterprise message bus using **RabbitMQ** (`3.13-management-alpine`) to decouple the unified **Library Core** (Catalog + Circulation) and **Identity** domains from the **Notifications** consumer subsystem.
+
+### Architectural Decoupling
+
+Rather than relying solely on in-process memory buses, domain events are mirrored to durable RabbitMQ queues, enabling services to scale independently and withstand consumer restarts without losing events.
+
+```mermaid
+flowchart LR
+    subgraph LibraryCore ["Library Core (Catalog + Circulation)"]
+        Domain["Domain Service (Holds / Loans / Fines / Reservations)"]
+        EE["EventEmitter2"]
+        Pub["RabbitMQPublisherService"]
+        Domain -->|Emits Event| EE
+        EE -->|@OnEvent| Pub
+    end
+
+    subgraph Broker ["RabbitMQ Broker (Port 5672)"]
+        Q["Queue: bookdrop.notifications (Durable)"]
+        Pub -->|client.emit(eventName, payload)| Q
+    end
+
+    subgraph NotificationsSubsystem ["Notifications Subsystem"]
+        Consumer["NotificationsConsumer (@Controller / @EventPattern)"]
+        Sub["NotificationsSubscriber"]
+        DB[("Database (Notification Outbox Table)")]
+        Q -->|AMQP Deliver (noAck: false)| Consumer
+        Consumer -->|Manual ACK| Q
+        Consumer -->|enqueueNotification| Sub
+        Sub -->|Idempotent Upsert (dedupeKey)| DB
+    end
+```
+
+### Key Technical Implementations
+
+1. **Hybrid NestJS Microservice Bootstrap**: The main application boots as both an HTTP/GraphQL server and an AMQP microservice listener (`app.connectMicroservice<MicroserviceOptions>({ transport: Transport.RMQ, ... })`), allowing progressive decomposition into independent microservices.
+2. **Error-Shielded Publisher**: The `RabbitMQPublisherService` intercepts domain events emitted on the `@nestjs/event-emitter` bus and forwards them via `ClientProxy.emit`. Dispatches are wrapped in non-blocking error guards so broker delays or connectivity hiccups never roll back primary database transactions.
+3. **Manual Acknowledgments (`noAck: false`)**: The `NotificationsConsumer` processes incoming messages and issues an explicit `channel.ack(msg)` upon successful enqueue. If processing fails, it issues `channel.nack(msg, false, false)` to drop poisoned messages safely.
+4. **Strict Idempotency**: All notification ingestion leverages deterministic `dedupeKey` unique constraints in PostgreSQL (`ON CONFLICT DO NOTHING`). Duplicate event deliveries across network reconnects are absorbed safely with zero side effects.
+5. **RabbitMQ Management Dashboard**:
+   - Web UI: [http://localhost:15672](http://localhost:15672)
+   - Default credentials: `bookdrop` / `bookdrop`
+
+---
+
 ## Security Hardening
 
 - **Helmet**: Sets defensive HTTP headers (`X-Content-Type-Options`, `X-Frame-Options`, `Strict-Transport-Security`). In development, Content Security Policy (CSP) is relaxed so the Apollo Sandbox UI loads properly; in production, strict CSP is enforced.
@@ -1923,7 +1970,7 @@ statement {
 npm test
 ```
 
-_Executes 810+ unit tests across 58 test suites covering pure due-date calculation, days-late arithmetic, fee capping, currency parsing/formatting, domain state machines (Copies, Holds, Fines, Reservations, Notifications), email formatting & sanitization, Token Bucket rate limiting, email providers, pure event-to-notification mapping, transaction retry helper with jitter backoff, eligibility policies, clock deadlines, services, loaders, guards, validators, job runner, distributed leases, and scheduler._
+_Executes 821+ unit tests across 60 test suites covering pure due-date calculation, days-late arithmetic, fee capping, currency parsing/formatting, domain state machines (Copies, Holds, Fines, Reservations, Notifications), email formatting & sanitization, Token Bucket rate limiting, email providers, pure event-to-notification mapping, transaction retry helper with jitter backoff, eligibility policies, clock deadlines, services, loaders, guards, validators, job runner, distributed leases, scheduler, RabbitMQ publisher, and microservice consumer._
 
 ### Run End-to-End (E2E) Tests
 
@@ -1931,7 +1978,7 @@ _Executes 810+ unit tests across 58 test suites covering pure due-date calculati
 npm run test:e2e
 ```
 
-_Executes 179 integration tests across 12 suites sequentially against the real PostgreSQL container (Email notifications delivery & retry lifecycle, scheduled jobs runner, distributed JobLease atomic CAS, hold expiration batches, missed pickup 3-strike threshold and fine assessment, system-delay grace period, 250-hold backlog catch-up, reminder mark deduplication, hold expiry vs pickup desk CAS races, 3-hold simultaneous expiration concurrency with advisory locks, Reservation queue FIFO lifecycle, atomic copy promotion across all availability triggers, ineligibility skipping, active reservation superseding, concurrent join races, Returns & Fines lifecycle, advisory lock concurrency loops, payment ledger, raw SQL check constraints, Loans lifecycle, pickup desk, walk-in checkouts, holds lifecycle, 20-member copy contention, CAS race conditions, database partial unique indexes, Auth, RBAC, Catalog, Security headers, Rate limiting, Depth limits)._
+_Executes 181 integration tests across 13 suites sequentially against real PostgreSQL and RabbitMQ containers (Stage 11 RabbitMQ broker integration & idempotent consumption, Email notifications delivery & retry lifecycle, scheduled jobs runner, distributed JobLease atomic CAS, hold expiration batches, missed pickup 3-strike threshold and fine assessment, system-delay grace period, 250-hold backlog catch-up, reminder mark deduplication, hold expiry vs pickup desk CAS races, 3-hold simultaneous expiration concurrency with advisory locks, Reservation queue FIFO lifecycle, atomic copy promotion across all availability triggers, ineligibility skipping, active reservation superseding, concurrent join races, Returns & Fines lifecycle, advisory lock concurrency loops, payment ledger, raw SQL check constraints, Loans lifecycle, pickup desk, walk-in checkouts, holds lifecycle, 20-member copy contention, CAS race conditions, database partial unique indexes, Auth, RBAC, Catalog, Security headers, Rate limiting, Depth limits)._
 
 ### Run Code Linter & Boundary Check
 

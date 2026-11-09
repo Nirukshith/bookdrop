@@ -31,6 +31,9 @@ export const envValidationSchema = Joi.object({
   SMTP_USER: Joi.string().allow('').optional(),
   SMTP_PASS: Joi.string().allow('').optional(),
   SES_REGION: Joi.string().optional().default('ap-south-1'),
+  RABBITMQ_URL: Joi.string()
+    .default('amqp://bookdrop:bookdrop@localhost:5672')
+    .optional(),
   LIBRARY_TIMEZONE: Joi.string()
     .default('UTC')
     .custom((value, helpers) => {

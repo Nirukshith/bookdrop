@@ -1,9 +1,11 @@
 import { ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
+import { MicroserviceOptions, Transport } from '@nestjs/microservices';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { JsonLogger } from './common/logger/json-logger';
+import { BOOKDROP_NOTIFICATIONS_QUEUE } from './common/messaging/messaging.constants';
 
 async function bootstrap() {
   const isProduction = process.env.NODE_ENV === 'production';
@@ -54,6 +56,23 @@ async function bootstrap() {
 
   // Enable graceful shutdown hooks (finishes in-flight requests and closes DB connection on SIGTERM)
   app.enableShutdownHooks();
+
+  // Connect RabbitMQ microservice listener if configured
+  const rabbitmqUrl = configService.get<string>('RABBITMQ_URL');
+  if (rabbitmqUrl && process.env.NODE_ENV !== 'test') {
+    app.connectMicroservice<MicroserviceOptions>({
+      transport: Transport.RMQ,
+      options: {
+        urls: [rabbitmqUrl],
+        queue: BOOKDROP_NOTIFICATIONS_QUEUE,
+        noAck: false,
+        queueOptions: {
+          durable: true,
+        },
+      },
+    });
+    await app.startAllMicroservices();
+  }
 
   const port = configService.get<number>('PORT', 3000);
   await app.listen(port, '0.0.0.0');
