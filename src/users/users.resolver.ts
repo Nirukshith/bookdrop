@@ -1,5 +1,11 @@
 import { NotFoundException } from '@nestjs/common';
-import { Args, Mutation, Query, Resolver } from '@nestjs/graphql';
+import {
+  Args,
+  Mutation,
+  Query,
+  ResolveReference,
+  Resolver,
+} from '@nestjs/graphql';
 import { Role } from '@prisma/client';
 import {
   AuthenticatedUser,
@@ -13,6 +19,14 @@ import { UsersService } from './users.service';
 @Resolver(() => UserModel)
 export class UsersResolver {
   constructor(private readonly usersService: UsersService) {}
+
+  @ResolveReference()
+  async resolveReference(reference: {
+    __typename: string;
+    id: number | string;
+  }): Promise<UserModel | null> {
+    return this.usersService.findById(Number(reference.id));
+  }
 
   @Query(() => UserModel, { name: 'me' })
   async me(@CurrentUser() user: AuthenticatedUser): Promise<UserModel> {

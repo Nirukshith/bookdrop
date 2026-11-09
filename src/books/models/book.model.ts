@@ -1,8 +1,9 @@
-import { Field, Float, ID, Int, ObjectType } from '@nestjs/graphql';
+import { Directive, Field, Float, ID, Int, ObjectType } from '@nestjs/graphql';
 import { AuthorModel } from './author.model';
 import { CategoryModel } from './category.model';
 
 @ObjectType('Book')
+@Directive('@key(fields: "id")')
 export class BookModel {
   @Field(() => ID)
   id: number;

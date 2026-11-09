@@ -35,6 +35,7 @@ export const envValidationSchema = Joi.object({
     .default('amqp://bookdrop:bookdrop@localhost:5672')
     .optional(),
   NOTIFICATIONS_SERVICE_STANDALONE: Joi.boolean().default(false),
+  IDENTITY_SERVICE_STANDALONE: Joi.boolean().default(false),
   LIBRARY_TIMEZONE: Joi.string()
     .default('UTC')
     .custom((value, helpers) => {

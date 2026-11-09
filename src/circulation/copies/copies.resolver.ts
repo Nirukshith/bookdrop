@@ -1,5 +1,12 @@
 import { UseGuards } from '@nestjs/common';
-import { Args, Int, Mutation, Query, Resolver } from '@nestjs/graphql';
+import {
+  Args,
+  Int,
+  Mutation,
+  Query,
+  ResolveReference,
+  Resolver,
+} from '@nestjs/graphql';
 import { CopyStatus, Role } from '@prisma/client';
 import { AuthenticatedUser, CurrentUser, Roles, RolesGuard } from '../../auth';
 import { CopiesService } from './copies.service';
@@ -14,6 +21,14 @@ import { CopyModel } from './models/copy.model';
 @Roles(Role.LIBRARIAN, Role.ADMIN)
 export class CopiesResolver {
   constructor(private readonly copiesService: CopiesService) {}
+
+  @ResolveReference()
+  async resolveReference(reference: {
+    __typename: string;
+    id: number | string;
+  }): Promise<CopyModel | null> {
+    return this.copiesService.findById(Number(reference.id));
+  }
 
   @Mutation(() => CopyModel, { name: 'addCopy' })
   async addCopy(

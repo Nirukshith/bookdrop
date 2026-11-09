@@ -32,17 +32,18 @@ services:
       timeout: 5s
       retries: 5
 
-  app:
+  library-core:
     profiles: ["app"]
     build:
       context: .
       dockerfile: Dockerfile
-    image: bookdrop-api:latest
+    image: bookdrop-library-core:latest
     environment:
       NODE_ENV: production
-      PORT: 3000
+      PORT: 3002
       DATABASE_URL: "postgresql://bookdrop:bookdrop@db:5432/bookdrop?schema=public"
       RABBITMQ_URL: "amqp://bookdrop:bookdrop@rabbitmq:5672"
+      IDENTITY_SERVICE_STANDALONE: "true"
       NOTIFICATIONS_SERVICE_STANDALONE: "true"
       JWT_ACCESS_SECRET: "${JWT_ACCESS_SECRET:-default-super-secret-jwt-access-key-min-32-chars-long}"
       JWT_ACCESS_TTL: "15m"
@@ -50,12 +51,51 @@ services:
       TRUST_PROXY: "false"
       ALLOWED_ORIGINS: ""
     ports:
-      - "3000:3000"
+      - "3002:3002"
     depends_on:
       db:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+
+  identity-service:
+    profiles: ["app"]
+    build:
+      context: ./services/identity-service
+      dockerfile: Dockerfile
+    image: bookdrop-identity-service:latest
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      DATABASE_URL: "postgresql://bookdrop:bookdrop@db:5432/bookdrop?schema=public"
+      RABBITMQ_URL: "amqp://bookdrop:bookdrop@rabbitmq:5672"
+      JWT_ACCESS_SECRET: "${JWT_ACCESS_SECRET:-default-super-secret-jwt-access-key-min-32-chars-long}"
+      JWT_ACCESS_TTL: "15m"
+      REFRESH_TOKEN_TTL_DAYS: 7
+    ports:
+      - "3001:3001"
+    depends_on:
+      db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  gateway:
+    profiles: ["app"]
+    build:
+      context: ./services/gateway
+      dockerfile: Dockerfile
+    image: bookdrop-gateway:latest
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      IDENTITY_SUBGRAPH_URL: "http://identity-service:3001/graphql"
+      LIBRARY_CORE_SUBGRAPH_URL: "http://library-core:3002/graphql"
+    ports:
+      - "3000:3000"
+    depends_on:
+      - identity-service
+      - library-core
 
   notifications-service:
     profiles: ["app", "notifications"]
