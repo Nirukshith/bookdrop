@@ -1,0 +1,57 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum NotificationStatus {
+  PENDING
+  SENDING
+  SENT
+  FAILED
+  CANCELLED
+}
+
+enum NotificationTemplate {
+  HOLD_CONFIRMED
+  RESERVATION_READY
+  HOLD_EXPIRING_SOON
+  HOLD_CANCELLED_BY_STAFF
+  HOLD_EXPIRED_MISSED
+  HOLD_EXPIRED_EXCUSED
+  MISSED_PICKUP_FINE
+  LOAN_STARTED
+  LOAN_DUE_SOON
+  LOAN_OVERDUE
+  RETURN_RECEIPT
+  FINE_ASSESSED
+  FINE_PAID
+  FINE_WAIVED
+  WELCOME
+}
+
+model Notification {
+  id            Int                  @id @default(autoincrement())
+  userId        Int                  // plain user id, decoupled from identity database
+  template      NotificationTemplate
+  dedupeKey     String               @unique
+  status        NotificationStatus   @default(PENDING)
+  payload       Json
+  attempts      Int                  @default(0)
+  lastAttemptAt DateTime?
+  nextAttemptAt DateTime             @default(now())
+  validUntil    DateTime?
+  lastError     String?
+  sentAt        DateTime?
+  lockedUntil   DateTime?
+  lockedBy      String?
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+
+  @@index([status, nextAttemptAt])
+  @@index([userId, createdAt])
+}
+

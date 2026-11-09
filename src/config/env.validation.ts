@@ -34,6 +34,7 @@ export const envValidationSchema = Joi.object({
   RABBITMQ_URL: Joi.string()
     .default('amqp://bookdrop:bookdrop@localhost:5672')
     .optional(),
+  NOTIFICATIONS_SERVICE_STANDALONE: Joi.boolean().default(false),
   LIBRARY_TIMEZONE: Joi.string()
     .default('UTC')
     .custom((value, helpers) => {

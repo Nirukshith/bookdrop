@@ -151,9 +151,15 @@ export class AppModule implements OnModuleInit {
 
   onModuleInit(): void {
     this.jobRunner.registerJob(this.sendNotificationsJob);
-    this.jobsScheduler.scheduleJob(
-      this.sendNotificationsJob.name,
-      this.sendNotificationsJob.intervalSeconds,
-    );
+
+    // In standalone notifications service mode, email sweeping is managed by services/notifications-service
+    const isStandaloneNotifications =
+      process.env.NOTIFICATIONS_SERVICE_STANDALONE === 'true';
+    if (!isStandaloneNotifications) {
+      this.jobsScheduler.scheduleJob(
+        this.sendNotificationsJob.name,
+        this.sendNotificationsJob.intervalSeconds,
+      );
+    }
   }
 }

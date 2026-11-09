@@ -54,6 +54,14 @@ jobs:
       - run: npm test
       - run: npm run test:e2e
       - run: npm run build
+      - name: Verify Notifications Microservice
+        run: |
+          cd services/notifications-service
+          npm ci
+          npx prisma generate
+          npm test
+          npm run test:e2e
+          npm run build
       - name: Verify Web Frontend
         run: |
           cd web
@@ -78,6 +86,16 @@ jobs:
           platforms: linux/amd64
           load: true
           tags: bookdrop-api:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build Notifications Microservice Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./services/notifications-service
+          platforms: linux/amd64
+          load: true
+          tags: bookdrop-notifications-service:test
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
