@@ -1,4 +1,6 @@
-import { ChildProcess, spawn } from 'child_process';
+import { ChildProcess, spawn, execSync } from 'child_process';
+import { existsSync } from 'fs';
+import { resolve } from 'path';
 import { PrismaClient } from '@prisma/client';
 
 describe('Stage 13: Apollo Federation Supergraph E2E Integration', () => {
@@ -12,9 +14,12 @@ describe('Stage 13: Apollo Federation Supergraph E2E Integration', () => {
   const testEmail = `stage13_patron_${Date.now()}@example.com`;
   let authToken: string;
 
-  async function waitForUrl(url: string, timeoutMs = 20000) {
+  async function waitForUrl(url: string, timeoutMs = 30000, procErrors?: { error: string }) {
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
+      if (procErrors && procErrors.error) {
+        throw new Error(`Process error detected while waiting for ${url}: ${procErrors.error}`);
+      }
       try {
         const res = await fetch(url);
         if (res.status === 200 || res.status === 400 || res.status === 405) {
@@ -25,15 +30,35 @@ describe('Stage 13: Apollo Federation Supergraph E2E Integration', () => {
       }
       await new Promise((r) => setTimeout(r, 400));
     }
-    throw new Error(`Timeout waiting for ${url}`);
+    throw new Error(`Timeout waiting for ${url}. Process errors: ${procErrors?.error || 'None'}`);
   }
 
   beforeAll(async () => {
+    const rootDir = resolve(__dirname, '..');
+    const identityDir = resolve(rootDir, 'services/identity-service');
+    const gatewayDir = resolve(rootDir, 'services/gateway');
+
+    // Ensure build artifacts exist before spawning processes
+    if (!existsSync(resolve(rootDir, 'dist/main.js'))) {
+      execSync('npm run build', { cwd: rootDir, stdio: 'inherit' });
+    }
+    if (!existsSync(resolve(identityDir, 'dist/main.js'))) {
+      execSync('npx prisma generate && npm run build', { cwd: identityDir, stdio: 'inherit' });
+    }
+    if (!existsSync(resolve(gatewayDir, 'dist/main.js'))) {
+      execSync('npm run build', { cwd: gatewayDir, stdio: 'inherit' });
+    }
+
+    const identityErrors = { error: '' };
+    const libraryErrors = { error: '' };
+    const gatewayErrors = { error: '' };
+
     // 1. Spawn Identity Subgraph on Port 3001
     identityProc = spawn(
       process.execPath,
       ['services/identity-service/dist/main.js'],
       {
+        cwd: rootDir,
         env: {
           ...process.env,
           PORT: '3001',
@@ -42,9 +67,18 @@ describe('Stage 13: Apollo Federation Supergraph E2E Integration', () => {
         stdio: 'pipe',
       },
     );
+    identityProc.stderr?.on('data', (d) => {
+      identityErrors.error += d.toString();
+    });
+    identityProc.on('exit', (code) => {
+      if (code !== null && code !== 0) {
+        identityErrors.error += ` [Identity process exited prematurely with code ${code}]`;
+      }
+    });
 
     // 2. Spawn Library Core Subgraph on Port 3002
     libraryCoreProc = spawn(process.execPath, ['dist/main.js'], {
+      cwd: rootDir,
       env: {
         ...process.env,
         PORT: '3002',
@@ -54,13 +88,22 @@ describe('Stage 13: Apollo Federation Supergraph E2E Integration', () => {
       },
       stdio: 'pipe',
     });
+    libraryCoreProc.stderr?.on('data', (d) => {
+      libraryErrors.error += d.toString();
+    });
+    libraryCoreProc.on('exit', (code) => {
+      if (code !== null && code !== 0) {
+        libraryErrors.error += ` [Library Core process exited prematurely with code ${code}]`;
+      }
+    });
 
     // Wait until both subgraphs are healthy and accepting connections
-    await waitForUrl('http://localhost:3001/graphql');
-    await waitForUrl('http://localhost:3002/graphql');
+    await waitForUrl('http://localhost:3001/graphql', 30000, identityErrors);
+    await waitForUrl('http://localhost:3002/graphql', 30000, libraryErrors);
 
     // 3. Spawn Apollo Gateway on Port 3000
     gatewayProc = spawn(process.execPath, ['services/gateway/dist/main.js'], {
+      cwd: rootDir,
       env: {
         ...process.env,
         PORT: '3000',
@@ -70,9 +113,17 @@ describe('Stage 13: Apollo Federation Supergraph E2E Integration', () => {
       },
       stdio: 'pipe',
     });
+    gatewayProc.stderr?.on('data', (d) => {
+      gatewayErrors.error += d.toString();
+    });
+    gatewayProc.on('exit', (code) => {
+      if (code !== null && code !== 0) {
+        gatewayErrors.error += ` [Gateway process exited prematurely with code ${code}]`;
+      }
+    });
 
     // Wait until Gateway has composed supergraph and started HTTP server
-    await waitForUrl('http://localhost:3000/health');
+    await waitForUrl('http://localhost:3000/health', 30000, gatewayErrors);
   });
 
   afterAll(async () => {

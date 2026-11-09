@@ -52,7 +52,6 @@ jobs:
       - run: npx prisma db seed
       - run: npm run lint
       - run: npm test
-      - run: npm run test:e2e
       - run: npm run build
       - name: Verify Notifications Microservice
         run: |
@@ -75,6 +74,8 @@ jobs:
           npm ci
           npm test
           npm run build
+      - name: Run Monolith & Supergraph E2E Tests
+        run: npm run test:e2e
       - name: Verify Web Frontend
         run: |
           cd web

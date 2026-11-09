@@ -17,7 +17,7 @@
   },
   "dependencies": {
     "@apollo/server": "^4.13.0",
-    "@apollo/subgraph": "2.7.0",
+    "@apollo/subgraph": "2.9.6",
     "@nestjs/apollo": "^12.2.2",
     "@nestjs/common": "^10.4.15",
     "@nestjs/config": "^3.3.0",
@@ -74,5 +74,9 @@
     ],
     "coverageDirectory": "../coverage",
     "testEnvironment": "node"
+  },
+  "overrides": {
+    "tar": ">=7.5.19",
+    "@apollo/federation-internals": ">=2.9.6"
   }
 }
