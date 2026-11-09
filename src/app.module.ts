@@ -3,7 +3,10 @@ import { Module, OnModuleInit } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { GraphQLModule } from '@nestjs/graphql';
-import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo';
+import {
+  ApolloFederationDriver,
+  ApolloFederationDriverConfig,
+} from '@nestjs/apollo';
 import { ThrottlerModule } from '@nestjs/throttler';
 import * as depthLimit from 'graphql-depth-limit';
 import { EventEmitterModule } from '@nestjs/event-emitter';
@@ -56,8 +59,8 @@ import { envValidationSchema } from './config/env.validation';
         limit: 100,
       },
     ]),
-    GraphQLModule.forRootAsync<ApolloDriverConfig>({
-      driver: ApolloDriver,
+    GraphQLModule.forRootAsync<ApolloFederationDriverConfig>({
+      driver: ApolloFederationDriver,
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => {
@@ -65,7 +68,10 @@ import { envValidationSchema } from './config/env.validation';
           process.env.NODE_ENV === 'production' ||
           configService.get<string>('NODE_ENV') === 'production';
         return {
-          autoSchemaFile: isProd ? true : join(process.cwd(), 'src/schema.gql'),
+          autoSchemaFile: {
+            federation: 2,
+            path: join(process.cwd(), 'src/schema.gql'),
+          },
           sortSchema: true,
           playground: !isProd,
           introspection: !isProd,

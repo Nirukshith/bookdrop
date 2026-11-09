@@ -6,6 +6,7 @@ import {
   Parent,
   Query,
   ResolveField,
+  ResolveReference,
   Resolver,
 } from '@nestjs/graphql';
 import { Role } from '@prisma/client';
@@ -19,6 +20,14 @@ import { BookModel } from './models/book.model';
 @Resolver(() => BookModel)
 export class BooksResolver {
   constructor(private readonly booksService: BooksService) {}
+
+  @ResolveReference()
+  async resolveReference(reference: {
+    __typename: string;
+    id: number | string;
+  }): Promise<BookModel | null> {
+    return this.booksService.findById(Number(reference.id));
+  }
 
   @Public()
   @Query(() => [BookModel], { name: 'books' })

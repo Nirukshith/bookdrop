@@ -7,6 +7,8 @@ import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { RolesGuard } from './guards/roles.guard';
 
+const isStandaloneIdentity = process.env.IDENTITY_SERVICE_STANDALONE === 'true';
+
 @Module({
   imports: [
     UsersModule,
@@ -23,7 +25,12 @@ import { RolesGuard } from './guards/roles.guard';
       }),
     }),
   ],
-  providers: [AuthService, AuthResolver, JwtAuthGuard, RolesGuard],
+  providers: [
+    AuthService,
+    JwtAuthGuard,
+    RolesGuard,
+    ...(isStandaloneIdentity ? [] : [AuthResolver]),
+  ],
   exports: [AuthService, JwtAuthGuard, RolesGuard],
 })
 export class AuthModule {}

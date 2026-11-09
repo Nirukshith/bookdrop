@@ -2004,6 +2004,68 @@ flowchart TD
 
 ---
 
+## Apollo GraphQL Federation Supergraph Architecture (Stage 13)
+
+Stage 13 decomposes Bookdrop into an enterprise **Apollo Federation v2 Supergraph Architecture**. The web frontend connects to a single unified GraphQL Gateway on port `3000`, while backend domain responsibilities are partitioned into autonomous subgraphs and background workers.
+
+### Architecture Overview
+
+```mermaid
+flowchart TD
+    subgraph ClientLayer ["Client Layer"]
+        Web["Web Portal (Next.js 14)\nhttp://localhost:3000/graphql"]
+    end
+
+    subgraph GatewayLayer ["Apollo Supergraph Gateway (services/gateway :3000)"]
+        GW["ApolloGateway Router\n(Query Planner & Auth Header Forwarding)"]
+    end
+
+    subgraph Subgraphs ["Autonomous Subgraphs"]
+        subgraph S1 ["Identity Subgraph (services/identity-service :3001)"]
+            AuthSvc["Auth & Users API"]
+            AuthDB[("User & Token Store")]
+            AuthSvc --> AuthDB
+        end
+
+        subgraph S2 ["Library Core Subgraph (bookdrop-api :3002)"]
+            Catalog["Catalog (Books)"]
+            Circ["Circulation Engine (Loans, Holds, Fines)"]
+            CoreDB[("Library Core Store")]
+            Catalog --> CoreDB
+            Circ --> CoreDB
+        end
+    end
+
+    subgraph MessageBroker ["RabbitMQ Event Bus (:5672)"]
+        Ex["Exchange: bookdrop.events"]
+        Q["Queue: bookdrop.notifications"]
+        Ex --> Q
+    end
+
+    subgraph WorkerService ["Notifications Microservice (services/notifications-service)"]
+        Worker["Headless AMQP Worker &\nOutbox Dispatcher (AWS SES / SMTP)"]
+    end
+
+    Web -->|Unified GraphQL Query| GW
+    GW -->|Routes 'me', 'login', 'register'| AuthSvc
+    GW -->|Routes 'books', 'loans', 'holds', 'fines'| S2
+
+    AuthSvc -.->|Publishes user.registered| Ex
+    S2 -.->|Publishes loan.*, hold.*, fine.*| Ex
+    Q -->|Consumes Events| Worker
+```
+
+### Federated Microservices Rationale & Ports
+
+| Service | Directory | Port | Protocol | Domain Responsibilities |
+|---|---|---|---|---|
+| **Apollo Gateway** | [`services/gateway/`](services/gateway/) | `3000` | HTTP / GraphQL | Supergraph schema composition, query planning, request routing, and context/auth header forwarding via `RemoteGraphQLDataSource`. |
+| **Identity Subgraph** | [`services/identity-service/`](services/identity-service/) | `3001` | HTTP / GraphQL | Patron/Staff registration, Argon2 password hashing, JWT issuance & refresh token lifecycle, user roles, and `user.registered` event publishing. |
+| **Library Core Subgraph** | Root (`bookdrop-api`) | `3002` | HTTP / GraphQL | Cataloging (`Book`), physical items (`Copy`), circulation checkout & return desk, FIFO reservation queues, fine calculation, and payment processing. |
+| **Notifications Service** | [`services/notifications-service/`](services/notifications-service/) | _None (Headless)_ | AMQP (Port 5672) | Token-bucket rate-limited outbox worker consuming RabbitMQ events and delivering AWS SES / SMTP emails. |
+
+---
+
 ## Security Hardening
 
 - **Helmet**: Sets defensive HTTP headers (`X-Content-Type-Options`, `X-Frame-Options`, `Strict-Transport-Security`). In development, Content Security Policy (CSP) is relaxed so the Apollo Sandbox UI loads properly; in production, strict CSP is enforced.
@@ -2030,7 +2092,27 @@ _Executes 821+ unit tests across 60 test suites covering pure due-date calculati
 npm run test:e2e
 ```
 
-_Executes 181 integration tests across 13 suites sequentially against real PostgreSQL and RabbitMQ containers (Stage 11 RabbitMQ broker integration & idempotent consumption, Email notifications delivery & retry lifecycle, scheduled jobs runner, distributed JobLease atomic CAS, hold expiration batches, missed pickup 3-strike threshold and fine assessment, system-delay grace period, 250-hold backlog catch-up, reminder mark deduplication, hold expiry vs pickup desk CAS races, 3-hold simultaneous expiration concurrency with advisory locks, Reservation queue FIFO lifecycle, atomic copy promotion across all availability triggers, ineligibility skipping, active reservation superseding, concurrent join races, Returns & Fines lifecycle, advisory lock concurrency loops, payment ledger, raw SQL check constraints, Loans lifecycle, pickup desk, walk-in checkouts, holds lifecycle, 20-member copy contention, CAS race conditions, database partial unique indexes, Auth, RBAC, Catalog, Security headers, Rate limiting, Depth limits)._
+_Executes 185 integration tests across 14 suites sequentially against real PostgreSQL and RabbitMQ containers, including Stage 13 Apollo Federation Supergraph query routing, auth header forwarding, and cross-service queries across Gateway, Identity Subgraph, and Library Core Subgraph._
+
+### Run Identity Subgraph Tests
+
+```bash
+cd services/identity-service
+npm test
+npm run build
+```
+
+_Executes 36 unit tests across 3 suites verifying Argon2 hashing, JWT rotation, token reuse detection, role guards, and GraphQL reference resolvers._
+
+### Run Apollo Gateway Tests
+
+```bash
+cd services/gateway
+npm test
+npm run build
+```
+
+_Executes gateway unit tests and verifies supergraph composition and health endpoints._
 
 ### Run Notifications Microservice Tests
 

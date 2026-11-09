@@ -1,4 +1,11 @@
-import { Field, ID, Int, ObjectType, registerEnumType } from '@nestjs/graphql';
+import {
+  Directive,
+  Field,
+  ID,
+  Int,
+  ObjectType,
+  registerEnumType,
+} from '@nestjs/graphql';
 import { CopyStatus } from '@prisma/client';
 
 registerEnumType(CopyStatus, {
@@ -7,6 +14,7 @@ registerEnumType(CopyStatus, {
 });
 
 @ObjectType('Copy')
+@Directive('@key(fields: "id")')
 export class CopyModel {
   @Field(() => ID)
   id: number;
