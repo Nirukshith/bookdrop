@@ -2137,3 +2137,99 @@ _Enforces TypeScript formatting, code quality, and strict ESLint domain boundary
 ```bash
 npm run build
 ```
+
+---
+
+## Stage 14 — Kubernetes Orchestration & Autonomous Scaling
+
+Bookdrop's federated supergraph is fully deployable on Kubernetes using a local [Kind](https://kind.sigs.k8s.io/) cluster. All four microservices run as independent Deployments with health probes, resource limits, and horizontal autoscaling.
+
+### Architecture in K8s
+
+```
+Internet
+   │
+   ▼ NodePort :30080  (host: http://localhost:8080)
+┌──────────────────────┐
+│   Apollo Gateway     │  ← Deployment (2 replicas)
+│   gateway:k8s-local  │
+└───────┬──────────────┘
+        │  ClusterIP (internal DNS)
+   ┌────┴───────────────────┐
+   │                        │
+   ▼ :3001                  ▼ :3002
+┌──────────────┐    ┌──────────────────────┐
+│  identity-   │    │    library-core       │  ← HPA: min 2 / max 5
+│  service     │    │  (bookdrop-api image) │
+└──────────────┘    └──────────────────────┘
+        │                   │
+        └────────┬──────────┘
+                 ▼ :5672
+         ┌──────────────────┐
+         │    RabbitMQ      │
+         └──────────────────┘
+                 │
+                 ▼
+     ┌───────────────────────┐
+     │  notifications-service │  ← headless worker, no port
+     └───────────────────────┘
+                 │
+     ┌───────────▼───────────┐
+     │       PostgreSQL       │  ← ClusterIP :5432
+     └───────────────────────┘
+```
+
+### K8s Manifest Files
+
+| File | Purpose |
+|------|---------|
+| `k8s/namespace.yaml` | `bookdrop` namespace |
+| `k8s/secrets.yaml` | DB URL, JWT secrets, RabbitMQ credentials |
+| `k8s/postgres.yaml` | PostgreSQL Deployment + ClusterIP |
+| `k8s/rabbitmq.yaml` | RabbitMQ Deployment + ClusterIP |
+| `k8s/migration-job.yaml` | Prisma migrate + seed Job |
+| `k8s/identity-deployment.yaml` | Identity service Deployment + ClusterIP |
+| `k8s/library-core-deployment.yaml` | Library Core Deployment + ClusterIP (HPA target) |
+| `k8s/notifications-deployment.yaml` | Notifications headless worker Deployment |
+| `k8s/gateway-deployment.yaml` | Apollo Gateway Deployment + NodePort :30080 |
+| `k8s/hpa.yaml` | HPA for library-core (min:2, max:5, CPU:70%, Mem:80%) |
+| `k8s/deploy-local.sh` | Full automation: build → load → deploy |
+
+### One-Command Local Deploy
+
+```bash
+# 1. Create the Kind cluster (first time only)
+kind create cluster --config k8s/kind-config.yaml --name bookdrop-cluster
+
+# 2. Deploy everything
+bash k8s/deploy-local.sh
+```
+
+The script:
+1. Builds all 4 Docker images locally
+2. Loads them into the Kind cluster (`imagePullPolicy: Never`)
+3. Applies namespace, secrets, Postgres, RabbitMQ
+4. Runs the Prisma migration + seed Job
+5. Scales down the legacy monolith and hands port 30080 to the Gateway
+6. Deploys identity-service, library-core, notifications-service, gateway
+7. Installs metrics-server + applies the HPA
+
+### Smoke Tests
+
+```bash
+# Health check
+curl -s http://localhost:8080/health | python3 -m json.tool
+
+# GraphQL query (federated supergraph)
+curl -s -X POST http://localhost:8080/graphql \
+  -H "Content-Type: application/json" \
+  -d '{"query":"{ books { id title } }"}' | python3 -m json.tool
+```
+
+### View Running Pods & HPA
+
+```bash
+kubectl get pods -n bookdrop
+kubectl get hpa  -n bookdrop
+kubectl top pods -n bookdrop   # requires metrics-server
+```

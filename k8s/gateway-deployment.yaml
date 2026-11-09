@@ -1,0 +1,81 @@
+# Apollo Gateway — Deployment + NodePort Service
+# Federates identity-service and library-core subgraphs
+# Exposed externally on NodePort 30080 (host: http://localhost:8080)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+  namespace: bookdrop
+  labels:
+    app: gateway
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: gateway
+  template:
+    metadata:
+      labels:
+        app: gateway
+    spec:
+      containers:
+        - name: gateway
+          image: gateway:k8s-local
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 3000
+              name: http
+          env:
+            - name: PORT
+              value: "3000"
+            - name: NODE_ENV
+              value: "production"
+            # In-cluster DNS names for subgraphs (ClusterIP services)
+            - name: IDENTITY_SUBGRAPH_URL
+              value: "http://identity-service:3001/graphql"
+            - name: LIBRARY_CORE_SUBGRAPH_URL
+              value: "http://library-core:3002/graphql"
+          # Gateway starts slower — it must fetch schemas from both subgraphs first
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              memory: "150Mi"
+              cpu: "100m"
+            limits:
+              memory: "400Mi"
+              cpu: "500m"
+---
+# NodePort 30080 — Kind cluster maps this to hostPort 8080 (http://localhost:8080)
+# NOTE: The monolith bookdrop-service also uses 30080.
+# deploy-local.sh will delete the monolith service before applying this manifest.
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway-service
+  namespace: bookdrop
+  labels:
+    app: gateway
+spec:
+  type: NodePort
+  selector:
+    app: gateway
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000
+      nodePort: 30080
