@@ -1,8 +1,10 @@
 # Dependencies
-/node_modules
+node_modules/
+**/node_modules/
 
 # Output
-/dist
+dist/
+**/dist/
 
 # Environment variables
 .env

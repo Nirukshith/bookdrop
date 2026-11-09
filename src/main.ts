@@ -57,9 +57,17 @@ async function bootstrap() {
   // Enable graceful shutdown hooks (finishes in-flight requests and closes DB connection on SIGTERM)
   app.enableShutdownHooks();
 
-  // Connect RabbitMQ microservice listener if configured
+  // Connect RabbitMQ microservice listener if configured and not running in standalone worker mode
   const rabbitmqUrl = configService.get<string>('RABBITMQ_URL');
-  if (rabbitmqUrl && process.env.NODE_ENV !== 'test') {
+  const isStandaloneNotifications = configService.get<boolean>(
+    'NOTIFICATIONS_SERVICE_STANDALONE',
+    false,
+  );
+  if (
+    rabbitmqUrl &&
+    !isStandaloneNotifications &&
+    process.env.NODE_ENV !== 'test'
+  ) {
     app.connectMicroservice<MicroserviceOptions>({
       transport: Transport.RMQ,
       options: {
