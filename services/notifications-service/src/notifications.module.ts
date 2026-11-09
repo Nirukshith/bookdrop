@@ -16,10 +16,7 @@ import { SesEmailProvider } from './providers/ses-email.provider';
     {
       provide: 'EMAIL_RATE_LIMITER',
       useFactory: (configService: ConfigService) => {
-        const rps = configService.get<number>(
-          'NOTIFICATION_RATE_LIMIT_RPS',
-          1,
-        );
+        const rps = configService.get<number>('NOTIFICATION_RATE_LIMIT_RPS', 1);
         const burst = configService.get<number>(
           'NOTIFICATION_BURST_CAPACITY',
           5,
@@ -69,4 +66,3 @@ import { SesEmailProvider } from './providers/ses-email.provider';
   exports: [NotificationsSubscriber, SendNotificationsJob],
 })
 export class NotificationsModule {}
-

@@ -1,34 +1,29 @@
 import { NestFactory } from '@nestjs/core';
 import { MicroserviceOptions, Transport } from '@nestjs/microservices';
 import { Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
   const logger = new Logger('NotificationsServiceBootstrap');
 
-  const app = await NestFactory.create(AppModule);
-  const configService = app.get(ConfigService);
+  // createMicroservice — no HTTP platform needed (pure RabbitMQ consumer)
+  const rabbitmqUrl =
+    process.env.RABBITMQ_URL ?? 'amqp://bookdrop:bookdrop@localhost:5672';
 
-  const rabbitmqUrl = configService.get<string>(
-    'RABBITMQ_URL',
-    'amqp://bookdrop:bookdrop@localhost:5672',
-  );
-
-  app.connectMicroservice<MicroserviceOptions>({
-    transport: Transport.RMQ,
-    options: {
-      urls: [rabbitmqUrl],
-      queue: 'bookdrop.notifications',
-      noAck: false,
-      queueOptions: {
-        durable: true,
+  const app = await NestFactory.createMicroservice<MicroserviceOptions>(
+    AppModule,
+    {
+      transport: Transport.RMQ,
+      options: {
+        urls: [rabbitmqUrl],
+        queue: 'bookdrop.notifications',
+        noAck: false,
+        queueOptions: { durable: true },
       },
     },
-  });
+  );
 
-  await app.startAllMicroservices();
-  await app.init();
+  await app.listen();
 
   logger.log(
     '🚀 Notifications Microservice is active and listening to RabbitMQ queue "bookdrop.notifications"',
@@ -36,4 +31,3 @@ async function bootstrap() {
 }
 
 bootstrap();
-

@@ -120,3 +120,4 @@ kubectl get hpa -n "$NAMESPACE"
 echo ""
 echo "   Smoke test:"
 echo "     curl -s http://localhost:8080/health | python3 -m json.tool"
+

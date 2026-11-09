@@ -9,12 +9,15 @@ import { PrismaClient } from '@prisma/client';
 @Injectable()
 export class PrismaService
   extends PrismaClient
-  implements OnModuleInit, OnModuleDestroy {
+  implements OnModuleInit, OnModuleDestroy
+{
   private readonly logger = new Logger(PrismaService.name);
 
   async onModuleInit() {
     await this.$connect();
-    this.logger.log('Connected to PostgreSQL database for Notifications Service');
+    this.logger.log(
+      'Connected to PostgreSQL database for Notifications Service',
+    );
   }
 
   async onModuleDestroy() {
@@ -22,4 +25,3 @@ export class PrismaService
     this.logger.log('Disconnected from PostgreSQL database');
   }
 }
-

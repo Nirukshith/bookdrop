@@ -18,4 +18,3 @@ import { NotificationsModule } from './notifications.module';
   ],
 })
 export class AppModule {}
-

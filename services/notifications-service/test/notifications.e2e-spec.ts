@@ -100,4 +100,3 @@ describe('Notifications Microservice E2E', () => {
     });
   });
 });
-

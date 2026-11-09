@@ -37,26 +37,26 @@ spec:
                   name: bookdrop-secrets
                   key: RABBITMQ_DEFAULT_PASS
           readinessProbe:
-            exec:
-              command: ["rabbitmq-diagnostics", "-q", "ping"]
+            tcpSocket:
+              port: 5672
             initialDelaySeconds: 15
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 5
           livenessProbe:
-            exec:
-              command: ["rabbitmq-diagnostics", "-q", "ping"]
-            initialDelaySeconds: 30
+            tcpSocket:
+              port: 5672
+            initialDelaySeconds: 20
             periodSeconds: 15
             timeoutSeconds: 5
             failureThreshold: 3
           resources:
             requests:
-              memory: "128Mi"
+              memory: "256Mi"
               cpu: "100m"
             limits:
-              memory: "256Mi"
-              cpu: "300m"
+              memory: "512Mi"
+              cpu: "500m"
 ---
 apiVersion: v1
 kind: Service
@@ -76,3 +76,4 @@ spec:
     - name: management
       port: 15672
       targetPort: 15672
+

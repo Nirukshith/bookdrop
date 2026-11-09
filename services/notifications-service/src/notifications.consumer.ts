@@ -7,7 +7,7 @@ import { NotificationsSubscriber } from './notifications.subscriber';
 export class NotificationsConsumer {
   private readonly logger = new Logger(NotificationsConsumer.name);
 
-  constructor(private readonly subscriber: NotificationsSubscriber) { }
+  constructor(private readonly subscriber: NotificationsSubscriber) {}
 
   @EventPattern(Object.values(DOMAIN_EVENT_NAMES))
   async handleRabbitMQEvent(
@@ -36,4 +36,3 @@ export class NotificationsConsumer {
     }
   }
 }
-

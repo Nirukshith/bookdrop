@@ -184,10 +184,14 @@ export class SendNotificationsJob implements OnModuleInit {
 
       const userMap = new Map<number, { name: string; email: string }>();
       if (missingUserIds.length > 0) {
-        const users = await this.prisma.$queryRaw<{ id: number; name: string; email: string }[]>`
+        const users = await this.prisma.$queryRaw<
+          { id: number; name: string; email: string }[]
+        >`
           SELECT id, name, email FROM "User" WHERE id IN (${Prisma.join(missingUserIds)})
         `.catch(() => []);
-        users.forEach((u: { id: number; name: string; email: string }) => userMap.set(u.id, u));
+        users.forEach((u: { id: number; name: string; email: string }) =>
+          userMap.set(u.id, u),
+        );
       }
 
       const bookIds = Array.from(
@@ -203,10 +207,14 @@ export class SendNotificationsJob implements OnModuleInit {
 
       const titleMap = new Map<number, string>();
       if (bookIds.length > 0) {
-        const books = await this.prisma.$queryRaw<{ id: number; title: string }[]>`
+        const books = await this.prisma.$queryRaw<
+          { id: number; title: string }[]
+        >`
           SELECT id, title FROM "Book" WHERE id IN (${Prisma.join(bookIds)})
         `.catch(() => []);
-        books.forEach((b: { id: number; title: string }) => titleMap.set(b.id, b.title));
+        books.forEach((b: { id: number; title: string }) =>
+          titleMap.set(b.id, b.title),
+        );
       }
 
       const timezone =

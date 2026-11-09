@@ -10,11 +10,7 @@ export type FineReason = 'OVERDUE' | 'LOST' | 'DAMAGED' | 'MISSED_PICKUP';
 export type FineStatus = 'OUTSTANDING' | 'PAID' | 'WAIVED';
 export type ReservationCancelReason = 'MEMBER' | 'STAFF' | 'SUPERSEDED';
 export type ReturnCondition =
-  | 'GOOD'
-  | 'FAIR'
-  | 'DAMAGED_MINOR'
-  | 'DAMAGED_MAJOR'
-  | 'LOST';
+  'GOOD' | 'FAIR' | 'DAMAGED_MINOR' | 'DAMAGED_MAJOR' | 'LOST';
 
 export type CancelledBy = 'member' | 'staff';
 export type LoanSource = 'PICKUP' | 'WALK_IN';

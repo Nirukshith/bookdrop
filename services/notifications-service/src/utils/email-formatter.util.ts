@@ -1,5 +1,8 @@
 import { DateTime } from 'luxon';
-import { DEFAULT_LIBRARY_TIMEZONE, formatRs } from '../config/notification.config';
+import {
+  DEFAULT_LIBRARY_TIMEZONE,
+  formatRs,
+} from '../config/notification.config';
 
 /**
  * Formats a date instant into the library's local timezone:

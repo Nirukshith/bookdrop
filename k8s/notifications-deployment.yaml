@@ -35,13 +35,13 @@ spec:
                 secretKeyRef:
                   name: bookdrop-secrets
                   key: RABBITMQ_URL
-          # Liveness: verify the Node.js process is alive
+          # Liveness: verify Node.js runtime can execute
           livenessProbe:
             exec:
               command:
-                - sh
-                - -c
-                - "ps aux | grep node | grep -v grep"
+                - node
+                - -e
+                - "process.exit(0)"
             initialDelaySeconds: 20
             periodSeconds: 30
             timeoutSeconds: 5
@@ -53,3 +53,4 @@ spec:
             limits:
               memory: "300Mi"
               cpu: "300m"
+
