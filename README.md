@@ -2233,3 +2233,79 @@ kubectl get pods -n bookdrop
 kubectl get hpa  -n bookdrop
 kubectl top pods -n bookdrop   # requires metrics-server
 ```
+
+---
+
+## Stage 15 — Enterprise Ingress, Web Frontend & Distributed Observability
+
+Stage 15 brings the complete customer-facing experience and full production observability to the Kubernetes microservices cluster:
+
+1. **NGINX Ingress Controller**: Clean domain routing on standard HTTP port `80` (replacing raw `:8080` / NodePorts).
+2. **Next.js 14 Web Portal (`bookdrop-web`)**: Fully containerized and deployed as a 2-replica Kubernetes service.
+3. **Jaeger & OpenTelemetry Tracing**: Distributed W3C trace propagation across Apollo Gateway, Subgraphs, and RabbitMQ with interactive waterfall timelines.
+
+### Architecture in K8s (Stage 15)
+
+```
+                            User's Browser / Client
+                                      │
+          ┌───────────────────────────┴───────────────────────────┐
+          ▼                                                       ▼
+  http://app.bookdrop.local                               http://api.bookdrop.local
+┌──────────────────────────────────────────────────────────────────────────────────┐
+│                   NGINX Ingress Controller (Port 80 / 443)                       │
+└─────────────────┬───────────────────────┬───────────────────────┬────────────────┘
+                  │                       │                       │
+                  ▼ :3000                 ▼ :3000                 ▼ :16686
+       ┌─────────────────────┐ ┌─────────────────────┐ ┌─────────────────────┐
+       │   Web Portal        │ │   Apollo Gateway    │ │   Jaeger Tracing    │
+       │  (Next.js 14)       │ │ (bookdrop-gateway)  │ │ (tracing.bookdrop)  │
+       └─────────────────────┘ └──────────┬──────────┘ └──────────▲──────────┘
+                                          │                       │ OTLP /v1/traces
+                  ┌───────────────────────┴───────────────────────┼──────────┐
+                  ▼ :3001                 ▼ :3002                 │          │
+         ┌─────────────────┐     ┌─────────────────┐              │          │
+         │ identity-service│     │  library-core   │──────────────┘          │
+         └────────┬────────┘     └────────┬────────┘                         │
+                  │                       │                                  │
+                  └───────────┬───────────┘                                  │
+                              ▼ :5672                                        │
+                      ┌───────────────┐                                      │
+                      │   RabbitMQ    │                                      │
+                      └───────┬───────┘                                      │
+                              ▼                                              │
+                  ┌───────────────────────┐                                  │
+                  │ notifications-service │──────────────────────────────────┘
+                  └───────────────────────┘
+                              │
+                              ▼ :5432
+                      ┌───────────────┐
+                      │  PostgreSQL   │
+                      └───────────────┘
+```
+
+### Clean Domain Endpoints
+
+Add this single line to `/etc/hosts` on your host machine:
+```text
+127.0.0.1  app.bookdrop.local api.bookdrop.local tracing.bookdrop.local
+```
+
+| Domain | What it opens |
+|--------|--------------|
+| `http://app.bookdrop.local` | Next.js 14 Patron & Staff Web Portal |
+| `http://api.bookdrop.local/graphql` | Apollo Federated GraphQL Supergraph |
+| `http://api.bookdrop.local/health` | Gateway Health Check |
+| `http://tracing.bookdrop.local` | Jaeger Distributed Tracing Dashboard |
+| `http://localhost:8080/health` | Direct NodePort Fallback |
+
+### New & Modified Manifests (Stage 15)
+
+| File | Purpose |
+|------|---------|
+| `k8s/ingress.yaml` | NGINX Ingress rules mapping clean domains to services |
+| `k8s/jaeger.yaml` | Jaeger All-In-One Deployment + OTLP receiver Service |
+| `k8s/web-deployment.yaml` | Next.js 14 Web Frontend Deployment (2 replicas) + Service |
+| `web/Dockerfile` | Production multi-stage Docker build for Next.js 14 |
+| `services/gateway/src/tracing/telemetry.plugin.ts` | Apollo Server OpenTelemetry plugin exporting OTLP spans |
+| `k8s/deploy-local.sh` | 8-step full deployment automation script |

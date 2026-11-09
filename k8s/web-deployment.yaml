@@ -1,0 +1,77 @@
+# Bookdrop Next.js Web Portal — Deployment + ClusterIP Service
+# Serves the patron and staff web interface
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: bookdrop
+  labels:
+    app: web
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: web
+          image: bookdrop-web:k8s-local
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 3000
+              name: http
+          env:
+            - name: PORT
+              value: "3000"
+            - name: NODE_ENV
+              value: "production"
+            # Server-side Next.js fetches connect directly to Gateway internal ClusterIP
+            - name: BACKEND_URL
+              value: "http://gateway-service:3000"
+            # Client-side browser fetches route through the Ingress domain
+            - name: NEXT_PUBLIC_GRAPHQL_URL
+              value: "http://api.bookdrop.local/graphql"
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 5
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 3000
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              memory: "150Mi"
+              cpu: "100m"
+            limits:
+              memory: "500Mi"
+              cpu: "500m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web-service
+  namespace: bookdrop
+  labels:
+    app: web
+spec:
+  type: ClusterIP
+  selector:
+    app: web
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000
+
