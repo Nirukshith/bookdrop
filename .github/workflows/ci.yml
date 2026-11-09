@@ -18,10 +18,20 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U bookdrop"
           --health-interval 5s --health-timeout 5s --health-retries 10
+      rabbitmq:
+        image: rabbitmq:3.13-alpine
+        env:
+          RABBITMQ_DEFAULT_USER: bookdrop
+          RABBITMQ_DEFAULT_PASS: bookdrop
+        ports: ["5672:5672"]
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 5s --health-timeout 5s --health-retries 10
     env:
       NODE_ENV: test
       PORT: 3000
       DATABASE_URL: postgresql://bookdrop:bookdrop@localhost:5432/bookdrop?connection_limit=25
+      RABBITMQ_URL: amqp://bookdrop:bookdrop@localhost:5672
       JWT_ACCESS_SECRET: ci-dummy-test-jwt-access-secret-minimum-32-characters
       JWT_ACCESS_TTL: 15m
       REFRESH_TOKEN_TTL_DAYS: 7

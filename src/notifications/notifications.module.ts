@@ -11,10 +11,13 @@ import { SesEmailProvider } from './providers/ses-email.provider';
 import { FakeEmailProvider } from './providers/fake-email.provider';
 import { TokenBucketRateLimiter } from './rate-limiter/token-bucket.rate-limiter';
 import { EmailProvider } from './providers/email-provider.interface';
+import { NotificationsConsumer } from './notifications.consumer';
 
 @Module({
   imports: [PrismaModule, UsersModule, BooksModule],
+  controllers: [NotificationsConsumer],
   providers: [
+    NotificationsConsumer,
     NotificationsSubscriber,
     NotificationsResolver,
     SendNotificationsJob,

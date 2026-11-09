@@ -26,6 +26,7 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { SendNotificationsJob } from './notifications/jobs/send-notifications.job';
 import { ClockModule } from './common/clock/clock.module';
 import { DomainEventsModule } from './common/events/domain-events.module';
+import { MessagingModule } from './common/messaging';
 import { GqlThrottlerGuard } from './auth/guards/gql-throttler.guard';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { RolesGuard } from './auth/guards/roles.guard';
@@ -34,6 +35,7 @@ import { envValidationSchema } from './config/env.validation';
 @Module({
   imports: [
     ClockModule,
+    MessagingModule,
     DomainEventsModule,
     HoldsModule,
     FinesModule,
