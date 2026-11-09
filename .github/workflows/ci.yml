@@ -153,15 +153,18 @@ jobs:
           kubectl apply --dry-run=client -f k8s/secrets.yaml
           kubectl apply --dry-run=client -f k8s/postgres.yaml
           kubectl apply --dry-run=client -f k8s/rabbitmq.yaml
+          kubectl apply --dry-run=client -f k8s/jaeger.yaml
           kubectl apply --dry-run=client -f k8s/migration-job.yaml
 
-          echo "Validating microservice deployments..."
+          echo "Validating microservice and frontend deployments..."
           kubectl apply --dry-run=client -f k8s/identity-deployment.yaml
           kubectl apply --dry-run=client -f k8s/library-core-deployment.yaml
           kubectl apply --dry-run=client -f k8s/notifications-deployment.yaml
           kubectl apply --dry-run=client -f k8s/gateway-deployment.yaml
+          kubectl apply --dry-run=client -f k8s/web-deployment.yaml
 
-          echo "Validating HPA..."
+          echo "Validating Ingress and HPA..."
+          kubectl apply --dry-run=client -f k8s/ingress.yaml
           kubectl apply --dry-run=client -f k8s/hpa.yaml
 
           echo "Validating legacy monolith manifests (backward compat)..."

@@ -5,6 +5,7 @@ import { ApolloGatewayDriver, ApolloGatewayDriverConfig } from '@nestjs/apollo';
 import { IntrospectAndCompose, RemoteGraphQLDataSource } from '@apollo/gateway';
 import { AppController } from './app.controller';
 import { envValidationSchema } from './config/env.validation';
+import { TelemetryPlugin } from './tracing/telemetry.plugin';
 
 export class AuthenticatedDataSource extends RemoteGraphQLDataSource {
   willSendRequest({ request, context }: any) {
@@ -12,6 +13,14 @@ export class AuthenticatedDataSource extends RemoteGraphQLDataSource {
       request.http?.headers.set(
         'authorization',
         context.req.headers.authorization,
+      );
+    }
+    // Propagate W3C distributed trace context to downstream subgraphs
+    if (context?.traceId) {
+      request.http?.headers.set('x-trace-id', context.traceId);
+      request.http?.headers.set(
+        'traceparent',
+        `00-${context.traceId}-${context.spanId || '0000000000000000'}-01`,
       );
     }
   }
@@ -61,6 +70,7 @@ export class AuthenticatedDataSource extends RemoteGraphQLDataSource {
     }),
   ],
   controllers: [AppController],
+  providers: [TelemetryPlugin],
 })
 export class AppModule {}
 
