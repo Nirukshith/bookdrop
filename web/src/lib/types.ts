@@ -59,7 +59,7 @@ export interface Book {
   categories: Category[];
   availableCopies: number;
   availableCopiesCount: number;
-  copyCounts: CopyCounts;
+  copyCounts?: CopyCounts;
   queueLength: number;
   createdAt: string;
 }

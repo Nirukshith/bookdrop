@@ -30,6 +30,10 @@ export function Navbar() {
   const [isDemoMenuOpen, setIsDemoMenuOpen] = useState(false);
   const [switchingRole, setSwitchingRole] = useState<Role | null>(null);
 
+  if (pathname === '/') {
+    return null;
+  }
+
   const handleDemoSwitch = async (targetRole: Role) => {
     try {
       setSwitchingRole(targetRole);

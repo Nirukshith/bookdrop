@@ -62,14 +62,6 @@ export const BOOKS_QUERY = `
         id
         name
       }
-      copyCounts {
-        available
-        borrowed
-        damaged
-        lost
-        onHold
-        total
-      }
       createdAt
     }
   }
@@ -94,14 +86,6 @@ export const BOOK_QUERY = `
       categories {
         id
         name
-      }
-      copyCounts {
-        available
-        borrowed
-        damaged
-        lost
-        onHold
-        total
       }
     }
   }

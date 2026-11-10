@@ -4,6 +4,7 @@ import './globals.css';
 import { AuthProvider } from '@/lib/auth-context';
 import { Navbar } from '@/components/navbar';
 import { Footer } from '@/components/footer';
+import { MainContentWrapper } from '@/components/main-wrapper';
 
 const geistSans = localFont({
   src: './fonts/GeistVF.woff',
@@ -27,15 +28,15 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="en" className="scroll-smooth">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased min-h-screen flex flex-col bg-slate-50 text-slate-900`}
+        className={`${geistSans.variable} ${geistMono.variable} antialiased min-h-screen flex flex-col bg-slate-50 text-slate-900 font-sans`}
       >
         <AuthProvider>
           <Navbar />
-          <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
+          <MainContentWrapper>
             {children}
-          </main>
+          </MainContentWrapper>
           <Footer />
         </AuthProvider>
       </body>

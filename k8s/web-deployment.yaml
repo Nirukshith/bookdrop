@@ -32,9 +32,9 @@ spec:
             # Server-side Next.js fetches connect directly to Gateway internal ClusterIP
             - name: BACKEND_URL
               value: "http://gateway-service:3000"
-            # Client-side browser fetches route through the Ingress domain
+            # Client-side browser fetches route through same-origin proxy
             - name: NEXT_PUBLIC_GRAPHQL_URL
-              value: "http://api.bookdrop.local/graphql"
+              value: "/api/graphql"
           readinessProbe:
             httpGet:
               path: /
