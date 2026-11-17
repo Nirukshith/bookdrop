@@ -46,13 +46,19 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
-      - run: npx prisma generate
-      - run: npx prisma migrate deploy
-      - run: npx prisma db seed
-      - run: npm run lint
-      - run: npm test
-      - run: npm run build
+          cache-dependency-path: |
+            services/*/package-lock.json
+            web/package-lock.json
+      - name: Verify Library Core Subgraph
+        working-directory: services/library-core
+        run: |
+          npm ci
+          npx prisma generate
+          npx prisma migrate deploy
+          npx prisma db seed
+          npm run lint
+          npm test
+          npm run build
       - name: Verify Notifications Microservice
         run: |
           cd services/notifications-service
@@ -74,7 +80,8 @@ jobs:
           npm ci
           npm test
           npm run build
-      - name: Run Monolith & Supergraph E2E Tests
+      - name: Run Library Core & Supergraph E2E Tests
+        working-directory: services/library-core
         run: npm run test:e2e
       - name: Verify Web Frontend
         run: |
@@ -96,7 +103,7 @@ jobs:
       - name: Build Docker image with layer caching
         uses: docker/build-push-action@v6
         with:
-          context: .
+          context: ./services/library-core
           platforms: linux/amd64
           load: true
           tags: bookdrop-api:test

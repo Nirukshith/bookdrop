@@ -24,7 +24,7 @@ echo ""
 
 # ── Step 1: Build Docker images ──────────────────────────────────────────────
 echo "▶ [1/8] Building Docker images..."
-docker build -t bookdrop-api:k8s-local "$ROOT_DIR"
+docker build -t bookdrop-api:k8s-local "$ROOT_DIR/services/library-core"
 docker build -t identity-service:k8s-local "$ROOT_DIR/services/identity-service"
 docker build -t gateway:k8s-local "$ROOT_DIR/services/gateway"
 docker build -t notifications-service:k8s-local "$ROOT_DIR/services/notifications-service"
