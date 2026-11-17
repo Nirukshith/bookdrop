@@ -133,7 +133,7 @@ When Deploying / Demoing:                ▼
 
 ### 1. Local Development (Default Daily State)
 
-- Work locally using Docker Compose (`docker compose up -d` for PostgreSQL, `npm run start:dev` for NestJS).
+- Work locally using Docker Compose (`docker compose up -d` for PostgreSQL, `npm run library-core:dev` for NestJS).
 - Pull Requests and pushes to `main` trigger [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 - **CI runs automatically**: Linting, unit tests, e2e tests against a dynamic PostgreSQL service container, multi-stage production Docker build, and Trivy vulnerability scan.
 - **CI does NOT deploy to AWS**. Pushing or merging code never alters AWS state or incurs unexpected compute charges.
@@ -260,7 +260,7 @@ All Bookdrop infrastructure is managed via Terraform under the [`terraform/`](te
 The `Dockerfile` is a multi-stage, non-root, Debian slim container explicitly built for `linux/amd64`:
 
 ```bash
-docker build --platform linux/amd64 -t bookdrop-api:latest .
+docker build --platform linux/amd64 -t bookdrop-api:latest services/library-core
 ```
 
 ### 2. Start PostgreSQL Database
@@ -357,20 +357,20 @@ docker compose --profile app logs app
 
 ### 2. Installation
 
-Clone the repository and install dependencies:
+Clone the repository and install dependencies. The repo is a monorepo: each service in `services/*` and `web/` has its own `package.json` and lockfile, and the root `package.json` only holds scripts that delegate to them.
 
 ```bash
 git clone https://github.com/Nirukshith/bookdrop.git
 cd bookdrop
-npm install
+npm run install:all        # or: cd services/library-core && npm install
 ```
 
 ### 3. Environment Configuration
 
-Copy the template environment variables:
+Copy the template environment variables into the Library Core service:
 
 ```bash
-cp .env.example .env
+cp services/library-core/.env.example services/library-core/.env
 ```
 
 Ensure `DATABASE_URL` in `.env` matches your local database port (port `5433` if port 5432 is occupied on macOS, or `5432`).
@@ -391,9 +391,10 @@ docker compose exec db pg_isready -U bookdrop -d bookdrop
 
 ### 5. Run Database Migrations
 
-Apply Prisma migrations to the database:
+The remaining steps run from the Library Core service directory. Apply Prisma migrations to the database:
 
 ```bash
+cd services/library-core
 npx prisma migrate deploy
 ```
 
@@ -447,6 +448,7 @@ The database seed provides 3 preconfigured demo accounts for testing RBAC:
 In production environments where demo seed accounts are disabled, you can securely bootstrap the initial administrator account (or promote an existing registered user) out-of-band using environment variables:
 
 ```bash
+cd services/library-core
 ADMIN_EMAIL="admin@bookdrop.io" \
 ADMIN_NAME="Primary Administrator" \
 ADMIN_PASSWORD="SecureProductionPassword123!" \
@@ -1502,6 +1504,8 @@ Hold #4 expires on Sunday at 4:00 PM (processed at 4:01 PM)
 
 #### 1. Command-Line Interface (CLI)
 ```bash
+cd services/library-core
+
 # Run hold expiration job
 npm run jobs:run -- --job=expire-holds
 
@@ -2078,17 +2082,21 @@ flowchart TD
 
 ## Testing & Quality Assurance
 
-### Run Unit Tests
+### Run Library Core Unit Tests
 
 ```bash
+cd services/library-core
 npm test
 ```
+
+_(From the repo root, `npm test` runs the unit tests of every service in turn.)_
 
 _Executes 821+ unit tests across 60 test suites covering pure due-date calculation, days-late arithmetic, fee capping, currency parsing/formatting, domain state machines (Copies, Holds, Fines, Reservations, Notifications), email formatting & sanitization, Token Bucket rate limiting, email providers, pure event-to-notification mapping, transaction retry helper with jitter backoff, eligibility policies, clock deadlines, services, loaders, guards, validators, job runner, distributed leases, scheduler, RabbitMQ publisher, and microservice consumer._
 
 ### Run End-to-End (E2E) Tests
 
 ```bash
+cd services/library-core
 npm run test:e2e
 ```
 
@@ -2127,16 +2135,20 @@ _Executes 107 unit tests across 9 test suites and 1 E2E test verifying headless 
 ### Run Code Linter & Boundary Check
 
 ```bash
+cd services/library-core
 npm run lint
 ```
 
-_Enforces TypeScript formatting, code quality, and strict ESLint domain boundary rules across modules._
+_Enforces TypeScript formatting, code quality, and strict ESLint domain boundary rules across modules. From the repo root, `npm run lint` lints Library Core and the web frontend._
 
 ### Build Production Bundle
 
 ```bash
+cd services/library-core
 npm run build
 ```
+
+_(From the repo root, `npm run build` builds every service and the web frontend.)_
 
 ---
 
