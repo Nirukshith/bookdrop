@@ -42,13 +42,14 @@ describe('Stage 13: Apollo Federation Supergraph E2E Integration', () => {
   }
 
   beforeAll(async () => {
-    const rootDir = resolve(__dirname, '..');
+    const libraryCoreDir = resolve(__dirname, '..');
+    const rootDir = resolve(libraryCoreDir, '../..');
     const identityDir = resolve(rootDir, 'services/identity-service');
     const gatewayDir = resolve(rootDir, 'services/gateway');
 
     // Ensure build artifacts exist before spawning processes
-    if (!existsSync(resolve(rootDir, 'dist/main.js'))) {
-      execSync('npm run build', { cwd: rootDir, stdio: 'inherit' });
+    if (!existsSync(resolve(libraryCoreDir, 'dist/main.js'))) {
+      execSync('npm run build', { cwd: libraryCoreDir, stdio: 'inherit' });
     }
     if (!existsSync(resolve(identityDir, 'dist/main.js'))) {
       execSync('npx prisma generate && npm run build', {
@@ -89,7 +90,7 @@ describe('Stage 13: Apollo Federation Supergraph E2E Integration', () => {
 
     // 2. Spawn Library Core Subgraph on Port 3002
     libraryCoreProc = spawn(process.execPath, ['dist/main.js'], {
-      cwd: rootDir,
+      cwd: libraryCoreDir,
       env: {
         ...process.env,
         PORT: '3002',
