@@ -33,6 +33,8 @@ export const DOMAIN_EVENT_NAMES = {
   LOAN_OVERDUE: 'loan.overdue',
   HOLD_EXPIRING_SOON: 'hold.expiring_soon',
   USER_REGISTERED: 'user.registered',
+  USER_MEMBERSHIP_APPROVED: 'user.membership_approved',
+  USER_MEMBERSHIP_REJECTED: 'user.membership_rejected',
 } as const;
 
 export type DomainEventName =
@@ -268,6 +270,29 @@ export interface HoldExpiringSoonPayload {
   userId: number;
   bookId: number;
   expiresAt: Date;
+  occurredAt?: Date;
+}
+
+export interface UserMembershipApprovedPayload {
+  eventName?: string;
+  domain?: string;
+  userId: number;
+  email: string;
+  name: string;
+  membershipNumber: string | null;
+  approvedById: number;
+  occurredAt?: Date;
+}
+
+export interface UserMembershipRejectedPayload {
+  eventName?: string;
+  domain?: string;
+  userId: number;
+  email: string;
+  name: string;
+  membershipNumber: string | null;
+  rejectedById: number;
+  reason?: string | null;
   occurredAt?: Date;
 }
 

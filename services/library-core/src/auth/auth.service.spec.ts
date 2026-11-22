@@ -7,7 +7,7 @@ import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { JwtService } from '@nestjs/jwt';
 import { Test, TestingModule } from '@nestjs/testing';
-import { Role } from '@prisma/client';
+import { MembershipStatus, Role } from '@prisma/client';
 import * as argon2 from 'argon2';
 import * as crypto from 'crypto';
 import { DOMAIN_EVENT_NAMES } from '../contracts/events';
@@ -19,6 +19,7 @@ describe('AuthService', () => {
   let service: AuthService;
   let usersService: {
     findByEmail: jest.Mock;
+    findByMembershipNumber: jest.Mock;
     create: jest.Mock;
   };
   let prismaMock: {
@@ -56,6 +57,7 @@ describe('AuthService', () => {
   beforeEach(async () => {
     usersService = {
       findByEmail: jest.fn(),
+      findByMembershipNumber: jest.fn().mockResolvedValue(null),
       create: jest.fn(),
     };
 
@@ -110,6 +112,7 @@ describe('AuthService', () => {
         name: 'Alice',
         email: 'alice@example.com',
         password: 'validPassword123',
+        membershipNumber: 'lib-0042',
       });
 
       expect(usersService.findByEmail).toHaveBeenCalledWith(
@@ -120,6 +123,8 @@ describe('AuthService', () => {
         email: 'alice@example.com',
         password: 'validPassword123',
         role: Role.MEMBER,
+        membershipNumber: 'LIB-0042',
+        membershipStatus: MembershipStatus.PENDING,
       });
       expect(jwtService.signAsync).toHaveBeenCalledWith({
         sub: 1,
@@ -142,6 +147,39 @@ describe('AuthService', () => {
       expect(result.user).toEqual(mockUser);
     });
 
+    it('rejects a membership number that is already registered', async () => {
+      usersService.findByEmail.mockResolvedValue(null);
+      usersService.findByMembershipNumber.mockResolvedValue({ id: 9 });
+
+      await expect(
+        service.register({
+          name: 'Bob',
+          email: 'bob@example.com',
+          password: 'validPassword123',
+          membershipNumber: 'LIB-0042',
+        }),
+      ).rejects.toThrow('This membership number is already registered');
+      expect(usersService.findByMembershipNumber).toHaveBeenCalledWith(
+        'LIB-0042',
+      );
+      expect(usersService.create).not.toHaveBeenCalled();
+    });
+
+    it.each(['', 'ab', 'has spaces 1', 'x'.repeat(33), 'LIB_0042'])(
+      'rejects invalid membership number %p',
+      async (membershipNumber) => {
+        await expect(
+          service.register({
+            name: 'Bob',
+            email: 'bob@example.com',
+            password: 'validPassword123',
+            membershipNumber,
+          }),
+        ).rejects.toThrow(BadRequestException);
+        expect(usersService.create).not.toHaveBeenCalled();
+      },
+    );
+
     it('rejects duplicate email with ConflictException', async () => {
       usersService.findByEmail.mockResolvedValue(mockUser);
 
@@ -150,6 +188,7 @@ describe('AuthService', () => {
           name: 'Alice',
           email: 'alice@example.com',
           password: 'validPassword123',
+          membershipNumber: 'lib-0042',
         }),
       ).rejects.toThrow(ConflictException);
     });
@@ -160,6 +199,7 @@ describe('AuthService', () => {
           name: '',
           email: 'alice@example.com',
           password: 'validPassword123',
+          membershipNumber: 'lib-0042',
         }),
       ).rejects.toThrow(BadRequestException);
 
@@ -168,6 +208,7 @@ describe('AuthService', () => {
           name: 'Alice',
           email: 'invalid-email',
           password: 'validPassword123',
+          membershipNumber: 'lib-0042',
         }),
       ).rejects.toThrow(BadRequestException);
 
@@ -176,6 +217,7 @@ describe('AuthService', () => {
           name: 'Alice',
           email: 'alice@example.com',
           password: 'short',
+          membershipNumber: 'lib-0042',
         }),
       ).rejects.toThrow(BadRequestException);
     });

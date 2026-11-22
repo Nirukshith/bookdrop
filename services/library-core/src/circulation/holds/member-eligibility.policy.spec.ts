@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { HoldStatus, LoanStatus } from '@prisma/client';
+import { HoldStatus, LoanStatus, MembershipStatus } from '@prisma/client';
+import { IDENTITY_PUBLIC_API } from '../../users';
 import { MemberEligibilityPolicy } from './member-eligibility.policy';
 import { PrismaService } from '../../prisma/prisma.service';
 import { MAX_ACTIVE_HOLDS, MAX_ACTIVE_LOANS } from '../../config/library-rules';
@@ -14,6 +15,7 @@ import {
   OverdueLoansError,
   DuplicateActiveHoldError,
   HoldErrorCode,
+  MembershipNotApprovedError,
 } from './errors';
 
 describe('MemberEligibilityPolicy (Step 4)', () => {
@@ -34,6 +36,9 @@ describe('MemberEligibilityPolicy (Step 4)', () => {
   let finePortMock: {
     hasUnpaidFines: jest.Mock;
     checkMemberFines: jest.Mock;
+  };
+  let identityApiMock: {
+    getMembershipStatus: jest.Mock;
   };
 
   const userId = 42;
@@ -60,12 +65,19 @@ describe('MemberEligibilityPolicy (Step 4)', () => {
       checkMemberFines: jest.fn().mockResolvedValue({ blocked: false }),
     };
 
+    identityApiMock = {
+      getMembershipStatus: jest
+        .fn()
+        .mockResolvedValue(MembershipStatus.APPROVED),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         MemberEligibilityPolicy,
         { provide: PrismaService, useValue: prismaMock },
         { provide: ACTIVE_LOAN_COUNT_PORT, useValue: loanPortMock },
         { provide: UNPAID_FINES_PORT, useValue: finePortMock },
+        { provide: IDENTITY_PUBLIC_API, useValue: identityApiMock },
       ],
     }).compile();
 
@@ -241,6 +253,59 @@ describe('MemberEligibilityPolicy (Step 4)', () => {
           policy.checkRequestEligibility(userId, bookId),
         ).resolves.toBeUndefined();
       });
+    });
+  });
+
+  describe('Rule 0: Membership approval (IdentityPublicApi)', () => {
+    it.each([MembershipStatus.PENDING, MembershipStatus.REJECTED, null])(
+      'refuses a hold request when membership is %s, before any other check',
+      async (status) => {
+        identityApiMock.getMembershipStatus.mockResolvedValue(status);
+
+        const err = await policy
+          .checkRequestEligibility(userId, bookId)
+          .catch((e) => e);
+
+        expect(err).toBeInstanceOf(MembershipNotApprovedError);
+        expect(err.code).toBe(HoldErrorCode.MEMBERSHIP_NOT_APPROVED);
+        expect(err.getStatus()).toBe(403);
+        expect(identityApiMock.getMembershipStatus).toHaveBeenCalledWith(
+          userId,
+        );
+        expect(prismaMock.hold.count).not.toHaveBeenCalled();
+        expect(loanPortMock.countActiveLoansForMember).not.toHaveBeenCalled();
+        expect(finePortMock.checkMemberFines).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each([MembershipStatus.PENDING, MembershipStatus.REJECTED])(
+      'refuses a desk checkout when membership is %s',
+      async (status) => {
+        identityApiMock.getMembershipStatus.mockResolvedValue(status);
+
+        await expect(
+          policy.checkCheckoutEligibility(userId),
+        ).rejects.toBeInstanceOf(MembershipNotApprovedError);
+        expect(loanPortMock.countActiveLoansForMember).not.toHaveBeenCalled();
+      },
+    );
+
+    it('explains a pending membership in the error message', async () => {
+      identityApiMock.getMembershipStatus.mockResolvedValue(
+        MembershipStatus.PENDING,
+      );
+      await expect(
+        policy.checkRequestEligibility(userId, bookId),
+      ).rejects.toThrow(/awaiting admin approval/);
+    });
+
+    it('allows approved members through to the remaining rules', async () => {
+      await expect(
+        policy.checkRequestEligibility(userId, bookId),
+      ).resolves.toBeUndefined();
+      await expect(
+        policy.checkCheckoutEligibility(userId),
+      ).resolves.toBeUndefined();
     });
   });
 

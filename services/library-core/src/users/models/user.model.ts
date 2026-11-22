@@ -5,11 +5,17 @@ import {
   ObjectType,
   registerEnumType,
 } from '@nestjs/graphql';
-import { Role } from '@prisma/client';
+import { MembershipStatus, Role } from '@prisma/client';
 
 registerEnumType(Role, {
   name: 'Role',
   description: 'User access roles within Bookdrop',
+});
+
+registerEnumType(MembershipStatus, {
+  name: 'MembershipStatus',
+  description:
+    'Approval state of a library membership. Only APPROVED members may place holds, join waitlists or borrow.',
 });
 
 @ObjectType('User')
@@ -30,6 +36,18 @@ export class UserModel {
   @Field(() => Role)
   @Directive('@shareable')
   role: Role;
+
+  @Field(() => String, {
+    nullable: true,
+    description: 'Library card number supplied at registration',
+  })
+  membershipNumber?: string | null;
+
+  @Field(() => MembershipStatus)
+  membershipStatus: MembershipStatus;
+
+  @Field(() => Date, { nullable: true })
+  membershipReviewedAt?: Date | null;
 
   @Field(() => Date)
   @Directive('@shareable')

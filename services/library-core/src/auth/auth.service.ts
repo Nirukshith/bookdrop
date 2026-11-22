@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
-import { Role, User } from '@prisma/client';
+import { MembershipStatus, Role, User } from '@prisma/client';
 import * as argon2 from 'argon2';
 import * as crypto from 'crypto';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -14,7 +14,7 @@ import { DOMAIN_EVENT_NAMES } from '../contracts/events';
 import { PrismaService } from '../prisma/prisma.service';
 import { UsersService } from '../users/users.service';
 import { LoginInput } from './dto/login.input';
-import { RegisterInput } from './dto/register.input';
+import { MEMBERSHIP_NUMBER_PATTERN, RegisterInput } from './dto/register.input';
 import { AuthPayloadModel } from './models/auth-payload.model';
 
 // Constant dummy hash to equalize response timing when a requested user email does not exist
@@ -91,17 +91,37 @@ export class AuthService {
       );
     }
 
+    const membershipNumber = input.membershipNumber
+      ? input.membershipNumber.trim().toUpperCase()
+      : '';
+    if (!MEMBERSHIP_NUMBER_PATTERN.test(membershipNumber)) {
+      throw new BadRequestException(
+        'Membership number must be 4-32 characters using letters, digits or hyphens',
+      );
+    }
+
     const existingUser = await this.usersService.findByEmail(trimmedEmail);
     if (existingUser) {
       throw new ConflictException('Email is already registered');
     }
 
-    // Role is strictly hardcoded to MEMBER to prevent privilege escalation
+    const existingMembership =
+      await this.usersService.findByMembershipNumber(membershipNumber);
+    if (existingMembership) {
+      throw new ConflictException(
+        'This membership number is already registered',
+      );
+    }
+
+    // Role is strictly hardcoded to MEMBER to prevent privilege escalation.
+    // Self-registered members start PENDING until an admin verifies their card.
     const newUser = await this.usersService.create({
       name: trimmedName,
       email: trimmedEmail,
       password: input.password,
       role: Role.MEMBER,
+      membershipNumber,
+      membershipStatus: MembershipStatus.PENDING,
     });
 
     const tokens = await this.generateTokens(newUser);

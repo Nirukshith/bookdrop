@@ -8,6 +8,8 @@ export const LOGIN_MUTATION = `
         email
         name
         role
+        membershipNumber
+        membershipStatus
         createdAt
       }
     }
@@ -24,6 +26,8 @@ export const REGISTER_MUTATION = `
         email
         name
         role
+        membershipNumber
+        membershipStatus
         createdAt
       }
     }
@@ -37,7 +41,42 @@ export const ME_QUERY = `
       email
       name
       role
+      membershipNumber
+      membershipStatus
+      membershipReviewedAt
       createdAt
+    }
+  }
+`;
+
+export const MEMBERSHIP_APPLICATIONS_QUERY = `
+  query MembershipApplications($status: MembershipStatus!) {
+    membershipApplications(status: $status) {
+      id
+      name
+      email
+      membershipNumber
+      membershipStatus
+      membershipReviewedAt
+      createdAt
+    }
+  }
+`;
+
+export const APPROVE_MEMBERSHIP_MUTATION = `
+  mutation ApproveMembership($userId: Int!) {
+    approveMembership(userId: $userId) {
+      id
+      membershipStatus
+    }
+  }
+`;
+
+export const REJECT_MEMBERSHIP_MUTATION = `
+  mutation RejectMembership($userId: Int!, $reason: String) {
+    rejectMembership(userId: $userId, reason: $reason) {
+      id
+      membershipStatus
     }
   }
 `;
@@ -50,7 +89,6 @@ export const BOOKS_QUERY = `
       isbn
       publishedYear
       description
-      replacementPriceRs
       availableCopies
       availableCopiesCount
       queueLength
@@ -220,6 +258,7 @@ export const MY_NOTIFICATIONS_QUERY = `
       template
       status
       sentAt
+      readAt
       createdAt
     }
   }
@@ -233,7 +272,7 @@ export const MY_MISSED_PICKUPS_QUERY = `
       recent {
         holdId
         bookTitle
-        expiredAt
+        missedAt
       }
     }
   }
@@ -362,7 +401,8 @@ export const RUN_JOB_MUTATION = `
   mutation RunJob($name: String!) {
     runJob(name: $name) {
       jobName
-      success
+      status
+      skipped
       durationMs
       stats
       error

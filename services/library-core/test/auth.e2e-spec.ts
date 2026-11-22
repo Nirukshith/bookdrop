@@ -4,7 +4,7 @@ import * as request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { UsersService } from '../src/users/users.service';
-import { Role } from '@prisma/client';
+import { HoldStatus, Role } from '@prisma/client';
 
 describe('Auth & Users (GraphQL E2E)', () => {
   let app: INestApplication;
@@ -48,6 +48,7 @@ describe('Auth & Users (GraphQL E2E)', () => {
   });
 
   const memberEmail = `authtest_member_${Date.now()}@example.com`;
+  const memberCardNo = `AT-${Date.now()}`;
   const adminEmail = `authtest_admin_${Date.now()}@example.com`;
   let memberAccessToken = '';
   let adminAccessToken = '';
@@ -62,6 +63,7 @@ describe('Auth & Users (GraphQL E2E)', () => {
           name: "Test Member"
           email: "${memberEmail}"
           password: "securePassword123"
+          membershipNumber: "${memberCardNo}"
         }) {
           accessToken
           refreshToken
@@ -70,6 +72,8 @@ describe('Auth & Users (GraphQL E2E)', () => {
             name
             email
             role
+            membershipNumber
+            membershipStatus
           }
         }
       }
@@ -86,6 +90,8 @@ describe('Auth & Users (GraphQL E2E)', () => {
     expect(data.refreshToken).toBeDefined();
     expect(data.user.email).toBe(memberEmail.toLowerCase());
     expect(data.user.role).toBe('MEMBER');
+    expect(data.user.membershipNumber).toBe(memberCardNo.toUpperCase());
+    expect(data.user.membershipStatus).toBe('PENDING');
     memberAccessToken = data.accessToken;
     memberUserId = Number(data.user.id);
   });
@@ -97,6 +103,7 @@ describe('Auth & Users (GraphQL E2E)', () => {
           name: "Duplicate User"
           email: "${memberEmail}"
           password: "anotherPassword123"
+          membershipNumber: "${memberCardNo}-DUP"
         }) {
           accessToken
         }
@@ -520,6 +527,148 @@ describe('Auth & Users (GraphQL E2E)', () => {
       expect(res.body.errors).toBeDefined();
       expect(res.body.errors[0].message).toContain(
         'Admins cannot remove their own admin role',
+      );
+    });
+  });
+
+  describe('Membership approval flow', () => {
+    const applicantEmail = `authtest_applicant_${Date.now()}@example.com`;
+    const applicantCardNo = `APP-${Date.now()}`;
+    let applicantToken = '';
+    let applicantId = 0;
+    let bookId = 0;
+
+    const gql = (query: string, token?: string) => {
+      const req = request(app.getHttpServer()).post('/graphql');
+      if (token) req.set('Authorization', `Bearer ${token}`);
+      return req.send({ query }).expect(200);
+    };
+
+    beforeAll(async () => {
+      const copy = await prisma.copy.findFirst({
+        where: { status: 'AVAILABLE' },
+        select: { bookId: true },
+      });
+      if (!copy) throw new Error('Seeded catalog needs an AVAILABLE copy');
+      bookId = copy.bookId;
+
+      const res = await gql(`
+        mutation {
+          register(input: {
+            name: "Applicant"
+            email: "${applicantEmail}"
+            password: "securePassword123"
+            membershipNumber: "${applicantCardNo}"
+          }) { accessToken user { id membershipStatus } }
+        }
+      `);
+      expect(res.body.errors).toBeUndefined();
+      applicantToken = res.body.data.register.accessToken;
+      applicantId = Number(res.body.data.register.user.id);
+      expect(res.body.data.register.user.membershipStatus).toBe('PENDING');
+    });
+
+    afterAll(async () => {
+      await prisma.hold.deleteMany({ where: { userId: applicantId } });
+    });
+
+    it('rejects registering a membership number that is already in use', async () => {
+      const res = await gql(`
+        mutation {
+          register(input: {
+            name: "Copycat"
+            email: "authtest_copycat_${Date.now()}@example.com"
+            password: "securePassword123"
+            membershipNumber: "${applicantCardNo.toLowerCase()}"
+          }) { accessToken }
+        }
+      `);
+      expect(res.body.errors[0].message).toContain(
+        'This membership number is already registered',
+      );
+    });
+
+    it('blocks a PENDING member from requesting a hold', async () => {
+      const res = await gql(
+        `mutation { requestHold(bookId: ${bookId}) { id } }`,
+        applicantToken,
+      );
+      expect(res.body.errors).toBeDefined();
+      expect(res.body.errors[0].message).toContain('awaiting admin approval');
+      expect(await prisma.hold.count({ where: { userId: applicantId } })).toBe(
+        0,
+      );
+    });
+
+    it('lists the applicant among pending applications for ADMIN only', async () => {
+      const denied = await gql(
+        `query { membershipApplications { id } }`,
+        applicantToken,
+      );
+      expect(denied.body.errors[0].extensions.code).toBe('FORBIDDEN');
+
+      const res = await gql(
+        `query { membershipApplications { id membershipNumber membershipStatus } }`,
+        adminAccessToken,
+      );
+      expect(res.body.errors).toBeUndefined();
+      expect(res.body.data.membershipApplications).toEqual(
+        expect.arrayContaining([
+          {
+            id: String(applicantId),
+            membershipNumber: applicantCardNo.toUpperCase(),
+            membershipStatus: 'PENDING',
+          },
+        ]),
+      );
+    });
+
+    it('does not let a member approve themselves', async () => {
+      const res = await gql(
+        `mutation { approveMembership(userId: ${applicantId}) { id } }`,
+        applicantToken,
+      );
+      expect(res.body.errors[0].extensions.code).toBe('FORBIDDEN');
+    });
+
+    it('lets an ADMIN approve, after which the member can place a hold', async () => {
+      const approved = await gql(
+        `mutation { approveMembership(userId: ${applicantId}) { membershipStatus membershipReviewedAt } }`,
+        adminAccessToken,
+      );
+      expect(approved.body.errors).toBeUndefined();
+      expect(approved.body.data.approveMembership.membershipStatus).toBe(
+        'APPROVED',
+      );
+      expect(
+        approved.body.data.approveMembership.membershipReviewedAt,
+      ).toBeTruthy();
+
+      // Same access token as before approval: status is read fresh, not from the JWT
+      const hold = await gql(
+        `mutation { requestHold(bookId: ${bookId}) { id } }`,
+        applicantToken,
+      );
+      expect(hold.body.errors).toBeUndefined();
+      const holdId = Number(hold.body.data.requestHold.id);
+
+      const cancelled = await gql(
+        `mutation { cancelMyHold(holdId: ${holdId}) { status } }`,
+        applicantToken,
+      );
+      expect(cancelled.body.errors).toBeUndefined();
+      expect(cancelled.body.data.cancelMyHold.status).toBe(
+        HoldStatus.CANCELLED,
+      );
+    });
+
+    it('refuses to reject an already approved membership', async () => {
+      const res = await gql(
+        `mutation { rejectMembership(userId: ${applicantId}) { id } }`,
+        adminAccessToken,
+      );
+      expect(res.body.errors[0].message).toContain(
+        'Cannot reject a membership that is APPROVED',
       );
     });
   });

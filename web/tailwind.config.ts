@@ -22,8 +22,11 @@ const config: Config = {
         foreground: "var(--foreground)",
       },
       fontFamily: {
-        sans: ['"Plus Jakarta Sans"', 'var(--font-geist-sans)', 'sans-serif'],
+        // Futura where installed (macOS/iOS); Jost (open-source Futura-style) elsewhere.
+        sans: ['var(--font-body)'],
+        body: ['var(--font-body)'],
         handwriting: ['"Caveat"', 'cursive'],
+        heading: ['var(--font-airone)', 'var(--font-body)'],
       },
     },
   },

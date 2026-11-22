@@ -1,10 +1,15 @@
 export type Role = 'ADMIN' | 'LIBRARIAN' | 'MEMBER';
 
+export type MembershipStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
+
 export interface User {
   id: string;
   email: string;
   name: string;
   role: Role;
+  membershipNumber?: string | null;
+  membershipStatus?: MembershipStatus;
+  membershipReviewedAt?: string | null;
   createdAt: string;
   updatedAt?: string;
 }
@@ -188,6 +193,8 @@ export interface Notification {
   template: string;
   status: NotificationStatus;
   sentAt?: string | null;
+  /** null = not yet seen in the portal */
+  readAt?: string | null;
   createdAt: string;
 }
 
@@ -205,7 +212,10 @@ export interface JobStatus {
 
 export interface JobRunResult {
   jobName: string;
-  success: boolean;
+  /** e.g. COMPLETED, FAILED */
+  status: string;
+  /** true when another runner held the lease, so this run did nothing */
+  skipped: boolean;
   durationMs: number;
   stats?: string | null;
   error?: string | null;
@@ -217,7 +227,7 @@ export interface MissedPickupsSummary {
   recent: Array<{
     holdId: number;
     bookTitle: string;
-    expiredAt: string;
+    missedAt: string;
   }>;
 }
 

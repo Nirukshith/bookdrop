@@ -164,6 +164,7 @@ describe('Stage 10: Notifications (Email) E2E Integration', () => {
         name: 'New Registered User',
         email: newEmail,
         password: 'Password123!',
+        membershipNumber: `S10-${Date.now()}`,
       });
       const newUserId = regResult.user.id;
 

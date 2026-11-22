@@ -1,8 +1,10 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
-import { useRouter } from 'next/navigation';
+import React, { useState, useEffect, useCallback, Suspense } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
+import { useConfirm } from '@/components/ui/confirm-modal';
+import { markNotificationsRead } from '@/lib/use-unread-notifications';
 import {
   Loan,
   Hold,
@@ -22,43 +24,82 @@ import {
   CANCEL_MY_HOLD_MUTATION,
   CANCEL_RESERVATION_MUTATION,
 } from '@/lib/graphql-queries';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
+import {
+  PortalPage,
+  PortalHero,
+  Notice,
+  EmptyState,
+  StatusPill,
+  ChipTabs,
+  BookThumb,
+  btnPrimary,
+  btnDark,
+  btnOutline,
+  btnDanger,
+} from '@/components/portal/portal-ui';
 import { formatCurrency, formatDate, formatDateTime, getDaysRemaining } from '@/lib/utils';
 import {
   BookOpen,
   Clock,
   BookmarkCheck,
   Users,
-  AlertTriangle,
   Mail,
-  ShieldAlert,
-  Calendar,
   CheckCircle2,
-  XCircle,
   RefreshCw,
+  Receipt,
+  ArrowRight,
+  Loader2,
   QrCode,
-  DollarSign,
+  ShieldAlert,
+  IdCard,
 } from 'lucide-react';
 import Link from 'next/link';
 
-export default function PatronDashboardPage() {
-  const router = useRouter();
-  const { user, isAuthenticated, isLoading: isAuthLoading } = useAuth();
+const DASHBOARD_TABS = ['loans', 'holds', 'queue', 'fines', 'notifications'] as const;
+type DashboardTab = (typeof DASHBOARD_TABS)[number];
 
-  const [activeTab, setActiveTab] = useState<'loans' | 'holds' | 'queue' | 'fines' | 'notifications'>('loans');
+// useSearchParams needs a Suspense boundary so the page can still be prerendered.
+export default function PatronDashboardPage() {
+  return (
+    <Suspense fallback={null}>
+      <PatronDashboard />
+    </Suspense>
+  );
+}
+
+function PatronDashboard() {
+  const router = useRouter();
+  const {
+    user,
+    isAuthenticated,
+    isLoading: isAuthLoading,
+    membershipStatus,
+    refreshUserProfile,
+  } = useAuth();
+
+  // The active tab lives in the URL (?tab=holds) so the sidebar can deep-link to each section.
+  const searchParams = useSearchParams();
+  const tabParam = searchParams.get('tab');
+  const activeTab: DashboardTab = DASHBOARD_TABS.includes(tabParam as DashboardTab)
+    ? (tabParam as DashboardTab)
+    : 'loans';
+  const setActiveTab = (tab: DashboardTab) =>
+    router.replace(tab === 'loans' ? '/dashboard' : `/dashboard?tab=${tab}`, { scroll: false });
 
   const [loans, setLoans] = useState<Loan[]>([]);
   const [holds, setHolds] = useState<Hold[]>([]);
   const [reservations, setReservations] = useState<Reservation[]>([]);
+  const { confirm, notify, confirmDialog } = useConfirm();
   const [fines, setFines] = useState<MyFine[]>([]);
   const [notifications, setNotifications] = useState<Notification[]>([]);
+  // Notifications that were unread when the member opened the tab: highlighted as "New" for this visit.
+  const [newNotificationIds, setNewNotificationIds] = useState<Set<string>>(new Set());
   const [missedPickups, setMissedPickups] = useState<MissedPickupsSummary | null>(null);
 
   const [isLoading, setIsLoading] = useState(true);
+  // Skeletons only on the first load; later refreshes keep the current data on screen.
+  const [hasLoaded, setHasLoaded] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [actionSuccess, setActionSuccess] = useState<string | null>(null);
   const [processingId, setProcessingId] = useState<string | null>(null);
 
   const loadDashboardData = useCallback(async () => {
@@ -86,6 +127,7 @@ export default function PatronDashboardPage() {
       setActionError(err.message || 'Error loading dashboard data');
     } finally {
       setIsLoading(false);
+      setHasLoaded(true);
     }
   }, [isAuthenticated]);
 
@@ -100,575 +142,460 @@ export default function PatronDashboardPage() {
   }, [isAuthenticated, isAuthLoading, router, loadDashboardData]);
 
   const handleCancelHold = async (holdId: string) => {
+    const title = holds.find((h) => h.id === holdId)?.bookTitle;
+    const ok = await confirm({
+      title: 'Cancel this hold?',
+      message: (
+        <>
+          {title ? <>Your reserved copy of <span className="font-semibold text-black/80">{title}</span> will go back on the shelf. </> : 'Your reserved copy will go back on the shelf. '}
+          You&apos;d need to place a new hold to get it again.
+        </>
+      ),
+      tone: 'danger',
+      confirmText: 'Cancel hold',
+      cancelText: 'Keep hold',
+    });
+    if (ok === null) return;
     try {
       setProcessingId(holdId);
       setActionError(null);
-      setActionSuccess(null);
       await fetchGraphQL(CANCEL_MY_HOLD_MUTATION, { holdId: parseInt(holdId, 10) });
-      setActionSuccess('Hold reservation successfully cancelled.');
       await loadDashboardData();
+      await notify({
+        title: 'Hold cancelled',
+        message: title ? <><span className="font-semibold text-black/80">{title}</span> is back on the shelf for other readers.</> : 'The copy is back on the shelf for other readers.',
+      });
     } catch (err: any) {
-      setActionError(err.message || 'Failed to cancel hold.');
+      await notify({ title: 'Couldn’t cancel the hold', message: err.message || 'Please try again.', tone: 'danger' });
     } finally {
       setProcessingId(null);
     }
   };
 
   const handleCancelReservation = async (reservationId: string) => {
+    const res = reservations.find((r) => r.id === reservationId);
+    const title = res?.book?.title;
+    const ok = await confirm({
+      title: 'Leave the waitlist?',
+      message: (
+        <>
+          {title ? <>You&apos;ll lose your place in line for <span className="font-semibold text-black/80">{title}</span>. </> : <>You&apos;ll lose your place in line. </>}
+          Rejoining puts you at the back of the queue.
+        </>
+      ),
+      tone: 'danger',
+      confirmText: 'Leave waitlist',
+      cancelText: 'Stay in line',
+    });
+    if (ok === null) return;
     try {
       setProcessingId(reservationId);
       setActionError(null);
-      setActionSuccess(null);
       await fetchGraphQL(CANCEL_RESERVATION_MUTATION, {
         reservationId: parseInt(reservationId, 10),
         reason: 'Cancelled by patron',
       });
-      setActionSuccess('Removed from waiting queue.');
       await loadDashboardData();
+      await notify({
+        title: 'You left the waitlist',
+        message: title ? <>You&apos;re no longer waiting for <span className="font-semibold text-black/80">{title}</span>.</> : 'You’re no longer on this waitlist.',
+      });
     } catch (err: any) {
-      setActionError(err.message || 'Failed to cancel queue entry.');
+      await notify({ title: 'Couldn’t leave the waitlist', message: err.message || 'Please try again.', tone: 'danger' });
     } finally {
       setProcessingId(null);
     }
   };
 
+  // Opening the Notifications tab marks everything read (clears the sidebar badge).
+  useEffect(() => {
+    if (activeTab !== 'notifications') return;
+    const unread = notifications.filter((n) => !n.readAt);
+    if (unread.length === 0) return;
+    setNewNotificationIds((prev) => new Set([...Array.from(prev), ...unread.map((n) => n.id)]));
+    const readAt = new Date().toISOString();
+    markNotificationsRead()
+      .then(() => setNotifications((list) => list.map((n) => (n.readAt ? n : { ...n, readAt }))))
+      .catch(() => {
+        // Leave them unread; the badge stays until the next successful visit.
+      });
+  }, [activeTab, notifications]);
+
   if (isAuthLoading || (!user && isAuthenticated)) {
     return (
-      <div className="py-20 text-center space-y-3">
-        <RefreshCw className="w-8 h-8 text-indigo-600 animate-spin mx-auto" />
-        <p className="text-xs text-slate-500">Authenticating session...</p>
+      <div className="py-24 text-center space-y-3 font-body">
+        <Loader2 className="w-7 h-7 text-black/50 animate-spin mx-auto" />
+        <p className="text-sm text-black/55">Signing you in…</p>
       </div>
     );
   }
 
-  const totalOutstandingFines = fines.reduce(
-    (acc, f) => acc + (f.outstandingAmountRs || 0),
-    0
+  const totalOutstandingFines = fines.reduce((acc, f) => acc + (f.outstandingAmountRs || 0), 0);
+  const firstName = user?.name?.split(' ')[0] || 'reader';
+
+  const stats: { id: DashboardTab; label: string; value: string | number; hint: string; alert?: boolean }[] = [
+    { id: 'loans', label: 'On loan', value: loans.length, hint: loans.length === 1 ? 'book checked out' : 'books checked out' },
+    { id: 'holds', label: 'Ready to collect', value: holds.length, hint: 'at the pickup desk' },
+    { id: 'queue', label: 'Waitlists', value: reservations.length, hint: 'titles you’re in line for' },
+    { id: 'fines', label: 'Fines due', value: formatCurrency(totalOutstandingFines), hint: totalOutstandingFines > 0 ? 'settle at the desk' : 'all clear', alert: totalOutstandingFines > 0 },
+  ];
+
+  const tabs = [
+    { id: 'loans' as const, label: 'Loans', count: loans.length, icon: Clock },
+    { id: 'holds' as const, label: 'Desk holds', count: holds.length, icon: BookmarkCheck },
+    { id: 'queue' as const, label: 'Waitlists', count: reservations.length, icon: Users },
+    { id: 'fines' as const, label: 'Fines & fees', count: fines.length, icon: Receipt },
+    { id: 'notifications' as const, label: 'Notifications', count: notifications.length, icon: Mail },
+  ];
+
+  const listSkeleton = (
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      {[1, 2].map((i) => (
+        <div key={i} className="flex gap-4 rounded-2xl border border-black/[0.08] bg-white p-5 animate-pulse">
+          <div className="w-16 h-24 rounded bg-[#F4EFDF]" />
+          <div className="flex-1 space-y-3 pt-1">
+            <div className="h-4 bg-black/[0.08] rounded w-2/3" />
+            <div className="h-3 bg-black/[0.06] rounded w-1/3" />
+            <div className="h-10 bg-black/[0.04] rounded" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+
+  const browseLink = (
+    <Link href="/catalog" className={btnPrimary}>
+      Browse the catalog <ArrowRight className="w-4 h-4" />
+    </Link>
   );
 
   return (
-    <div className="space-y-8">
-      {/* Welcome Banner */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200">
-        <div>
-          <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight flex items-center gap-2">
-            Welcome, {user?.name}
-            <Badge variant="default" className="text-xs font-semibold">
-              {user?.role}
-            </Badge>
-          </h1>
-          <p className="text-xs text-slate-500 mt-1">
-            Member ID: {user?.id} • {user?.email}
+    <PortalPage>
+      {confirmDialog}
+      {/* ── Header ── */}
+      <PortalHero
+        eyebrow="Member dashboard"
+        title={`Welcome back, ${firstName}`}
+        description={
+          <p>
+            {user?.membershipNumber ? (
+              <span className="inline-flex items-center gap-1.5">
+                <IdCard className="w-4 h-4 text-black/40" />
+                <span className="font-mono tracking-wide">{user.membershipNumber}</span>
+              </span>
+            ) : (
+              <>Member #{user?.id}</>
+            )}{' '}
+            <span className="text-black/30 px-1">·</span> {user?.email}
           </p>
+        }
+        actions={
+          <>
+            <button
+              onClick={() => {
+                refreshUserProfile();
+                loadDashboardData();
+              }}
+              disabled={isLoading}
+              className={btnOutline}
+            >
+              <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
+              Refresh
+            </button>
+            <Link href="/catalog" className={btnDark}>
+              <BookOpen className="w-4 h-4" />
+              Browse catalog
+            </Link>
+          </>
+        }
+      >
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          {stats.map((s) => {
+            const isActive = activeTab === s.id;
+            return (
+              <button
+                key={s.id}
+                onClick={() => setActiveTab(s.id)}
+                aria-pressed={isActive}
+                className={`text-left rounded-2xl border px-4 py-4 transition-all ${
+                  isActive ? 'bg-white border-black shadow-sm' : 'bg-white/55 border-black/[0.06] hover:bg-white/85'
+                }`}
+              >
+                <span className="block text-[11px] font-semibold uppercase tracking-[0.14em] text-black/55">{s.label}</span>
+                <span className={`block font-heading text-[1.9rem] leading-none mt-2 tabular-nums ${s.alert ? 'text-rose-700' : ''}`}>
+                  {hasLoaded ? s.value : '–'}
+                </span>
+                <span className="block text-xs text-black/50 mt-1.5">{s.hint}</span>
+              </button>
+            );
+          })}
         </div>
+      </PortalHero>
 
-        <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={loadDashboardData}
-            isLoading={isLoading}
-            className="text-xs gap-1.5"
-          >
-            <RefreshCw className="w-3.5 h-3.5" />
-            Refresh
-          </Button>
-          <Link href="/">
-            <Button variant="primary" size="sm" className="text-xs gap-1.5">
-              <BookOpen className="w-3.5 h-3.5" />
-              Browse Catalog
-            </Button>
-          </Link>
+      {/* ── Membership approval status ── */}
+      {membershipStatus === 'PENDING' && (
+        <div role="status" className="flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+          <Clock className="w-5 h-5 text-amber-600 shrink-0 mt-px" />
+          <div>
+            <p className="font-semibold">Your membership is awaiting approval</p>
+            <p className="mt-0.5 text-amber-900/80">
+              An admin will verify membership number{' '}
+              <span className="font-mono font-semibold">{user?.membershipNumber}</span> against library
+              records. Until then you can browse the catalog, but you can&apos;t place holds, join
+              waitlists or borrow books. Use Refresh to check for updates.
+            </p>
+          </div>
         </div>
-      </div>
-
-      {/* Missed Pickups Alert Banner if threshold > 0 */}
-      {missedPickups && missedPickups.unassessedCount > 0 && (
-        <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 flex items-start gap-3">
-          <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
-          <div className="text-xs space-y-1">
-            <span className="font-bold">
-              Unassessed Missed Pickups: {missedPickups.unassessedCount} of {missedPickups.threshold}
-            </span>
-            <p className="text-amber-800">
-              When a reserved book is not collected before the deadline, it is counted as missed. Reaching{' '}
-              {missedPickups.threshold} uncollected holds will trigger an automatic penalty fine.
+      )}
+      {membershipStatus === 'REJECTED' && (
+        <div role="alert" className="flex items-start gap-3 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-900">
+          <ShieldAlert className="w-5 h-5 text-rose-600 shrink-0 mt-px" />
+          <div>
+            <p className="font-semibold">Your membership application was not approved</p>
+            <p className="mt-0.5 text-rose-900/80">
+              We couldn&apos;t verify membership number{' '}
+              <span className="font-mono font-semibold">{user?.membershipNumber}</span>. Please contact the
+              library desk to resolve it.
             </p>
           </div>
         </div>
       )}
 
-      {/* Action Feedback Alerts */}
-      {actionSuccess && (
-        <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-center gap-2">
-          <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-          <span>{actionSuccess}</span>
-        </div>
+      {/* ── Notices ── */}
+      {missedPickups && missedPickups.unassessedCount > 0 && (
+        <Notice tone="warning" title={`${missedPickups.unassessedCount} of ${missedPickups.threshold} missed pickups`}>
+          A hold that isn’t collected before its deadline counts as missed. Reaching {missedPickups.threshold} adds an
+          automatic penalty fine to your account.
+        </Notice>
       )}
+      {actionError && <Notice tone="error" onDismiss={() => setActionError(null)}>{actionError}</Notice>}
 
-      {actionError && (
-        <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-center gap-2">
-          <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
-          <span>{actionError}</span>
-        </div>
-      )}
+      {/* ── Section tabs ── */}
+      <ChipTabs label="Dashboard sections" tabs={tabs} active={activeTab} onChange={setActiveTab} />
 
-      {/* Metric Counters */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <Card
-          onClick={() => setActiveTab('loans')}
-          className={`cursor-pointer transition-all ${activeTab === 'loans' ? 'ring-2 ring-indigo-600 shadow-md' : 'hover:border-indigo-200'
-            }`}
-        >
-          <CardContent className="p-5 flex items-center justify-between">
-            <div>
-              <div className="text-xs text-slate-500 font-medium">Active Loans</div>
-              <div className="text-2xl font-bold text-slate-900 mt-1">{loans.length}</div>
-            </div>
-            <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
-              <Clock className="w-5 h-5" />
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card
-          onClick={() => setActiveTab('holds')}
-          className={`cursor-pointer transition-all ${activeTab === 'holds' ? 'ring-2 ring-indigo-600 shadow-md' : 'hover:border-indigo-200'
-            }`}
-        >
-          <CardContent className="p-5 flex items-center justify-between">
-            <div>
-              <div className="text-xs text-slate-500 font-medium">Ready Holds</div>
-              <div className="text-2xl font-bold text-slate-900 mt-1">{holds.length}</div>
-            </div>
-            <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
-              <BookmarkCheck className="w-5 h-5" />
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card
-          onClick={() => setActiveTab('queue')}
-          className={`cursor-pointer transition-all ${activeTab === 'queue' ? 'ring-2 ring-indigo-600 shadow-md' : 'hover:border-indigo-200'
-            }`}
-        >
-          <CardContent className="p-5 flex items-center justify-between">
-            <div>
-              <div className="text-xs text-slate-500 font-medium">Waitlists</div>
-              <div className="text-2xl font-bold text-slate-900 mt-1">{reservations.length}</div>
-            </div>
-            <div className="w-10 h-10 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center">
-              <Users className="w-5 h-5" />
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card
-          onClick={() => setActiveTab('fines')}
-          className={`cursor-pointer transition-all ${activeTab === 'fines' ? 'ring-2 ring-indigo-600 shadow-md' : 'hover:border-indigo-200'
-            }`}
-        >
-          <CardContent className="p-5 flex items-center justify-between">
-            <div>
-              <div className="text-xs text-slate-500 font-medium">Outstanding Fines</div>
-              <div
-                className={`text-xl font-bold mt-1 ${totalOutstandingFines > 0 ? 'text-rose-600' : 'text-slate-900'
-                  }`}
-              >
-                {formatCurrency(totalOutstandingFines)}
-              </div>
-            </div>
-            <div
-              className={`w-10 h-10 rounded-xl flex items-center justify-center ${totalOutstandingFines > 0
-                  ? 'bg-rose-50 text-rose-600'
-                  : 'bg-slate-100 text-slate-500'
-                }`}
-            >
-              <DollarSign className="w-5 h-5" />
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Tabs Header */}
-      <div className="flex border-b border-slate-200 space-x-6 text-sm font-medium overflow-x-auto">
-        <button
-          onClick={() => setActiveTab('loans')}
-          className={`pb-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap ${activeTab === 'loans'
-              ? 'border-indigo-600 text-indigo-600 font-semibold'
-              : 'border-transparent text-slate-500 hover:text-slate-800'
-            }`}
-        >
-          <Clock className="w-4 h-4" />
-          Active Loans ({loans.length})
-        </button>
-
-        <button
-          onClick={() => setActiveTab('holds')}
-          className={`pb-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap ${activeTab === 'holds'
-              ? 'border-indigo-600 text-indigo-600 font-semibold'
-              : 'border-transparent text-slate-500 hover:text-slate-800'
-            }`}
-        >
-          <BookmarkCheck className="w-4 h-4" />
-          Desk Holds ({holds.length})
-        </button>
-
-        <button
-          onClick={() => setActiveTab('queue')}
-          className={`pb-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap ${activeTab === 'queue'
-              ? 'border-indigo-600 text-indigo-600 font-semibold'
-              : 'border-transparent text-slate-500 hover:text-slate-800'
-            }`}
-        >
-          <Users className="w-4 h-4" />
-          Waitlist Queue ({reservations.length})
-        </button>
-
-        <button
-          onClick={() => setActiveTab('fines')}
-          className={`pb-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap ${activeTab === 'fines'
-              ? 'border-indigo-600 text-indigo-600 font-semibold'
-              : 'border-transparent text-slate-500 hover:text-slate-800'
-            }`}
-        >
-          <DollarSign className="w-4 h-4" />
-          Fines & Fees ({fines.length})
-        </button>
-
-        <button
-          onClick={() => setActiveTab('notifications')}
-          className={`pb-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap ${activeTab === 'notifications'
-              ? 'border-indigo-600 text-indigo-600 font-semibold'
-              : 'border-transparent text-slate-500 hover:text-slate-800'
-            }`}
-        >
-          <Mail className="w-4 h-4" />
-          Notifications ({notifications.length})
-        </button>
-      </div>
-
-      {/* Tab 1: Active Loans */}
-      {activeTab === 'loans' && (
-        <div className="space-y-4">
-          {loans.length === 0 ? (
-            <div className="text-center py-12 bg-white rounded-xl border border-slate-200 p-6">
-              <Clock className="w-10 h-10 text-slate-300 mx-auto mb-2" />
-              <h3 className="text-sm font-semibold text-slate-700">No active loans</h3>
-              <p className="text-xs text-slate-500 mt-1">
-                You haven&apos;t checked out any books yet. Browse the catalog to place holds.
-              </p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {loans.map((loan) => {
-                const { days, isOverdue, label } = getDaysRemaining(loan.dueAt);
-                return (
-                  <Card key={loan.id} className="p-5 flex flex-col justify-between">
-                    <div>
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <h3 className="font-bold text-slate-900 text-base">{loan.bookTitle}</h3>
-                          <div className="flex items-center gap-2 text-xs text-slate-500 mt-1 font-mono">
-                            <QrCode className="w-3.5 h-3.5 text-slate-400" />
-                            Barcode: {loan.copyBarcode || 'N/A'}
-                          </div>
-                        </div>
-
-                        {isOverdue ? (
-                          <Badge variant="danger" className="shrink-0">
-                            {label}
-                          </Badge>
-                        ) : days <= 3 ? (
-                          <Badge variant="warning" className="shrink-0">
-                            {label}
-                          </Badge>
-                        ) : (
-                          <Badge variant="success" className="shrink-0">
-                            {label}
-                          </Badge>
-                        )}
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-2 mt-4 p-3 bg-slate-50 rounded-lg text-xs">
-                        <div>
-                          <span className="text-slate-400 block text-[10px] uppercase font-semibold">
-                            Borrowed On
-                          </span>
-                          <span className="text-slate-700 font-medium">
-                            {formatDate(loan.borrowedAt)}
-                          </span>
-                        </div>
-                        <div>
-                          <span className="text-slate-400 block text-[10px] uppercase font-semibold">
-                            Due Date
-                          </span>
-                          <span className="text-slate-700 font-medium">
-                            {formatDate(loan.dueAt)}
-                          </span>
-                        </div>
-                      </div>
-
-                      {loan.accruedLateFeeRs > 0 && (
-                        <div className="mt-3 p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-center justify-between">
-                          <span className="font-semibold">Accrued Overdue Fine:</span>
-                          <span className="font-bold">{formatCurrency(loan.accruedLateFeeRs)}</span>
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="mt-4 pt-3 border-t border-slate-100 text-[11px] text-slate-400">
-                      To return, hand over copy {loan.copyBarcode} at the staff returns desk.
-                    </div>
-                  </Card>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Tab 2: Holds */}
-      {activeTab === 'holds' && (
-        <div className="space-y-4">
-          {holds.length === 0 ? (
-            <div className="text-center py-12 bg-white rounded-xl border border-slate-200 p-6">
-              <BookmarkCheck className="w-10 h-10 text-slate-300 mx-auto mb-2" />
-              <h3 className="text-sm font-semibold text-slate-700">No active holds</h3>
-              <p className="text-xs text-slate-500 mt-1">
-                You do not have any books waiting at the pickup desk.
-              </p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {holds.map((hold) => (
-                <Card key={hold.id} className="p-5 flex flex-col justify-between">
-                  <div>
+      {/* ── Loans ── */}
+      {activeTab === 'loans' &&
+        (!hasLoaded ? listSkeleton : loans.length === 0 ? (
+          <EmptyState icon={Clock} title="No books on loan" action={browseLink}>
+            Place a hold in the catalog, then collect it at the desk to start a loan.
+          </EmptyState>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {loans.map((loan) => {
+              const { days, isOverdue, label } = getDaysRemaining(loan.dueAt);
+              const tone = isOverdue ? 'red' : days <= 3 ? 'amber' : 'green';
+              return (
+                <article key={loan.id} className="flex gap-5 rounded-2xl border border-black/[0.08] bg-white p-5">
+                  <BookThumb id={loan.bookId} title={loan.bookTitle} className="w-[72px]" />
+                  <div className="flex-1 min-w-0 flex flex-col">
                     <div className="flex items-start justify-between gap-3">
+                      <h3 className="font-bold leading-snug line-clamp-2">{loan.bookTitle}</h3>
+                      <StatusPill tone={tone}>{label}</StatusPill>
+                    </div>
+                    <p className="mt-1 inline-flex items-center gap-1.5 text-xs text-black/50 font-mono">
+                      <QrCode className="w-3.5 h-3.5" />{loan.copyBarcode || 'N/A'}
+                    </p>
+                    <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
                       <div>
-                        <h3 className="font-bold text-slate-900 text-base">{hold.bookTitle}</h3>
-                        <div className="flex items-center gap-2 text-xs text-slate-500 mt-1 font-mono">
-                          <QrCode className="w-3.5 h-3.5 text-slate-400" />
-                          Assigned Copy: {hold.copyBarcode || 'Pending'}
-                        </div>
+                        <dt className="text-[11px] font-semibold uppercase tracking-[0.14em] text-black/50">Borrowed</dt>
+                        <dd className="font-medium mt-0.5">{formatDate(loan.borrowedAt)}</dd>
                       </div>
-                      <Badge variant="success">Ready for Pickup</Badge>
-                    </div>
-
-                    <div className="mt-4 p-3 bg-slate-50 rounded-lg text-xs space-y-1">
-                      <div className="flex justify-between">
-                        <span className="text-slate-500">Reserved On:</span>
-                        <span className="font-medium text-slate-800">
-                          {formatDateTime(hold.createdAt)}
-                        </span>
+                      <div>
+                        <dt className="text-[11px] font-semibold uppercase tracking-[0.14em] text-black/50">Due</dt>
+                        <dd className={`font-medium mt-0.5 ${isOverdue ? 'text-rose-700' : ''}`}>{formatDate(loan.dueAt)}</dd>
                       </div>
-                      <div className="flex justify-between">
-                        <span className="text-slate-500">Pickup Deadline:</span>
-                        <span className="font-bold text-amber-700">
-                          {formatDateTime(hold.expiresAt)}
-                        </span>
+                    </dl>
+                    {loan.accruedLateFeeRs > 0 && (
+                      <div className="mt-3 flex items-center justify-between rounded-xl bg-rose-50 border border-rose-200 px-3 py-2 text-sm text-rose-800">
+                        <span>Late fee so far</span>
+                        <span className="font-bold tabular-nums">{formatCurrency(loan.accruedLateFeeRs)}</span>
                       </div>
-                    </div>
+                    )}
+                    <p className="mt-auto pt-4 text-xs text-black/45">Return this copy at any returns desk.</p>
                   </div>
+                </article>
+              );
+            })}
+          </div>
+        ))}
 
-                  <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between">
-                    <span className="text-[11px] text-slate-500">
-                      Show your barcode at the desk to pick up.
-                    </span>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      isLoading={processingId === hold.id}
+      {/* ── Holds ── */}
+      {activeTab === 'holds' &&
+        (!hasLoaded ? listSkeleton : holds.length === 0 ? (
+          <EmptyState icon={BookmarkCheck} title="Nothing waiting at the desk" action={browseLink}>
+            When you place a hold, the copy is set aside here for you to collect.
+          </EmptyState>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {holds.map((hold) => (
+              <article key={hold.id} className="flex gap-5 rounded-2xl border border-black/[0.08] bg-white p-5">
+                <BookThumb id={hold.bookId} title={hold.bookTitle} className="w-[72px]" />
+                <div className="flex-1 min-w-0 flex flex-col">
+                  <div className="flex items-start justify-between gap-3">
+                    <h3 className="font-bold leading-snug line-clamp-2">{hold.bookTitle}</h3>
+                    <StatusPill tone="green">Ready</StatusPill>
+                  </div>
+                  <p className="mt-1 inline-flex items-center gap-1.5 text-xs text-black/50 font-mono">
+                    <QrCode className="w-3.5 h-3.5" />{hold.copyBarcode || 'Copy pending'}
+                  </p>
+                  <div className="mt-4 rounded-xl bg-[#FFF7D1] border border-brandYellow/60 px-3 py-2.5">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-black/55">Collect by</p>
+                    <p className="font-semibold mt-0.5">{formatDateTime(hold.expiresAt)}</p>
+                  </div>
+                  <div className="mt-auto pt-4 flex items-center justify-between gap-3">
+                    <span className="text-xs text-black/45">Placed {formatDate(hold.createdAt)}</span>
+                    <button
                       onClick={() => handleCancelHold(hold.id)}
-                      className="text-xs text-rose-600 hover:bg-rose-50 border-rose-200"
+                      disabled={processingId === hold.id}
+                      className={`${btnDanger} px-4 py-2 text-xs`}
                     >
-                      Cancel Hold
-                    </Button>
+                      {processingId === hold.id && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                      Cancel hold
+                    </button>
                   </div>
-                </Card>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+                </div>
+              </article>
+            ))}
+          </div>
+        ))}
 
-      {/* Tab 3: Queue Reservations */}
-      {activeTab === 'queue' && (
-        <div className="space-y-4">
-          {reservations.length === 0 ? (
-            <div className="text-center py-12 bg-white rounded-xl border border-slate-200 p-6">
-              <Users className="w-10 h-10 text-slate-300 mx-auto mb-2" />
-              <h3 className="text-sm font-semibold text-slate-700">No active waitlists</h3>
-              <p className="text-xs text-slate-500 mt-1">
-                You are not currently in line for any popular titles.
-              </p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {reservations.map((res) => (
-                <Card key={res.id} className="p-5 flex flex-col justify-between">
-                  <div>
+      {/* ── Waitlists ── */}
+      {activeTab === 'queue' &&
+        (!hasLoaded ? listSkeleton : reservations.length === 0 ? (
+          <EmptyState icon={Users} title="You’re not on any waitlists" action={browseLink}>
+            When every copy of a title is out, join its waitlist from the catalog.
+          </EmptyState>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {reservations.map((res) => {
+              const title = res.book?.title || `Book #${res.bookId}`;
+              return (
+                <article key={res.id} className="flex gap-5 rounded-2xl border border-black/[0.08] bg-white p-5">
+                  <BookThumb
+                    id={res.bookId}
+                    title={title}
+                    author={res.book?.authors?.[0]?.name}
+                    year={res.book?.publishedYear}
+                    className="w-[72px]"
+                  />
+                  <div className="flex-1 min-w-0 flex flex-col">
                     <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <h3 className="font-bold text-slate-900 text-base">
-                          {res.book?.title || `Book #${res.bookId}`}
-                        </h3>
-                        <p className="text-xs text-slate-500 mt-1">
-                          Joined on {formatDate(res.createdAt)}
-                        </p>
+                      <div className="min-w-0">
+                        <h3 className="font-bold leading-snug line-clamp-2">{title}</h3>
+                        {res.book?.authors?.length ? (
+                          <p className="text-sm text-black/55 mt-0.5 line-clamp-1">{res.book.authors.map((a) => a.name).join(', ')}</p>
+                        ) : null}
                       </div>
-
-                      <Badge variant="info" className="text-xs">
-                        Queue Position #{res.position ?? '—'}
-                      </Badge>
+                      <div className="text-right shrink-0">
+                        <span className="block font-heading text-[1.9rem] leading-none tabular-nums">#{res.position ?? '–'}</span>
+                        <span className="block text-[11px] font-semibold uppercase tracking-[0.14em] text-black/50 mt-1">in line</span>
+                      </div>
                     </div>
-
-                    <div className="mt-4 p-3 bg-sky-50 rounded-lg text-xs text-sky-800">
-                      When a copy is returned, the system will automatically promote your reservation
-                      and hold the copy at the desk for you!
+                    <p className="mt-4 text-sm text-black/60 leading-relaxed">
+                      When a copy comes back, it’s held at the desk for you automatically and we’ll let you know.
+                    </p>
+                    <div className="mt-auto pt-4 flex items-center justify-between gap-3">
+                      <span className="text-xs text-black/45">Joined {formatDate(res.createdAt)}</span>
+                      <button
+                        onClick={() => handleCancelReservation(res.id)}
+                        disabled={processingId === res.id}
+                        className={`${btnDanger} px-4 py-2 text-xs`}
+                      >
+                        {processingId === res.id && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                        Leave waitlist
+                      </button>
                     </div>
                   </div>
+                </article>
+              );
+            })}
+          </div>
+        ))}
 
-                  <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-end">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      isLoading={processingId === res.id}
-                      onClick={() => handleCancelReservation(res.id)}
-                      className="text-xs text-rose-600 hover:bg-rose-50 border-rose-200"
-                    >
-                      Leave Waitlist
-                    </Button>
-                  </div>
-                </Card>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Tab 4: Fines */}
-      {activeTab === 'fines' && (
-        <div className="space-y-4">
-          {fines.length === 0 ? (
-            <div className="text-center py-12 bg-white rounded-xl border border-slate-200 p-6">
-              <CheckCircle2 className="w-10 h-10 text-emerald-500 mx-auto mb-2" />
-              <h3 className="text-sm font-semibold text-slate-700">Zero Outstanding Fines</h3>
-              <p className="text-xs text-slate-500 mt-1">
-                Your account is in good standing with no circulation penalties.
-              </p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
-              <table className="w-full text-xs text-left">
-                <thead className="bg-slate-50 text-slate-500 uppercase font-semibold border-b border-slate-200">
-                  <tr>
-                    <th className="px-4 py-3">Book / Reason</th>
-                    <th className="px-4 py-3">Assessed</th>
-                    <th className="px-4 py-3">Paid</th>
-                    <th className="px-4 py-3">Outstanding</th>
-                    <th className="px-4 py-3">Status</th>
-                    <th className="px-4 py-3">Date</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {fines.map((fine) => (
-                    <tr key={fine.id} className="hover:bg-slate-50">
-                      <td className="px-4 py-3">
-                        <div className="font-bold text-slate-800">{fine.bookTitle || 'Fine'}</div>
-                        <div className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">
-                          Reason: {fine.reason}
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 font-medium text-slate-700">
-                        {formatCurrency(fine.originalAmountRs)}
-                      </td>
-                      <td className="px-4 py-3 font-medium text-emerald-600">
-                        {formatCurrency(fine.paidAmountRs)}
-                      </td>
-                      <td className="px-4 py-3 font-bold text-rose-600">
-                        {formatCurrency(fine.outstandingAmountRs)}
-                      </td>
-                      <td className="px-4 py-3">
-                        <Badge
-                          variant={
-                            fine.status === 'PAID'
-                              ? 'success'
-                              : fine.status === 'WAIVED'
-                                ? 'secondary'
-                                : 'danger'
-                          }
-                        >
-                          {fine.status}
-                        </Badge>
-                      </td>
-                      <td className="px-4 py-3 text-slate-500">{formatDate(fine.createdAt)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              <div className="p-4 bg-slate-50 border-t border-slate-200 text-xs text-slate-500">
-                To settle an outstanding fine or request a waiver, visit the circulation desk.
+      {/* ── Fines ── */}
+      {activeTab === 'fines' &&
+        (!hasLoaded ? listSkeleton : fines.length === 0 ? (
+          <EmptyState icon={CheckCircle2} tone="good" title="No fines">
+            Your account is in good standing.
+          </EmptyState>
+        ) : (
+          <div className="rounded-2xl border border-black/[0.08] bg-white overflow-hidden">
+            <div className="flex flex-wrap items-end justify-between gap-4 px-6 py-5 border-b border-black/[0.08]">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-black/50">Outstanding</p>
+                <p className={`font-heading text-[2.2rem] leading-none mt-1.5 tabular-nums ${totalOutstandingFines > 0 ? 'text-rose-700' : ''}`}>
+                  {formatCurrency(totalOutstandingFines)}
+                </p>
               </div>
+              <p className="text-sm text-black/55 max-w-xs">Pay or request a waiver at the circulation desk.</p>
             </div>
-          )}
-        </div>
-      )}
-
-      {/* Tab 5: Notifications */}
-      {activeTab === 'notifications' && (
-        <div className="space-y-4">
-          {notifications.length === 0 ? (
-            <div className="text-center py-12 bg-white rounded-xl border border-slate-200 p-6">
-              <Mail className="w-10 h-10 text-slate-300 mx-auto mb-2" />
-              <h3 className="text-sm font-semibold text-slate-700">No notifications</h3>
-              <p className="text-xs text-slate-500 mt-1">
-                Transactional alerts and emails will be logged here.
-              </p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
-              <table className="w-full text-xs text-left">
-                <thead className="bg-slate-50 text-slate-500 uppercase font-semibold border-b border-slate-200">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm text-left">
+                <thead className="bg-[#FBF8EF] text-[11px] font-semibold uppercase tracking-[0.12em] text-black/50">
                   <tr>
-                    <th className="px-4 py-3">Template / Notification</th>
-                    <th className="px-4 py-3">Status</th>
-                    <th className="px-4 py-3">Sent At</th>
-                    <th className="px-4 py-3">Queued At</th>
+                    <th className="px-6 py-3 font-semibold">Item</th>
+                    <th className="px-4 py-3 font-semibold text-right">Assessed</th>
+                    <th className="px-4 py-3 font-semibold text-right">Paid</th>
+                    <th className="px-4 py-3 font-semibold text-right">Due</th>
+                    <th className="px-4 py-3 font-semibold">Status</th>
+                    <th className="px-6 py-3 font-semibold">Date</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {notifications.map((notif) => (
-                    <tr key={notif.id} className="hover:bg-slate-50">
-                      <td className="px-4 py-3 font-medium text-slate-800">
-                        {notif.template.replace(/_/g, ' ')}
+                <tbody className="divide-y divide-black/[0.06]">
+                  {fines.map((fine) => (
+                    <tr key={fine.id} className="hover:bg-[#FBF8EF]/70">
+                      <td className="px-6 py-3.5">
+                        <div className="font-semibold">{fine.bookTitle || 'Fine'}</div>
+                        <div className="text-xs text-black/50 capitalize">{fine.reason.replace(/_/g, ' ').toLowerCase()}</div>
                       </td>
-                      <td className="px-4 py-3">
-                        <Badge
-                          variant={
-                            notif.status === 'SENT'
-                              ? 'success'
-                              : notif.status === 'FAILED'
-                                ? 'danger'
-                                : 'info'
-                          }
-                        >
-                          {notif.status}
-                        </Badge>
+                      <td className="px-4 py-3.5 text-right tabular-nums">{formatCurrency(fine.originalAmountRs)}</td>
+                      <td className="px-4 py-3.5 text-right tabular-nums text-emerald-700">{formatCurrency(fine.paidAmountRs)}</td>
+                      <td className="px-4 py-3.5 text-right tabular-nums font-semibold">{formatCurrency(fine.outstandingAmountRs)}</td>
+                      <td className="px-4 py-3.5">
+                        <StatusPill tone={fine.status === 'PAID' ? 'green' : fine.status === 'WAIVED' ? 'neutral' : fine.status === 'PARTIALLY_PAID' ? 'amber' : 'red'}>
+                          {fine.status.replace(/_/g, ' ').toLowerCase().replace(/^\w/, (c) => c.toUpperCase())}
+                        </StatusPill>
                       </td>
-                      <td className="px-4 py-3 text-slate-500">{formatDateTime(notif.sentAt)}</td>
-                      <td className="px-4 py-3 text-slate-500">
-                        {formatDateTime(notif.createdAt)}
-                      </td>
+                      <td className="px-6 py-3.5 text-black/55 whitespace-nowrap">{formatDate(fine.createdAt)}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-          )}
-        </div>
-      )}
-    </div>
+          </div>
+        ))}
+
+      {/* ── Notifications ── */}
+      {activeTab === 'notifications' &&
+        (!hasLoaded ? listSkeleton : notifications.length === 0 ? (
+          <EmptyState icon={Mail} title="No notifications yet">
+            Pickup reminders, due-date alerts and waitlist updates will appear here.
+          </EmptyState>
+        ) : (
+          <ul className="rounded-2xl border border-black/[0.08] bg-white divide-y divide-black/[0.06]">
+            {notifications.map((n) => (
+              <li
+                key={n.id}
+                className={`flex items-center gap-4 px-5 py-4 ${newNotificationIds.has(n.id) ? 'bg-amber-50/60' : ''}`}
+              >
+                <div className="w-10 h-10 shrink-0 rounded-full bg-[#F4EFDF] flex items-center justify-center text-black/60">
+                  <Mail className="w-4 h-4" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="flex items-center gap-2 font-semibold">
+                    <span className="capitalize truncate">{n.template.replace(/_/g, ' ').toLowerCase()}</span>
+                    {newNotificationIds.has(n.id) && (
+                      <span className="shrink-0 rounded-full bg-rose-600 px-1.5 py-0.5 text-[10px] font-bold uppercase leading-none tracking-wide text-white">
+                        New
+                      </span>
+                    )}
+                  </p>
+                  <p className="text-xs text-black/50 mt-0.5">{formatDateTime(n.createdAt)}</p>
+                </div>
+              </li>
+            ))}
+          </ul>
+        ))}
+    </PortalPage>
   );
 }
-

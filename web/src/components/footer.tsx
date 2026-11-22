@@ -4,10 +4,15 @@ import React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { BookOpen, Shield, Heart } from 'lucide-react';
+import { useAuth } from '@/lib/auth-context';
+import { usePortalShell } from '@/components/portal-sidebar';
 
 export function Footer() {
   const pathname = usePathname();
-  if (pathname === '/') {
+  const { isStaff, isAdmin } = useAuth();
+  const inPortalShell = usePortalShell();
+  // The landing page has its own footer; login/register are focused, footer-free pages.
+  if (pathname === '/' || pathname === '/login' || pathname === '/register' || inPortalShell) {
     return null;
   }
 
@@ -26,21 +31,27 @@ export function Footer() {
           </div>
 
           <div className="flex items-center gap-6 text-xs text-slate-500">
-            <Link href="/" className="hover:text-indigo-600 transition-colors">
+            <Link href="/catalog" className="hover:text-indigo-600 transition-colors">
               Catalog
             </Link>
             <Link href="/dashboard" className="hover:text-indigo-600 transition-colors">
               Patron Dashboard
             </Link>
-            <Link href="/staff/desk" className="hover:text-indigo-600 transition-colors">
-              Pickup Desk
-            </Link>
-            <Link href="/staff/returns" className="hover:text-indigo-600 transition-colors">
-              Returns Desk
-            </Link>
-            <Link href="/staff/admin" className="hover:text-indigo-600 transition-colors">
-              Job Leases & Admin
-            </Link>
+            {isStaff && (
+              <>
+                <Link href="/staff/desk" className="hover:text-indigo-600 transition-colors">
+                  Pickup Desk
+                </Link>
+                <Link href="/staff/returns" className="hover:text-indigo-600 transition-colors">
+                  Returns Desk
+                </Link>
+              </>
+            )}
+            {isAdmin && (
+              <Link href="/staff/admin" className="hover:text-indigo-600 transition-colors">
+                Job Leases & Admin
+              </Link>
+            )}
           </div>
         </div>
 

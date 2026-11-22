@@ -1,5 +1,14 @@
 import { Field, InputType } from '@nestjs/graphql';
-import { IsEmail, IsNotEmpty, IsString, MinLength } from 'class-validator';
+import {
+  IsEmail,
+  IsNotEmpty,
+  IsString,
+  Matches,
+  MinLength,
+} from 'class-validator';
+
+/** Library card numbers: 4–32 letters, digits or hyphens (case-insensitive). */
+export const MEMBERSHIP_NUMBER_PATTERN = /^[A-Za-z0-9-]{4,32}$/;
 
 @InputType()
 export class RegisterInput {
@@ -16,4 +25,15 @@ export class RegisterInput {
   @IsString()
   @MinLength(8, { message: 'Password must be at least 8 characters long' })
   password: string;
+
+  @Field({
+    description:
+      'Library card number. The account stays PENDING until an admin verifies it.',
+  })
+  @IsString()
+  @Matches(MEMBERSHIP_NUMBER_PATTERN, {
+    message:
+      'Membership number must be 4-32 characters using letters, digits or hyphens',
+  })
+  membershipNumber: string;
 }

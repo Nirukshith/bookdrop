@@ -1,7 +1,10 @@
 'use client';
 
+import Link from 'next/link';
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/lib/auth-context';
+import { useConfirm, ModalDetails } from '@/components/ui/confirm-modal';
+import { describeDeskError, type CirculationNotice } from '@/lib/circulation-errors';
 import { PickupDeskHold, Loan } from '@/lib/types';
 import { fetchGraphQL } from '@/lib/graphql-client';
 import {
@@ -22,14 +25,19 @@ import {
   User,
   BookOpen,
   ArrowRight,
-  Sparkles,
+  LogIn,
   RefreshCw,
   Clock,
   ShieldCheck,
 } from 'lucide-react';
 
 export default function StaffDeskPage() {
-  const { user, isStaff, switchDemoUser } = useAuth();
+  const { user, isStaff } = useAuth();
+  const { confirm, notify, confirmDialog } = useConfirm();
+
+  /** Refused checkouts (limits, fines, overdue, membership) shown in the warning modal. */
+  const showNotice = (notice: CirculationNotice) =>
+    confirm({ title: notice.title, message: notice.message, tone: notice.tone, confirmText: 'Got it', hideCancel: true });
 
   const [deskMode, setDeskMode] = useState<'pickup' | 'checkout'>('pickup');
 
@@ -38,7 +46,6 @@ export default function StaffDeskPage() {
   const [searchEmail, setSearchEmail] = useState('');
   const [holds, setHolds] = useState<PickupDeskHold[]>([]);
   const [isLoadingHolds, setIsLoadingHolds] = useState(false);
-  const [pickupSuccess, setPickupSuccess] = useState<string | null>(null);
   const [pickupError, setPickupError] = useState<string | null>(null);
   const [fulfillingHoldId, setFulfillingHoldId] = useState<string | null>(null);
 
@@ -46,7 +53,6 @@ export default function StaffDeskPage() {
   const [checkoutEmail, setCheckoutEmail] = useState('');
   const [checkoutBarcode, setCheckoutBarcode] = useState('');
   const [isCheckingOut, setIsCheckingOut] = useState(false);
-  const [checkoutSuccess, setCheckoutSuccess] = useState<Loan | null>(null);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
 
   const loadPickupHolds = useCallback(async () => {
@@ -73,23 +79,47 @@ export default function StaffDeskPage() {
   }, [loadPickupHolds]);
 
   const handleConfirmPickup = async (hold: PickupDeskHold) => {
+    const ok = await confirm({
+      title: 'Hand over this copy?',
+      message: (
+        <>
+          Check out <span className="font-semibold text-black/80">{hold.bookTitle}</span> (copy{' '}
+          <span className="font-mono">{hold.copyBarcode}</span>) to{' '}
+          <span className="font-semibold text-black/80">{hold.memberName}</span>. This starts their loan.
+        </>
+      ),
+      tone: 'success',
+      confirmText: 'Confirm pickup',
+    });
+    if (ok === null) return;
     try {
       setFulfillingHoldId(hold.id);
       setPickupError(null);
-      setPickupSuccess(null);
 
       const res = await fetchGraphQL<{ confirmPickup: Loan }>(CONFIRM_PICKUP_MUTATION, {
         copyBarcode: hold.copyBarcode,
         holdId: parseInt(hold.id, 10),
       });
 
-      const due = formatDate(res.confirmPickup.dueAt);
-      setPickupSuccess(
-        `Successfully handed over "${res.confirmPickup.bookTitle}" (Barcode: ${res.confirmPickup.copyBarcode}) to ${hold.memberName}. Loan is active and due on ${due}.`
-      );
       loadPickupHolds();
+      await notify({
+        title: 'Handed over',
+        timer: 4500,
+        message: (
+          <>
+            The loan for <span className="font-semibold text-black/80">{hold.memberName}</span> is now active.
+            <ModalDetails
+              rows={[
+                { label: 'Book', value: res.confirmPickup.bookTitle },
+                { label: 'Copy', value: <span className="font-mono">{res.confirmPickup.copyBarcode}</span> },
+                { label: 'Due', value: formatDate(res.confirmPickup.dueAt) },
+              ]}
+            />
+          </>
+        ),
+      });
     } catch (err: any) {
-      setPickupError(err.message || 'Failed to confirm pickup.');
+      await showNotice(describeDeskError(err, 'Pickup failed'));
     } finally {
       setFulfillingHoldId(null);
     }
@@ -102,20 +132,47 @@ export default function StaffDeskPage() {
       return;
     }
 
+    const ok = await confirm({
+      title: 'Check out this copy?',
+      message: (
+        <>
+          Lend copy <span className="font-mono font-semibold text-black/80">{checkoutBarcode.trim()}</span> to{' '}
+          <span className="font-semibold text-black/80">{checkoutEmail.trim()}</span>. This starts a new loan.
+        </>
+      ),
+      tone: 'success',
+      confirmText: 'Check out',
+    });
+    if (ok === null) return;
+
     try {
       setIsCheckingOut(true);
       setCheckoutError(null);
-      setCheckoutSuccess(null);
 
       const res = await fetchGraphQL<{ checkoutCopy: Loan }>(CHECKOUT_COPY_MUTATION, {
         memberEmail: checkoutEmail.trim(),
         copyBarcode: checkoutBarcode.trim(),
       });
 
-      setCheckoutSuccess(res.checkoutCopy);
       setCheckoutBarcode('');
+      await notify({
+        title: 'Loan started',
+        timer: 4500,
+        message: (
+          <>
+            Walk-in checkout for <span className="font-semibold text-black/80">{checkoutEmail.trim()}</span> is complete.
+            <ModalDetails
+              rows={[
+                { label: 'Book', value: res.checkoutCopy.bookTitle },
+                { label: 'Copy', value: <span className="font-mono">{res.checkoutCopy.copyBarcode}</span> },
+                { label: 'Due', value: formatDate(res.checkoutCopy.dueAt) },
+              ]}
+            />
+          </>
+        ),
+      });
     } catch (err: any) {
-      setCheckoutError(err.message || 'Walk-in checkout failed.');
+      await showNotice(describeDeskError(err, 'Checkout failed'));
     } finally {
       setIsCheckingOut(false);
     }
@@ -123,6 +180,7 @@ export default function StaffDeskPage() {
 
   return (
     <div className="space-y-8">
+      {confirmDialog}
       {/* Top Banner */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200">
         <div>
@@ -142,15 +200,16 @@ export default function StaffDeskPage() {
 
         {/* Quick Staff Login if not logged in as staff */}
         {!isStaff && (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => switchDemoUser('LIBRARIAN')}
-            className="text-xs text-amber-700 bg-amber-50 hover:bg-amber-100 border-amber-200"
-          >
-            <Sparkles className="w-3.5 h-3.5 mr-1 text-amber-600" />
-            Switch to Staff Persona
-          </Button>
+          <Link href="/login">
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-xs text-amber-700 bg-amber-50 hover:bg-amber-100 border-amber-200"
+            >
+              <LogIn className="w-3.5 h-3.5 mr-1 text-amber-600" />
+              Sign in with a staff account
+            </Button>
+          </Link>
         )}
       </div>
 
@@ -240,13 +299,6 @@ export default function StaffDeskPage() {
           </Card>
 
           {/* Action Feedback */}
-          {pickupSuccess && (
-            <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs flex items-center gap-2">
-              <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
-              <span>{pickupSuccess}</span>
-            </div>
-          )}
-
           {pickupError && (
             <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-900 text-xs flex items-center gap-2">
               <AlertCircle className="w-5 h-5 text-rose-600 shrink-0" />
@@ -337,35 +389,6 @@ export default function StaffDeskPage() {
             </CardHeader>
 
             <CardContent className="p-6 pt-0 space-y-5">
-              {checkoutSuccess && (
-                <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs space-y-2">
-                  <div className="flex items-center gap-2 font-bold text-sm text-emerald-800">
-                    <CheckCircle2 className="w-5 h-5 text-emerald-600" />
-                    Loan Successfully Activated!
-                  </div>
-                  <div className="p-3 bg-white/80 rounded-lg space-y-1">
-                    <div>
-                      <span className="text-slate-500">Book Title:</span>{' '}
-                      <span className="font-semibold text-slate-800">
-                        {checkoutSuccess.bookTitle}
-                      </span>
-                    </div>
-                    <div>
-                      <span className="text-slate-500">Barcode:</span>{' '}
-                      <span className="font-mono font-bold text-indigo-700">
-                        {checkoutSuccess.copyBarcode}
-                      </span>
-                    </div>
-                    <div>
-                      <span className="text-slate-500">Due Date:</span>{' '}
-                      <span className="font-semibold text-emerald-700">
-                        {formatDate(checkoutSuccess.dueAt)} (14-day circulation period)
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              )}
-
               {checkoutError && (
                 <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-900 text-xs flex items-center gap-2">
                   <AlertCircle className="w-5 h-5 text-rose-600 shrink-0" />
@@ -379,13 +402,6 @@ export default function StaffDeskPage() {
                     <label className="text-xs font-semibold text-slate-700">
                       Patron Member Email
                     </label>
-                    <button
-                      type="button"
-                      onClick={() => setCheckoutEmail('patron@example.com')}
-                      className="text-[11px] text-indigo-600 hover:underline"
-                    >
-                      Fill demo patron
-                    </button>
                   </div>
                   <input
                     type="email"

@@ -1,12 +1,19 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
-import { Role } from '@prisma/client';
+import { MembershipStatus, Prisma, Role } from '@prisma/client';
 import * as argon2 from 'argon2';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import { DOMAIN_EVENT_NAMES } from '../contracts/events';
 import { PrismaService } from '../prisma/prisma.service';
 import { UsersService } from './users.service';
 
 describe('UsersService', () => {
   let service: UsersService;
+  let eventEmitterMock: { emit: jest.Mock };
   let prismaMock: {
     user: {
       findUnique: jest.Mock;
@@ -25,6 +32,7 @@ describe('UsersService', () => {
         update: jest.fn(),
       },
     };
+    eventEmitterMock = { emit: jest.fn() };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -33,6 +41,7 @@ describe('UsersService', () => {
           provide: PrismaService,
           useValue: prismaMock,
         },
+        { provide: EventEmitter2, useValue: eventEmitterMock },
       ],
     }).compile();
 
@@ -223,6 +232,7 @@ describe('UsersService', () => {
             name: true,
             email: true,
             role: true,
+            membershipStatus: true,
           },
         });
         expect(member).toEqual({
@@ -276,12 +286,283 @@ describe('UsersService', () => {
             name: true,
             email: true,
             role: true,
+            membershipStatus: true,
           },
         });
         expect(result).toHaveLength(2);
         expect(result[0].id).toBe(1);
         expect(result[1].id).toBe(2);
         expect((result[0] as any).passwordHash).toBeUndefined();
+      });
+    });
+  });
+
+  describe('membership approval', () => {
+    const pendingMember = {
+      id: 42,
+      role: Role.MEMBER,
+      membershipStatus: MembershipStatus.PENDING,
+    };
+
+    describe('getMembershipStatus', () => {
+      it('returns the stored status', async () => {
+        prismaMock.user.findUnique.mockResolvedValue({
+          membershipStatus: MembershipStatus.PENDING,
+        });
+        await expect(service.getMembershipStatus(42)).resolves.toBe(
+          MembershipStatus.PENDING,
+        );
+        expect(prismaMock.user.findUnique).toHaveBeenCalledWith({
+          where: { id: 42 },
+          select: { membershipStatus: true },
+        });
+      });
+
+      it('returns null when the user does not exist', async () => {
+        prismaMock.user.findUnique.mockResolvedValue(null);
+        await expect(service.getMembershipStatus(999)).resolves.toBeNull();
+      });
+    });
+
+    describe('listByMembershipStatus', () => {
+      it('lists only MEMBER accounts with the status, oldest first', async () => {
+        prismaMock.user.findMany.mockResolvedValue([]);
+        await service.listByMembershipStatus(MembershipStatus.PENDING);
+        expect(prismaMock.user.findMany).toHaveBeenCalledWith({
+          where: {
+            role: Role.MEMBER,
+            membershipStatus: MembershipStatus.PENDING,
+          },
+          orderBy: { createdAt: 'asc' },
+        });
+      });
+    });
+
+    describe('reviewMembership', () => {
+      it.each([
+        ['APPROVE', MembershipStatus.APPROVED],
+        ['REJECT', MembershipStatus.REJECTED],
+      ] as const)(
+        '%s a PENDING member records the decision and reviewer',
+        async (decision, expected) => {
+          prismaMock.user.findUnique.mockResolvedValue(pendingMember);
+          prismaMock.user.update.mockResolvedValue({
+            ...pendingMember,
+            membershipStatus: expected,
+          });
+
+          await service.reviewMembership(1, 42, decision);
+
+          expect(prismaMock.user.update).toHaveBeenCalledWith({
+            where: { id: 42 },
+            data: {
+              membershipStatus: expected,
+              membershipReviewedAt: expect.any(Date),
+              membershipReviewedById: 1,
+            },
+          });
+        },
+      );
+
+      it('emits user.membership_approved after approving, for the approval email', async () => {
+        prismaMock.user.findUnique.mockResolvedValue(pendingMember);
+        prismaMock.user.update.mockResolvedValue({
+          id: 42,
+          name: 'Reader',
+          email: 'reader@example.com',
+          membershipNumber: 'LIB-0042',
+          membershipStatus: MembershipStatus.APPROVED,
+        });
+
+        await service.reviewMembership(1, 42, 'APPROVE');
+
+        expect(eventEmitterMock.emit).toHaveBeenCalledTimes(1);
+        expect(eventEmitterMock.emit).toHaveBeenCalledWith(
+          DOMAIN_EVENT_NAMES.USER_MEMBERSHIP_APPROVED,
+          expect.objectContaining({
+            eventName: DOMAIN_EVENT_NAMES.USER_MEMBERSHIP_APPROVED,
+            userId: 42,
+            email: 'reader@example.com',
+            name: 'Reader',
+            membershipNumber: 'LIB-0042',
+            approvedById: 1,
+            occurredAt: expect.any(Date),
+          }),
+        );
+      });
+
+      it('emits only user.membership_rejected when rejecting, for the rejection email', async () => {
+        prismaMock.user.findUnique.mockResolvedValue(pendingMember);
+        prismaMock.user.update.mockResolvedValue({
+          id: 42,
+          name: 'Reader',
+          email: 'reader@example.com',
+          membershipNumber: 'LIB-0042',
+          membershipStatus: MembershipStatus.REJECTED,
+        });
+
+        await service.reviewMembership(7, 42, 'REJECT');
+
+        expect(eventEmitterMock.emit).toHaveBeenCalledTimes(1);
+        expect(eventEmitterMock.emit).toHaveBeenCalledWith(
+          DOMAIN_EVENT_NAMES.USER_MEMBERSHIP_REJECTED,
+          expect.objectContaining({
+            eventName: DOMAIN_EVENT_NAMES.USER_MEMBERSHIP_REJECTED,
+            userId: 42,
+            email: 'reader@example.com',
+            name: 'Reader',
+            membershipNumber: 'LIB-0042',
+            rejectedById: 7,
+            occurredAt: expect.any(Date),
+          }),
+        );
+      });
+
+      it('passes a trimmed rejection reason to the event, for the email', async () => {
+        prismaMock.user.findUnique.mockResolvedValue(pendingMember);
+        prismaMock.user.update.mockResolvedValue({
+          id: 42,
+          name: 'Reader',
+          email: 'reader@example.com',
+          membershipNumber: 'LIB-0042',
+          membershipStatus: MembershipStatus.REJECTED,
+        });
+
+        await service.reviewMembership(
+          7,
+          42,
+          'REJECT',
+          '  Card number not found  ',
+        );
+
+        expect(eventEmitterMock.emit).toHaveBeenCalledWith(
+          DOMAIN_EVENT_NAMES.USER_MEMBERSHIP_REJECTED,
+          expect.objectContaining({ reason: 'Card number not found' }),
+        );
+      });
+
+      it('does not emit when a rejection is refused', async () => {
+        prismaMock.user.findUnique.mockResolvedValue({
+          ...pendingMember,
+          membershipStatus: MembershipStatus.REJECTED,
+        });
+
+        await expect(service.reviewMembership(1, 42, 'REJECT')).rejects.toThrow(
+          BadRequestException,
+        );
+        expect(eventEmitterMock.emit).not.toHaveBeenCalled();
+      });
+
+      it('does not emit when the review is refused', async () => {
+        prismaMock.user.findUnique.mockResolvedValue({
+          ...pendingMember,
+          membershipStatus: MembershipStatus.APPROVED,
+        });
+
+        await expect(
+          service.reviewMembership(1, 42, 'APPROVE'),
+        ).rejects.toThrow(BadRequestException);
+        expect(eventEmitterMock.emit).not.toHaveBeenCalled();
+      });
+
+      it('can approve a previously REJECTED member', async () => {
+        prismaMock.user.findUnique.mockResolvedValue({
+          ...pendingMember,
+          membershipStatus: MembershipStatus.REJECTED,
+        });
+        prismaMock.user.update.mockResolvedValue({});
+        await expect(
+          service.reviewMembership(1, 42, 'APPROVE'),
+        ).resolves.toBeDefined();
+      });
+
+      it.each([
+        ['APPROVE', MembershipStatus.APPROVED],
+        ['REJECT', MembershipStatus.APPROVED],
+        ['REJECT', MembershipStatus.REJECTED],
+      ] as const)(
+        'refuses to %s a member who is already %s',
+        async (decision, current) => {
+          prismaMock.user.findUnique.mockResolvedValue({
+            ...pendingMember,
+            membershipStatus: current,
+          });
+          await expect(
+            service.reviewMembership(1, 42, decision),
+          ).rejects.toThrow(BadRequestException);
+          expect(prismaMock.user.update).not.toHaveBeenCalled();
+        },
+      );
+
+      it('refuses to review staff accounts', async () => {
+        prismaMock.user.findUnique.mockResolvedValue({
+          ...pendingMember,
+          role: Role.LIBRARIAN,
+        });
+        await expect(
+          service.reviewMembership(1, 42, 'APPROVE'),
+        ).rejects.toThrow(BadRequestException);
+      });
+
+      it('throws NotFoundException for an unknown user', async () => {
+        prismaMock.user.findUnique.mockResolvedValue(null);
+        await expect(
+          service.reviewMembership(1, 42, 'APPROVE'),
+        ).rejects.toThrow(NotFoundException);
+      });
+    });
+
+    describe('create', () => {
+      it('stores membership number and status when provided', async () => {
+        prismaMock.user.create.mockResolvedValue({ id: 7 });
+        await service.create({
+          name: 'Reader',
+          email: 'reader@example.com',
+          password: 'password123',
+          membershipNumber: 'LIB-0001',
+          membershipStatus: MembershipStatus.PENDING,
+        });
+        expect(prismaMock.user.create).toHaveBeenCalledWith({
+          data: expect.objectContaining({
+            membershipNumber: 'LIB-0001',
+            membershipStatus: MembershipStatus.PENDING,
+          }),
+        });
+      });
+
+      it('maps a duplicate membership number race to ConflictException', async () => {
+        prismaMock.user.create.mockRejectedValue(
+          new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+            code: 'P2002',
+            clientVersion: 'test',
+            meta: { target: ['membershipNumber'] },
+          }),
+        );
+        await expect(
+          service.create({
+            name: 'Reader',
+            email: 'reader@example.com',
+            password: 'password123',
+            membershipNumber: 'LIB-0001',
+          }),
+        ).rejects.toThrow('This membership number is already registered');
+      });
+
+      it('maps a duplicate email race to ConflictException', async () => {
+        prismaMock.user.create.mockRejectedValue(
+          new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+            code: 'P2002',
+            clientVersion: 'test',
+            meta: { target: ['email'] },
+          }),
+        );
+        await expect(
+          service.create({
+            name: 'Reader',
+            email: 'reader@example.com',
+            password: 'password123',
+          }),
+        ).rejects.toThrow(ConflictException);
       });
     });
   });

@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/lib/auth-context';
 import { JobStatus, JobRunResult, Fine, Notification } from '@/lib/types';
@@ -16,6 +17,8 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Modal } from '@/components/ui/modal';
+import { MembershipApprovals } from '@/components/admin/membership-approvals';
+import { useConfirm, ModalDetails } from '@/components/ui/confirm-modal';
 import { formatCurrency, formatDateTime } from '@/lib/utils';
 import {
   Cpu,
@@ -29,28 +32,29 @@ import {
   Mail,
   RotateCw,
   Search,
-  Sparkles,
+  LogIn,
   Shield,
+  UserCheck,
 } from 'lucide-react';
 
 export default function StaffAdminPage() {
-  const { user, isStaff, isAdmin, switchDemoUser } = useAuth();
+  const { user, isStaff, isAdmin } = useAuth();
+  const { confirm, notify, confirmDialog } = useConfirm();
 
-  const [activeTab, setActiveTab] = useState<'jobs' | 'fines' | 'notifications'>('jobs');
+  const [activeTab, setActiveTab] = useState<'members' | 'jobs' | 'fines' | 'notifications'>('members');
+  const [pendingMembers, setPendingMembers] = useState<number | null>(null);
 
   // Job Statuses state
   const [jobs, setJobs] = useState<JobStatus[]>([]);
   const [isLoadingJobs, setIsLoadingJobs] = useState(false);
   const [runningJobName, setRunningJobName] = useState<string | null>(null);
-  const [jobRunResult, setJobRunResult] = useState<JobRunResult | null>(null);
   const [jobError, setJobError] = useState<string | null>(null);
 
   // Fines desk state
-  const [fineMemberEmail, setFineMemberEmail] = useState('patron@example.com');
+  const [fineMemberEmail, setFineMemberEmail] = useState('');
   const [memberFinesList, setMemberFinesList] = useState<Fine[]>([]);
   const [isLoadingFines, setIsLoadingFines] = useState(false);
   const [finesError, setFinesError] = useState<string | null>(null);
-  const [finesSuccess, setFinesSuccess] = useState<string | null>(null);
 
   // Payment Modal
   const [paymentFine, setPaymentFine] = useState<Fine | null>(null);
@@ -59,14 +63,10 @@ export default function StaffAdminPage() {
   const [isSubmittingPayment, setIsSubmittingPayment] = useState(false);
 
   // Waive Modal
-  const [waiveFineItem, setWaiveFineItem] = useState<Fine | null>(null);
-  const [waiveReason, setWaiveReason] = useState<string>('');
-  const [isSubmittingWaive, setIsSubmittingWaive] = useState(false);
 
   // Notifications retry state
   const [retryId, setRetryId] = useState<string>('');
   const [isRetryingNotif, setIsRetryingNotif] = useState(false);
-  const [retryResult, setRetryResult] = useState<Notification | null>(null);
   const [retryError, setRetryError] = useState<string | null>(null);
 
   const loadJobs = useCallback(async () => {
@@ -103,17 +103,52 @@ export default function StaffAdminPage() {
   }, [loadJobs]);
 
   const handleRunJob = async (jobName: string) => {
+    const ok = await confirm({
+      title: 'Run this job now?',
+      message: (
+        <>
+          <span className="font-mono font-semibold text-black/80">{jobName}</span> will run immediately, outside its
+          schedule. It may send emails or change holds and fines.
+        </>
+      ),
+      tone: 'warning',
+      confirmText: 'Run job',
+    });
+    if (ok === null) return;
     try {
       setRunningJobName(jobName);
       setJobError(null);
-      setJobRunResult(null);
 
       const res = await fetchGraphQL<{ runJob: JobRunResult }>(RUN_JOB_MUTATION, {
         name: jobName,
       });
 
-      setJobRunResult(res.runJob);
       loadJobs();
+      const r = res.runJob;
+      const failed = !!r.error || r.status === 'FAILED';
+      await notify({
+        title: r.skipped ? 'Job skipped' : failed ? 'Job failed' : 'Job completed',
+        tone: r.skipped ? 'warning' : failed ? 'danger' : 'success',
+        timer: 4500,
+        message: (
+          <>
+            {r.skipped
+              ? 'Another runner is already processing this job, so this run did nothing.'
+              : failed
+                ? 'The job ran but reported an error.'
+                : 'The job ran successfully.'}
+            <ModalDetails
+              rows={[
+                { label: 'Job', value: <span className="font-mono">{r.jobName}</span> },
+                { label: 'Status', value: r.status },
+                { label: 'Duration', value: `${r.durationMs} ms` },
+                ...(r.stats ? [{ label: 'Stats', value: <span className="font-mono text-xs">{r.stats}</span> }] : []),
+                ...(r.error ? [{ label: 'Error', value: <span className="text-rose-600">{r.error}</span> }] : []),
+              ]}
+            />
+          </>
+        ),
+      });
     } catch (err: any) {
       setJobError(err.message || `Failed to trigger job ${jobName}`);
     } finally {
@@ -128,7 +163,6 @@ export default function StaffAdminPage() {
     try {
       setIsSubmittingPayment(true);
       setFinesError(null);
-      setFinesSuccess(null);
 
       await fetchGraphQL(RECORD_FINE_PAYMENT_MUTATION, {
         fineId: paymentFine.id,
@@ -136,11 +170,21 @@ export default function StaffAdminPage() {
         note: paymentNote.trim() || undefined,
       });
 
-      setFinesSuccess(`Payment of ₹${paymentAmount} recorded successfully!`);
+      const paidFine = paymentFine;
+      const paid = paymentAmount;
       setPaymentFine(null);
       setPaymentAmount('');
       setPaymentNote('');
       loadMemberFines();
+      void notify({
+        title: 'Payment recorded',
+        message: (
+          <>
+            <span className="font-semibold text-black/80">{formatCurrency(parseFloat(paid))}</span> was recorded against fine #
+            {paidFine.id}.
+          </>
+        ),
+      });
     } catch (err: any) {
       setFinesError(err.message || 'Failed to record payment');
     } finally {
@@ -148,47 +192,84 @@ export default function StaffAdminPage() {
     }
   };
 
-  const handleWaiveFine = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!waiveFineItem || !waiveReason.trim()) return;
+  const handleWaiveFine = async (fine: Fine) => {
+    const reason = await confirm({
+      title: `Waive fine #${fine.id}?`,
+      message: (
+        <>
+          This permanently forgives the outstanding{' '}
+          <span className="font-semibold text-black/80">{formatCurrency(fine.outstandingRs)}</span> and is recorded
+          in the audit log.
+        </>
+      ),
+      tone: 'danger',
+      confirmText: 'Waive fine',
+      showReason: true,
+      reasonLabel: 'Reason for waiver',
+      reasons: [
+        { value: 'Medical or family emergency', label: 'Medical or family emergency' },
+        { value: 'Library error (incorrect fine)', label: 'Library error (incorrect fine)' },
+        { value: 'Item returned in good faith via book drop', label: 'Returned via book drop' },
+        { value: 'Hardship', label: 'Financial hardship' },
+        { value: 'Goodwill gesture', label: 'Goodwill gesture' },
+        { value: 'Other', label: 'Other' },
+      ],
+    });
+    if (reason === null) return;
 
     try {
-      setIsSubmittingWaive(true);
       setFinesError(null);
-      setFinesSuccess(null);
-
-      await fetchGraphQL(WAIVE_FINE_MUTATION, {
-        fineId: waiveFineItem.id,
-        reason: waiveReason.trim(),
-      });
-
-      setFinesSuccess(`Fine #${waiveFineItem.id} waived successfully.`);
-      setWaiveFineItem(null);
-      setWaiveReason('');
+      await fetchGraphQL(WAIVE_FINE_MUTATION, { fineId: fine.id, reason });
       loadMemberFines();
+      await notify({
+        title: 'Fine waived',
+        message: (
+          <>
+            Fine #{fine.id} (<span className="font-semibold text-black/80">{formatCurrency(fine.outstandingRs)}</span>) has been waived.
+            Reason: {reason}
+          </>
+        ),
+      });
     } catch (err: any) {
       setFinesError(err.message || 'Failed to waive fine');
-    } finally {
-      setIsSubmittingWaive(false);
     }
   };
 
   const handleRetryNotification = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!retryId.trim()) return;
+    const ok = await confirm({
+      title: 'Retry this notification?',
+      message: (
+        <>
+          Notification <span className="font-mono font-semibold text-black/80">#{retryId.trim()}</span> will be
+          queued for delivery again, so the member may receive the email.
+        </>
+      ),
+      tone: 'info',
+      confirmText: 'Retry delivery',
+    });
+    if (ok === null) return;
 
     try {
       setIsRetryingNotif(true);
       setRetryError(null);
-      setRetryResult(null);
 
       const res = await fetchGraphQL<{ retryNotification: Notification }>(
         RETRY_NOTIFICATION_MUTATION,
         { id: parseInt(retryId.trim(), 10) }
       );
 
-      setRetryResult(res.retryNotification);
       setRetryId('');
+      await notify({
+        title: 'Notification re-queued',
+        message: (
+          <>
+            Notification <span className="font-mono font-semibold text-black/80">#{res.retryNotification.id}</span> is back in the
+            queue and will be delivered on the next send run.
+          </>
+        ),
+      });
     } catch (err: any) {
       setRetryError(err.message || 'Failed to retry notification delivery');
     } finally {
@@ -198,6 +279,7 @@ export default function StaffAdminPage() {
 
   return (
     <div className="space-y-8">
+      {confirmDialog}
       {/* Banner */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200">
         <div>
@@ -211,25 +293,42 @@ export default function StaffAdminPage() {
             </Badge>
           </div>
           <p className="text-xs text-slate-500 mt-1">
-            Monitor distributed job leases, manually trigger background workers, process payments, and retry notifications.
+            Approve new memberships, monitor distributed job leases, trigger background workers, process payments, and retry notifications.
           </p>
         </div>
 
         {!isAdmin && (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => switchDemoUser('ADMIN')}
-            className="text-xs text-rose-700 bg-rose-50 hover:bg-rose-100 border-rose-200"
-          >
-            <Sparkles className="w-3.5 h-3.5 mr-1 text-rose-600" />
-            Switch to Admin Persona
-          </Button>
+          <Link href="/login">
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-xs text-rose-700 bg-rose-50 hover:bg-rose-100 border-rose-200"
+            >
+              <LogIn className="w-3.5 h-3.5 mr-1 text-rose-600" />
+              Sign in with an admin account
+            </Button>
+          </Link>
         )}
       </div>
 
       {/* Tabs */}
       <div className="flex border-b border-slate-200 space-x-6 text-sm font-medium">
+        <button
+          onClick={() => setActiveTab('members')}
+          className={`pb-3 border-b-2 transition-colors flex items-center gap-2 ${activeTab === 'members'
+              ? 'border-indigo-600 text-indigo-600 font-semibold'
+              : 'border-transparent text-slate-500 hover:text-slate-800'
+            }`}
+        >
+          <UserCheck className="w-4 h-4" />
+          Membership Approvals
+          {!!pendingMembers && (
+            <span className="ml-0.5 rounded-full bg-amber-500 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white">
+              {pendingMembers}
+            </span>
+          )}
+        </button>
+
         <button
           onClick={() => setActiveTab('jobs')}
           className={`pb-3 border-b-2 transition-colors flex items-center gap-2 ${activeTab === 'jobs'
@@ -264,6 +363,11 @@ export default function StaffAdminPage() {
         </button>
       </div>
 
+      {/* TAB 0: Membership approvals (admin only; the API enforces this too) */}
+      {activeTab === 'members' && isAdmin && (
+        <MembershipApprovals onPendingCountChange={setPendingMembers} />
+      )}
+
       {/* TAB 1: Background Jobs */}
       {activeTab === 'jobs' && (
         <div className="space-y-6">
@@ -286,18 +390,6 @@ export default function StaffAdminPage() {
               Refresh Leases
             </Button>
           </div>
-
-          {jobRunResult && (
-            <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs space-y-1">
-              <div className="font-bold flex items-center gap-1.5 text-emerald-800">
-                <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                Job &quot;{jobRunResult.jobName}&quot; Completed in {jobRunResult.durationMs}ms
-              </div>
-              <p className="text-emerald-700 font-mono text-[11px]">
-                Stats: {jobRunResult.stats || 'Execution succeeded with zero errors.'}
-              </p>
-            </div>
-          )}
 
           {jobError && (
             <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-center gap-2">
@@ -407,13 +499,6 @@ export default function StaffAdminPage() {
             </CardContent>
           </Card>
 
-          {finesSuccess && (
-            <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-              <span>{finesSuccess}</span>
-            </div>
-          )}
-
           {finesError && (
             <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-center gap-2">
               <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
@@ -494,7 +579,7 @@ export default function StaffAdminPage() {
                             <Button
                               variant="outline"
                               size="sm"
-                              onClick={() => setWaiveFineItem(f)}
+                              onClick={() => handleWaiveFine(f)}
                               className="text-xs py-1 px-2.5 h-auto text-amber-700 hover:bg-amber-50"
                             >
                               Waive
@@ -564,45 +649,6 @@ export default function StaffAdminPage() {
             </Modal>
           )}
 
-          {/* Modal: Waive Fine */}
-          {waiveFineItem && (
-            <Modal
-              isOpen={!!waiveFineItem}
-              onClose={() => setWaiveFineItem(null)}
-              title={`Waive Fine #${waiveFineItem.id}`}
-              description="Waiving permanently forgives the balance and writes an audit log."
-            >
-              <form onSubmit={handleWaiveFine} className="space-y-4">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Reason for Waiver (Required)
-                  </label>
-                  <textarea
-                    rows={3}
-                    required
-                    value={waiveReason}
-                    onChange={(e) => setWaiveReason(e.target.value)}
-                    placeholder="e.g. Patron presented medical emergency certificate..."
-                    className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  />
-                </div>
-
-                <div className="flex justify-end gap-2 pt-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setWaiveFineItem(null)}
-                  >
-                    Cancel
-                  </Button>
-                  <Button type="submit" variant="danger" size="sm" isLoading={isSubmittingWaive}>
-                    Confirm Permanent Waiver
-                  </Button>
-                </div>
-              </form>
-            </Modal>
-          )}
         </div>
       )}
 
@@ -621,15 +667,6 @@ export default function StaffAdminPage() {
             </CardHeader>
 
             <CardContent className="p-6 pt-0 space-y-5">
-              {retryResult && (
-                <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs flex items-center gap-2">
-                  <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
-                  <span>
-                    Notification #{retryResult.id} reset to PENDING with attemptCount 0. Delivery worker will reprocess it immediately.
-                  </span>
-                </div>
-              )}
-
               {retryError && (
                 <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-900 text-xs flex items-center gap-2">
                   <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />

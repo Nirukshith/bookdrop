@@ -2,8 +2,28 @@ import { ExecutionContext, Injectable } from '@nestjs/common';
 import { GqlExecutionContext } from '@nestjs/graphql';
 import { ThrottlerGuard } from '@nestjs/throttler';
 
+const ROOT_OPERATION_TYPES = new Set(['Query', 'Mutation', 'Subscription']);
+
 @Injectable()
 export class GqlThrottlerGuard extends ThrottlerGuard {
+  /**
+   * `fieldResolverEnhancers: ['guards']` runs global guards on every field
+   * resolver too. Without this check, a single `books` query would consume
+   * one throttle slot per book per resolved field, so a member loading the
+   * catalog a few times a minute would be rate limited. Only root
+   * operations count towards the limit.
+   */
+  async canActivate(context: ExecutionContext): Promise<boolean> {
+    if (context.getType<string>() === 'graphql') {
+      const parentType =
+        GqlExecutionContext.create(context).getInfo()?.parentType?.name;
+      if (parentType && !ROOT_OPERATION_TYPES.has(parentType)) {
+        return true;
+      }
+    }
+    return super.canActivate(context);
+  }
+
   getRequestResponse(context: ExecutionContext) {
     if (context.getType<string>() === 'graphql') {
       const gqlCtx = GqlExecutionContext.create(context);
