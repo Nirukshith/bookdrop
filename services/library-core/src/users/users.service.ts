@@ -67,8 +67,11 @@ export class UsersService implements IdentityPublicApi {
     });
   }
 
-  async getMembershipStatus(userId: number): Promise<MembershipStatus | null> {
-    const user = await this.prisma.user.findUnique({
+  async getMembershipStatus(
+    userId: number,
+    tx?: Prisma.TransactionClient,
+  ): Promise<MembershipStatus | null> {
+    const user = await (tx ?? this.prisma).user.findUnique({
       where: { id: userId },
       select: { membershipStatus: true },
     });

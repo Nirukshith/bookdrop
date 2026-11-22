@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { PrismaService } from '../prisma/prisma.service';
+import { ClockService } from '../common/clock';
 import { mapEventToNotification } from './notification-mapper';
 import { NotificationStatus } from './notification.types';
 
@@ -8,7 +9,10 @@ import { NotificationStatus } from './notification.types';
 export class NotificationsSubscriber {
   private readonly logger = new Logger(NotificationsSubscriber.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly clock: ClockService,
+  ) {}
 
   @OnEvent('hold.*')
   async handleHoldEvent(event: any): Promise<void> {
@@ -65,7 +69,9 @@ export class NotificationsSubscriber {
           payload: mapped.payload,
           validUntil: mapped.validUntil,
           status: NotificationStatus.PENDING,
-          nextAttemptAt: new Date(),
+          // Same clock the send job compares against (`nextAttemptAt <= clock.now()`),
+          // so a new notification is always due immediately.
+          nextAttemptAt: this.clock.now(),
         },
         update: {}, // Idempotent ON CONFLICT DO NOTHING
       });

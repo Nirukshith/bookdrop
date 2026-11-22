@@ -271,6 +271,7 @@ describe('MemberEligibilityPolicy (Step 4)', () => {
         expect(err.getStatus()).toBe(403);
         expect(identityApiMock.getMembershipStatus).toHaveBeenCalledWith(
           userId,
+          undefined,
         );
         expect(prismaMock.hold.count).not.toHaveBeenCalled();
         expect(loanPortMock.countActiveLoansForMember).not.toHaveBeenCalled();
@@ -289,6 +290,24 @@ describe('MemberEligibilityPolicy (Step 4)', () => {
         expect(loanPortMock.countActiveLoansForMember).not.toHaveBeenCalled();
       },
     );
+
+    it("reads membership status on the caller's transaction connection", async () => {
+      // Using the global client inside a transaction would need a second pool
+      // connection per request and exhaust the pool under concurrency (P2024).
+      const tx = { hold: prismaMock.hold } as any;
+
+      await policy.checkRequestEligibility(userId, bookId, tx);
+      expect(identityApiMock.getMembershipStatus).toHaveBeenLastCalledWith(
+        userId,
+        tx,
+      );
+
+      await policy.checkCheckoutEligibility(userId, tx);
+      expect(identityApiMock.getMembershipStatus).toHaveBeenLastCalledWith(
+        userId,
+        tx,
+      );
+    });
 
     it('explains a pending membership in the error message', async () => {
       identityApiMock.getMembershipStatus.mockResolvedValue(

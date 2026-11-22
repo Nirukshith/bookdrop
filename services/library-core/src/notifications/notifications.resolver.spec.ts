@@ -3,11 +3,13 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { Role } from '@prisma/client';
 import { AuthenticatedUser } from '../auth';
 import { PrismaService } from '../prisma/prisma.service';
+import { ClockService, FakeClockService } from '../common/clock';
 import { IDENTITY_PUBLIC_API } from '../users';
 import { NotificationsResolver } from './notifications.resolver';
 import { NotificationStatus, NotificationTemplate } from './notification.types';
 
 describe('NotificationsResolver', () => {
+  const CLOCK_NOW = '2026-11-10T10:00:00.000Z';
   let resolver: NotificationsResolver;
   let prismaMock: {
     notification: {
@@ -50,6 +52,7 @@ describe('NotificationsResolver', () => {
         NotificationsResolver,
         { provide: PrismaService, useValue: prismaMock },
         { provide: IDENTITY_PUBLIC_API, useValue: identityPublicApiMock },
+        { provide: ClockService, useValue: new FakeClockService(CLOCK_NOW) },
       ],
     }).compile();
 
@@ -124,7 +127,7 @@ describe('NotificationsResolver', () => {
       await expect(resolver.markMyNotificationsRead(mockUser)).resolves.toBe(2);
       expect(prismaMock.notification.updateMany).toHaveBeenCalledWith({
         where: { userId: 42, readAt: null },
-        data: { readAt: expect.any(Date) },
+        data: { readAt: new Date(CLOCK_NOW) },
       });
     });
   });
@@ -216,7 +219,7 @@ describe('NotificationsResolver', () => {
         data: {
           status: NotificationStatus.PENDING,
           attempts: 0,
-          nextAttemptAt: expect.any(Date),
+          nextAttemptAt: new Date(CLOCK_NOW),
           lastError: null,
         },
       });

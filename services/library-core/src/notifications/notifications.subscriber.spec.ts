@@ -1,10 +1,12 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { NotificationsSubscriber } from './notifications.subscriber';
 import { PrismaService } from '../prisma/prisma.service';
+import { ClockService, FakeClockService } from '../common/clock';
 import { DOMAIN_EVENT_NAMES } from '../contracts/events';
 import { NotificationStatus, NotificationTemplate } from './notification.types';
 
 describe('NotificationsSubscriber (Unit Tests)', () => {
+  const CLOCK_NOW = '2026-11-10T10:00:00.000Z';
   let subscriber: NotificationsSubscriber;
   let prisma: {
     notification: {
@@ -26,6 +28,7 @@ describe('NotificationsSubscriber (Unit Tests)', () => {
           provide: PrismaService,
           useValue: prisma,
         },
+        { provide: ClockService, useValue: new FakeClockService(CLOCK_NOW) },
       ],
     }).compile();
 
@@ -47,6 +50,9 @@ describe('NotificationsSubscriber (Unit Tests)', () => {
     expect(prisma.notification.upsert).toHaveBeenCalledWith({
       where: { dedupeKey: 'hold-confirmed:101' },
       create: expect.objectContaining({
+        // Due "now" by the injected clock (the same clock the send job uses),
+        // not the wall clock, so a frozen/fake clock still sends it.
+        nextAttemptAt: new Date(CLOCK_NOW),
         userId: 5,
         template: NotificationTemplate.HOLD_CONFIRMED,
         dedupeKey: 'hold-confirmed:101',

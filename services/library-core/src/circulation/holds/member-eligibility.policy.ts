@@ -47,7 +47,7 @@ export class MemberEligibilityPolicy {
     const client = tx ?? this.prisma;
 
     // 0. Membership approval check
-    await assertMembershipApproved(this.identityApi, userId);
+    await assertMembershipApproved(this.identityApi, userId, tx);
 
     // 1. Active holds check
     const activeHoldsCount = await client.hold.count({
@@ -114,7 +114,7 @@ export class MemberEligibilityPolicy {
     tx?: Prisma.TransactionClient,
   ): Promise<void> {
     // 0. Membership approval check
-    await assertMembershipApproved(this.identityApi, userId);
+    await assertMembershipApproved(this.identityApi, userId, tx);
 
     // 1. Active loans check (via ActiveLoanCountPort)
     const activeLoansCount = await this.loanCountPort.countActiveLoansForMember(

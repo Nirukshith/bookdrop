@@ -322,6 +322,22 @@ describe('UsersService', () => {
         prismaMock.user.findUnique.mockResolvedValue(null);
         await expect(service.getMembershipStatus(999)).resolves.toBeNull();
       });
+
+      it('uses the transaction client when one is given', async () => {
+        const txFindUnique = jest
+          .fn()
+          .mockResolvedValue({ membershipStatus: MembershipStatus.APPROVED });
+        const tx = { user: { findUnique: txFindUnique } } as any;
+
+        await expect(service.getMembershipStatus(42, tx)).resolves.toBe(
+          MembershipStatus.APPROVED,
+        );
+        expect(txFindUnique).toHaveBeenCalledWith({
+          where: { id: 42 },
+          select: { membershipStatus: true },
+        });
+        expect(prismaMock.user.findUnique).not.toHaveBeenCalled();
+      });
     });
 
     describe('listByMembershipStatus', () => {

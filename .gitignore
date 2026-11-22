@@ -6,9 +6,12 @@ node_modules/
 dist/
 **/dist/
 
-# Environment variables
+# Environment variables (keep the .env.example templates tracked)
 .env
+.env.*
 *.env.local
+*.env.bak
+!.env.example
 
 # IDE & OS files
 .DS_Store

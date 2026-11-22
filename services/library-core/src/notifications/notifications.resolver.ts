@@ -8,6 +8,7 @@ import { Args, Int, Mutation, Query, Resolver } from '@nestjs/graphql';
 import { Role } from '@prisma/client';
 import { AuthenticatedUser, CurrentUser, Roles, RolesGuard } from '../auth';
 import { PrismaService } from '../prisma/prisma.service';
+import { ClockService } from '../common/clock';
 import { IDENTITY_PUBLIC_API, IdentityPublicApi } from '../users';
 import { NotificationPaginationInput } from './dto/notification-pagination.input';
 import { NotificationModel } from './models/notification.model';
@@ -21,6 +22,7 @@ export class NotificationsResolver {
     private readonly prisma: PrismaService,
     @Inject(IDENTITY_PUBLIC_API)
     private readonly identityPublicApi: IdentityPublicApi,
+    private readonly clock: ClockService,
   ) {}
 
   /**
@@ -71,7 +73,7 @@ export class NotificationsResolver {
   ): Promise<number> {
     const result = await this.prisma.notification.updateMany({
       where: { userId: user.sub, readAt: null },
-      data: { readAt: new Date() },
+      data: { readAt: this.clock.now() },
     });
     return result.count;
   }
@@ -130,7 +132,8 @@ export class NotificationsResolver {
       data: {
         status: NotificationStatus.PENDING,
         attempts: 0,
-        nextAttemptAt: new Date(),
+        // Due immediately by the send job's clock.
+        nextAttemptAt: this.clock.now(),
         lastError: null,
       },
     });

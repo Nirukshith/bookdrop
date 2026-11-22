@@ -108,7 +108,10 @@ describe('ReservationsService', () => {
         await expect(service.joinQueue(1, 10)).rejects.toThrow(
           MembershipNotApprovedError,
         );
-        expect(identityApiMock.getMembershipStatus).toHaveBeenCalledWith(1);
+        expect(identityApiMock.getMembershipStatus).toHaveBeenCalledWith(
+          1,
+          undefined,
+        );
         expect(prismaMock.$transaction).not.toHaveBeenCalled();
       },
     );
