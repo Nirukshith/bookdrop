@@ -1,0 +1,369 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Book {
+  id            Int        @id @default(autoincrement())
+  title         String
+  isbn          String     @unique
+  description   String?
+  publishedYear Int?
+  priceMinor    Int?
+  authors       Author[]
+  categories    Category[]
+  copies        Copy[]
+  createdAt     DateTime   @default(now())
+}
+
+model Author {
+  id    Int    @id @default(autoincrement())
+  name  String
+  books Book[]
+}
+
+model Category {
+  id    Int    @id @default(autoincrement())
+  name  String @unique
+  books Book[]
+}
+
+enum CopyStatus {
+  AVAILABLE
+  ON_HOLD
+  BORROWED
+  LOST
+  DAMAGED
+}
+
+model Copy {
+  id            Int                 @id @default(autoincrement())
+  bookId        Int
+  book          Book                @relation(fields: [bookId], references: [id])
+  barcode       String              @unique
+  status        CopyStatus          @default(AVAILABLE)
+  shelfLocation String?
+  notes         String?
+  retiredAt     DateTime?
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+  history       CopyStatusHistory[]
+  holds         Hold[]
+  loans         Loan[]
+
+  @@index([bookId, status])
+}
+
+enum HoldStatus {
+  ACTIVE
+  FULFILLED
+  CANCELLED
+  EXPIRED
+}
+
+enum HoldSource {
+  REQUEST // member requested it
+  QUEUE_PROMOTION // used by Stage 8
+}
+
+model Hold {
+  id           Int           @id @default(autoincrement())
+  userId       Int // plain user id, deliberately NOT a foreign key
+  bookId       Int // plain book id, deliberately NOT a foreign key
+  copyId       Int
+  copy         Copy          @relation(fields: [copyId], references: [id])
+  loan         Loan?
+  reservation  Reservation?
+  missedPickup MissedPickup?
+  status       HoldStatus    @default(ACTIVE)
+  source       HoldSource    @default(REQUEST)
+  expiresAt    DateTime
+  createdAt    DateTime      @default(now())
+  resolvedAt   DateTime?
+  resolvedNote String? // for example the cancellation reason or who cancelled
+
+  @@index([userId, status])
+  @@index([status, expiresAt])
+  @@index([bookId])
+}
+
+enum ReturnCondition {
+  GOOD
+  DAMAGED
+}
+
+enum FineReason {
+  LATE_RETURN
+  MISSED_PICKUPS
+  LOST_BOOK
+  DAMAGED_BOOK
+}
+
+enum FineStatus {
+  UNPAID
+  PARTIALLY_PAID
+  PAID
+  WAIVED
+}
+
+enum LoanStatus {
+  ACTIVE
+  RETURNED
+  LOST
+}
+
+model Loan {
+  id                 Int              @id @default(autoincrement())
+  userId             Int // plain user id, deliberately NOT a foreign key
+  bookId             Int // plain book id, deliberately NOT a foreign key
+  copyId             Int
+  copy               Copy             @relation(fields: [copyId], references: [id])
+  holdId             Int?             @unique
+  hold               Hold?            @relation(fields: [holdId], references: [id])
+  status             LoanStatus       @default(ACTIVE)
+  borrowedAt         DateTime
+  dueAt              DateTime
+  returnedAt         DateTime?
+  checkedOutById     Int // plain staff user id, NOT a foreign key
+  returnCondition    ReturnCondition?
+  conditionNote      String?
+  returnedById       Int? // plain staff user id, NOT a foreign key
+  lostAt             DateTime?
+  priceMinorAtBorrow Int?
+  fines              Fine[]
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  @@index([userId, status])
+  @@index([status, dueAt])
+  @@index([copyId])
+}
+
+model Fine {
+  id                  Int            @id @default(autoincrement())
+  userId              Int // plain user id, deliberately NOT a foreign key
+  reason              FineReason
+  amountMinor         Int
+  paidMinor           Int            @default(0)
+  status              FineStatus     @default(UNPAID)
+  loanId              Int?
+  loan                Loan?          @relation(fields: [loanId], references: [id])
+  daysLate            Int?
+  note                String?
+  dedupeKey           String?        @unique
+  createdById         Int? // plain staff user id, null when created by the system
+  createdAt           DateTime       @default(now())
+  settledAt           DateTime?
+  waivedById          Int? // plain admin user id
+  waivedReason        String?
+  uncappedAmountMinor Int?
+  capMinor            Int?
+  payments            FinePayment[]
+  missedPickups       MissedPickup[]
+
+  @@index([userId, status])
+  @@index([loanId])
+}
+
+model FinePayment {
+  id           Int      @id @default(autoincrement())
+  fineId       Int
+  fine         Fine     @relation(fields: [fineId], references: [id])
+  amountMinor  Int
+  receivedById Int // plain staff user id, NOT a foreign key
+  note         String?
+  createdAt    DateTime @default(now())
+
+  @@index([fineId])
+}
+
+model CopyStatusHistory {
+  id          Int         @id @default(autoincrement())
+  copyId      Int
+  copy        Copy        @relation(fields: [copyId], references: [id], onDelete: Cascade)
+  fromStatus  CopyStatus?
+  toStatus    CopyStatus
+  reason      String?
+  changedById Int? // plain user id, deliberately NOT a foreign key
+  createdAt   DateTime    @default(now())
+
+  @@index([copyId])
+}
+
+enum Role {
+  MEMBER
+  LIBRARIAN
+  ADMIN
+}
+
+enum MembershipStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model User {
+  id                     Int              @id @default(autoincrement())
+  name                   String
+  email                  String           @unique
+  passwordHash           String
+  role                   Role             @default(MEMBER)
+  /// Library card number supplied by the member at self-registration.
+  /// Null for staff and for accounts created before membership approval existed.
+  membershipNumber       String?          @unique
+  /// Self-registered members start PENDING and need admin approval before
+  /// they can place holds, join waitlists or borrow. Defaults to APPROVED so
+  /// seeded, staff and pre-existing accounts keep working.
+  membershipStatus       MembershipStatus @default(APPROVED)
+  membershipReviewedAt   DateTime?
+  membershipReviewedById Int?
+  refreshTokens          RefreshToken[]
+  createdAt              DateTime         @default(now())
+  updatedAt              DateTime         @updatedAt
+
+  @@index([membershipStatus])
+}
+
+model RefreshToken {
+  id        Int       @id @default(autoincrement())
+  userId    Int
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+}
+
+enum ReservationStatus {
+  WAITING
+  PROMOTED
+  CANCELLED
+}
+
+enum ReservationCancelReason {
+  MEMBER
+  STAFF
+  SUPERSEDED
+}
+
+model Reservation {
+  id            Int                      @id @default(autoincrement())
+  userId        Int // plain user id, deliberately NOT a foreign key
+  bookId        Int // plain book id, deliberately NOT a foreign key
+  status        ReservationStatus        @default(WAITING)
+  createdAt     DateTime                 @default(now())
+  promotedAt    DateTime?
+  holdId        Int?                     @unique
+  hold          Hold?                    @relation(fields: [holdId], references: [id])
+  cancelledAt   DateTime?
+  cancelReason  ReservationCancelReason?
+  cancelledById Int? // plain user id, NOT a foreign key
+
+  @@index([bookId, status, id])
+  @@index([userId, status])
+}
+
+model MissedPickup {
+  id            Int      @id @default(autoincrement())
+  userId        Int // plain user id, deliberately NOT a foreign key
+  holdId        Int      @unique
+  hold          Hold     @relation(fields: [holdId], references: [id])
+  excused       Boolean  @default(false)
+  excusedReason String?
+  fineId        Int?
+  fine          Fine?    @relation(fields: [fineId], references: [id])
+  createdAt     DateTime @default(now())
+
+  @@index([userId, fineId])
+}
+
+enum ReminderKind {
+  LOAN_DUE_SOON
+  LOAN_OVERDUE
+  HOLD_EXPIRING_SOON
+}
+
+model ReminderMark {
+  id        Int          @id @default(autoincrement())
+  kind      ReminderKind
+  userId    Int // plain user id, NOT a foreign key
+  loanId    Int?
+  holdId    Int?
+  createdAt DateTime     @default(now())
+
+  @@unique([kind, loanId])
+  @@unique([kind, holdId])
+}
+
+model JobLease {
+  name           String    @id
+  lockedUntil    DateTime?
+  lockedBy       String?
+  lastStartedAt  DateTime?
+  lastFinishedAt DateTime?
+  lastStatus     String?
+  lastError      String?
+  lastStats      Json?
+}
+
+enum NotificationStatus {
+  PENDING
+  SENDING
+  SENT
+  FAILED
+  CANCELLED
+}
+
+enum NotificationTemplate {
+  HOLD_CONFIRMED
+  RESERVATION_READY
+  HOLD_EXPIRING_SOON
+  HOLD_CANCELLED_BY_STAFF
+  HOLD_EXPIRED_MISSED
+  HOLD_EXPIRED_EXCUSED
+  MISSED_PICKUP_FINE
+  LOAN_STARTED
+  LOAN_DUE_SOON
+  LOAN_OVERDUE
+  RETURN_RECEIPT
+  FINE_ASSESSED
+  FINE_PAID
+  FINE_WAIVED
+  WELCOME
+  MEMBERSHIP_APPROVED
+  MEMBERSHIP_REJECTED
+}
+
+model Notification {
+  id            Int                  @id @default(autoincrement())
+  userId        Int // plain user id, deliberately NOT a foreign key
+  template      NotificationTemplate
+  dedupeKey     String               @unique
+  status        NotificationStatus   @default(PENDING)
+  payload       Json
+  attempts      Int                  @default(0)
+  lastAttemptAt DateTime?
+  nextAttemptAt DateTime             @default(now())
+  validUntil    DateTime?
+  lastError     String?
+  sentAt        DateTime?
+  /// When the member saw it in the portal (null = unread; drives the notification badge).
+  readAt        DateTime?
+  lockedUntil   DateTime?
+  lockedBy      String?
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+
+  @@index([status, nextAttemptAt])
+  @@index([userId, createdAt])
+  @@index([userId, readAt])
+}

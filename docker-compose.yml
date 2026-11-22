@@ -35,7 +35,7 @@ services:
   library-core:
     profiles: ["app"]
     build:
-      context: .
+      context: ./services/library-core
       dockerfile: Dockerfile
     image: bookdrop-library-core:latest
     environment:

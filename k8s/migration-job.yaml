@@ -18,9 +18,21 @@ spec:
             - "npx prisma migrate deploy && npx prisma db seed -- --allow-prod-seed"
           env:
             - name: NODE_ENV
-              value: "production"
+              value: "development"
             - name: ALLOW_PROD_SEED
               value: "true"
+            - name: SEED_ADMIN_EMAIL
+              value: "admin@example.com"
+            - name: SEED_ADMIN_PASSWORD
+              value: "AdminPass123!"
+            - name: SEED_LIBRARIAN_EMAIL
+              value: "librarian@example.com"
+            - name: SEED_LIBRARIAN_PASSWORD
+              value: "LibrarianPass123!"
+            - name: SEED_MEMBER_EMAIL
+              value: "patron@example.com"
+            - name: SEED_MEMBER_PASSWORD
+              value: "MemberPass123!"
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:

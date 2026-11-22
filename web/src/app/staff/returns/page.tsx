@@ -1,7 +1,10 @@
 'use client';
 
-import React, { useState } from 'react';
+import Link from 'next/link';
+import React, { useRef, useState } from 'react';
 import { useAuth } from '@/lib/auth-context';
+import { useConfirm, ModalDetails } from '@/components/ui/confirm-modal';
+import { DevReturnLookup } from '@/components/staff/dev-return-lookup';
 import { Loan, ReturnCondition } from '@/lib/types';
 import { fetchGraphQL } from '@/lib/graphql-client';
 import { RETURN_LOAN_MUTATION } from '@/lib/graphql-queries';
@@ -14,7 +17,7 @@ import {
   QrCode,
   CheckCircle2,
   AlertCircle,
-  Sparkles,
+  LogIn,
   ShieldAlert,
   FileText,
   DollarSign,
@@ -22,16 +25,24 @@ import {
 } from 'lucide-react';
 
 export default function StaffReturnsPage() {
-  const { isStaff, switchDemoUser } = useAuth();
+  const { isStaff } = useAuth();
+  const { confirm, notify, confirmDialog } = useConfirm();
 
   const [barcode, setBarcode] = useState('');
+  const barcodeRef = useRef<HTMLInputElement>(null);
+  /** Dev lookup picked a loan: fill its barcode and bring the form into view. */
+  const fillFromDevLookup = (value: string) => {
+    setBarcode(value);
+    setError(null);
+    barcodeRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    barcodeRef.current?.focus();
+  };
   const [condition, setCondition] = useState<ReturnCondition>('GOOD');
   const [damageFeeRs, setDamageFeeRs] = useState<string>('');
   const [conditionNote, setConditionNote] = useState('');
 
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [returnReceipt, setReturnReceipt] = useState<Loan | null>(null);
 
   const handleReturnSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -40,10 +51,31 @@ export default function StaffReturnsPage() {
       return;
     }
 
+    const damaged = condition === 'DAMAGED';
+    const fee = damaged && damageFeeRs ? parseFloat(damageFeeRs) : 0;
+    const ok = await confirm({
+      title: damaged ? 'Return as damaged?' : 'Process this return?',
+      message: (
+        <>
+          Check in copy <span className="font-mono font-semibold text-black/80">{barcode.trim()}</span>
+          {damaged ? (
+            <>
+              {' '}as <span className="font-semibold text-black/80">damaged</span>
+              {fee > 0 ? <>. A damage fee of <span className="font-semibold text-black/80">₹{fee.toFixed(2)}</span> will be charged to the member.</> : '.'}
+            </>
+          ) : (
+            <> in good condition. Any late fees are calculated automatically.</>
+          )}
+        </>
+      ),
+      tone: damaged ? 'warning' : 'success',
+      confirmText: damaged ? 'Return as damaged' : 'Process return',
+    });
+    if (ok === null) return;
+
     try {
       setIsLoading(true);
       setError(null);
-      setReturnReceipt(null);
 
       const parsedDamageFee =
         condition === 'DAMAGED' && damageFeeRs ? parseFloat(damageFeeRs) : undefined;
@@ -55,11 +87,38 @@ export default function StaffReturnsPage() {
         damageFeeRs: parsedDamageFee,
       });
 
-      setReturnReceipt(res.returnLoan);
       setBarcode('');
       setCondition('GOOD');
       setDamageFeeRs('');
       setConditionNote('');
+      const r = res.returnLoan;
+      await notify({
+        title: 'Return processed',
+        timer: 4500,
+        message: (
+          <>
+            {r.accruedLateFeeRs > 0
+              ? 'The copy is checked in. A late fee was added to the member’s account.'
+              : 'The copy is checked in and back in circulation.'}
+            <ModalDetails
+              rows={[
+                { label: 'Book', value: r.bookTitle },
+                { label: 'Copy', value: <span className="font-mono">{r.copyBarcode}</span> },
+                { label: 'Checked in', value: formatDateTime(r.returnedAt) },
+                { label: 'Condition', value: r.returnCondition === 'DAMAGED' ? 'Damaged' : 'Good' },
+                {
+                  label: 'Late fee',
+                  value: (
+                    <span className={r.accruedLateFeeRs > 0 ? 'text-rose-600' : undefined}>
+                      {formatCurrency(r.accruedLateFeeRs)}
+                    </span>
+                  ),
+                },
+              ]}
+            />
+          </>
+        ),
+      });
     } catch (err: any) {
       setError(err.message || 'Failed to process return for this copy.');
     } finally {
@@ -69,6 +128,7 @@ export default function StaffReturnsPage() {
 
   return (
     <div className="space-y-8 max-w-2xl mx-auto">
+      {confirmDialog}
       {/* Banner */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200">
         <div>
@@ -84,17 +144,21 @@ export default function StaffReturnsPage() {
         </div>
 
         {!isStaff && (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => switchDemoUser('LIBRARIAN')}
-            className="text-xs text-amber-700 bg-amber-50 hover:bg-amber-100 border-amber-200"
-          >
-            <Sparkles className="w-3.5 h-3.5 mr-1 text-amber-600" />
-            Switch to Staff Persona
-          </Button>
+          <Link href="/login">
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-xs text-amber-700 bg-amber-50 hover:bg-amber-100 border-amber-200"
+            >
+              <LogIn className="w-3.5 h-3.5 mr-1 text-amber-600" />
+              Sign in with a staff account
+            </Button>
+          </Link>
         )}
       </div>
+
+      {/* Dev only: look up the loan by member ID + book ID */}
+      <DevReturnLookup onUseBarcode={fillFromDevLookup} />
 
       {/* Return Form */}
       <Card>
@@ -124,6 +188,7 @@ export default function StaffReturnsPage() {
               <div className="relative">
                 <QrCode className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                 <input
+                  ref={barcodeRef}
                   type="text"
                   required
                   value={barcode}
@@ -237,75 +302,6 @@ export default function StaffReturnsPage() {
       </Card>
 
       {/* Return Receipt Card */}
-      {returnReceipt && (
-        <Card className="border-emerald-200 bg-emerald-50/50 shadow-md">
-          <CardHeader className="p-5 pb-3">
-            <div className="flex items-center gap-2 text-emerald-800">
-              <CheckCircle2 className="w-5 h-5 text-emerald-600" />
-              <CardTitle className="text-base text-emerald-900">
-                Return Processed Successfully
-              </CardTitle>
-            </div>
-            <CardDescription className="text-emerald-700">
-              Circulation state machine updated in database transaction.
-            </CardDescription>
-          </CardHeader>
-
-          <CardContent className="p-5 pt-0 space-y-3 text-xs">
-            <div className="grid grid-cols-2 gap-3 p-3 bg-white rounded-xl border border-emerald-100">
-              <div>
-                <span className="text-slate-400 block text-[10px] uppercase font-semibold">
-                  Book Title
-                </span>
-                <span className="font-bold text-slate-800">{returnReceipt.bookTitle}</span>
-              </div>
-              <div>
-                <span className="text-slate-400 block text-[10px] uppercase font-semibold">
-                  Copy Barcode
-                </span>
-                <span className="font-mono font-bold text-indigo-700">
-                  {returnReceipt.copyBarcode}
-                </span>
-              </div>
-              <div>
-                <span className="text-slate-400 block text-[10px] uppercase font-semibold">
-                  Checked In At
-                </span>
-                <span className="text-slate-700 font-medium">
-                  {formatDateTime(returnReceipt.returnedAt)}
-                </span>
-              </div>
-              <div>
-                <span className="text-slate-400 block text-[10px] uppercase font-semibold">
-                  Inspected Condition
-                </span>
-                <Badge
-                  variant={returnReceipt.returnCondition === 'GOOD' ? 'success' : 'danger'}
-                >
-                  {returnReceipt.returnCondition}
-                </Badge>
-              </div>
-            </div>
-
-            {/* Fees Breakdown */}
-            <div className="p-3 bg-white rounded-xl border border-emerald-100 space-y-1.5">
-              <div className="flex justify-between items-center">
-                <span className="text-slate-600">Accrued Late Fee:</span>
-                <span
-                  className={`font-semibold ${returnReceipt.accruedLateFeeRs > 0 ? 'text-rose-600' : 'text-slate-800'
-                    }`}
-                >
-                  {formatCurrency(returnReceipt.accruedLateFeeRs)}
-                </span>
-              </div>
-              <div className="flex justify-between items-center pt-1 border-t border-slate-100 font-bold">
-                <span className="text-slate-800">Loan Status:</span>
-                <Badge variant="secondary">{returnReceipt.status}</Badge>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
     </div>
   );
 }

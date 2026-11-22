@@ -1,7 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
-import { User, Role } from './types';
+import { User, Role, MembershipStatus } from './types';
 import { fetchGraphQL } from './graphql-client';
 import { LOGIN_MUTATION, REGISTER_MUTATION, ME_QUERY } from './graphql-queries';
 
@@ -15,32 +15,22 @@ interface AuthContextType {
   isLibrarian: boolean;
   isAdmin: boolean;
   isStaff: boolean;
+  /** Membership approval state (staff accounts are always APPROVED). */
+  membershipStatus: MembershipStatus | null;
+  /** True when the user may place holds, join waitlists and borrow. */
+  canBorrow: boolean;
   login: (email: string, password: string) => Promise<User>;
-  register: (email: string, password: string, name: string) => Promise<User>;
+  register: (
+    email: string,
+    password: string,
+    name: string,
+    membershipNumber: string
+  ) => Promise<User>;
   logout: () => Promise<void>;
-  switchDemoUser: (role: Role) => Promise<void>;
   refreshUserProfile: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
-
-const DEMO_CREDENTIALS: Record<Role, { email: string; pass: string; name: string }> = {
-  MEMBER: {
-    email: 'patron@example.com',
-    pass: 'MemberPass123!',
-    name: 'Patron User',
-  },
-  LIBRARIAN: {
-    email: 'librarian@example.com',
-    pass: 'LibrarianPass123!',
-    name: 'Desk Librarian',
-  },
-  ADMIN: {
-    email: 'admin@example.com',
-    pass: 'AdminPass123!',
-    name: 'Chief Administrator',
-  },
-};
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -79,10 +69,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const register = useCallback(
-    async (email: string, password: string, name: string): Promise<User> => {
+    async (
+      email: string,
+      password: string,
+      name: string,
+      membershipNumber: string
+    ): Promise<User> => {
       const data = await fetchGraphQL<{
         register: { accessToken: string; refreshToken: string; user: User };
-      }>(REGISTER_MUTATION, { input: { email, password, name } });
+      }>(REGISTER_MUTATION, { input: { email, password, name, membershipNumber } });
 
       const payload = data.register;
       localStorage.setItem('bookdrop_access_token', payload.accessToken);
@@ -126,36 +121,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  const switchDemoUser = useCallback(
-    async (targetRole: Role) => {
-      const creds = DEMO_CREDENTIALS[targetRole];
-      try {
-        await login(creds.email, creds.pass);
-      } catch (err: any) {
-        // If login failed (e.g. demo user doesn't exist yet in the database), attempt registration
-        if (
-          err.message?.toLowerCase().includes('not found') ||
-          err.message?.toLowerCase().includes('invalid') ||
-          err.message?.toLowerCase().includes('credential')
-        ) {
-          try {
-            await register(creds.email, creds.pass, creds.name);
-          } catch {
-            throw err;
-          }
-        } else {
-          throw err;
-        }
-      }
-    },
-    [login, register]
-  );
+  // Re-fetch the profile once on load so membership status is current (e.g. an
+  // admin approved the member since the profile was saved in localStorage).
+  useEffect(() => {
+    if (accessToken) {
+      refreshUserProfile();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accessToken !== null]);
 
   const role = user?.role || null;
   const isMember = role === 'MEMBER';
   const isLibrarian = role === 'LIBRARIAN';
   const isAdmin = role === 'ADMIN';
   const isStaff = isLibrarian || isAdmin;
+  const membershipStatus: MembershipStatus | null = user
+    ? user.membershipStatus ?? 'APPROVED'
+    : null;
+  const canBorrow = !!user && (isStaff || membershipStatus === 'APPROVED');
 
   return (
     <AuthContext.Provider
@@ -169,10 +152,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         isLibrarian,
         isAdmin,
         isStaff,
+        membershipStatus,
+        canBorrow,
         login,
         register,
         logout,
-        switchDemoUser,
         refreshUserProfile,
       }}
     >
