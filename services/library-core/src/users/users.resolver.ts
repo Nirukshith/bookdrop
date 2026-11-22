@@ -13,6 +13,11 @@ import {
 } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { UpdateUserRoleArgs } from './dto/update-user-role.args';
+import {
+  MembershipApplicationsArgs,
+  RejectMembershipArgs,
+  ReviewMembershipArgs,
+} from './dto/membership.args';
 import { UserModel } from './models/user.model';
 import { UsersService } from './users.service';
 
@@ -41,6 +46,45 @@ export class UsersResolver {
   @Roles(Role.ADMIN)
   async users(): Promise<UserModel[]> {
     return this.usersService.list();
+  }
+
+  @Query(() => [UserModel], {
+    name: 'membershipApplications',
+    description:
+      'Member accounts with the given membership status, oldest first (admin only)',
+  })
+  @Roles(Role.ADMIN)
+  async membershipApplications(
+    @Args() args: MembershipApplicationsArgs,
+  ): Promise<UserModel[]> {
+    return this.usersService.listByMembershipStatus(args.status);
+  }
+
+  @Mutation(() => UserModel, { name: 'approveMembership' })
+  @Roles(Role.ADMIN)
+  async approveMembership(
+    @Args() args: ReviewMembershipArgs,
+    @CurrentUser() currentUser: AuthenticatedUser,
+  ): Promise<UserModel> {
+    return this.usersService.reviewMembership(
+      currentUser.sub,
+      args.userId,
+      'APPROVE',
+    );
+  }
+
+  @Mutation(() => UserModel, { name: 'rejectMembership' })
+  @Roles(Role.ADMIN)
+  async rejectMembership(
+    @Args() args: RejectMembershipArgs,
+    @CurrentUser() currentUser: AuthenticatedUser,
+  ): Promise<UserModel> {
+    return this.usersService.reviewMembership(
+      currentUser.sub,
+      args.userId,
+      'REJECT',
+      args.reason,
+    );
   }
 
   @Mutation(() => UserModel, { name: 'updateUserRole' })

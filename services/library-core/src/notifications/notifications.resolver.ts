@@ -44,6 +44,39 @@ export class NotificationsResolver {
   }
 
   /**
+   * myUnreadNotificationCount: Number of the member's notifications not yet seen
+   * in the portal (drives the badge on the Notifications item). Cancelled
+   * notifications were never meant for the member and are not counted.
+   */
+  @Query(() => Int, { name: 'myUnreadNotificationCount' })
+  async myUnreadNotificationCount(
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<number> {
+    return this.prisma.notification.count({
+      where: {
+        userId: user.sub,
+        readAt: null,
+        status: { not: NotificationStatus.CANCELLED },
+      },
+    });
+  }
+
+  /**
+   * markMyNotificationsRead: Marks all of the member's unread notifications as
+   * read (called when they open their notifications). Returns how many changed.
+   */
+  @Mutation(() => Int, { name: 'markMyNotificationsRead' })
+  async markMyNotificationsRead(
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<number> {
+    const result = await this.prisma.notification.updateMany({
+      where: { userId: user.sub, readAt: null },
+      data: { readAt: new Date() },
+    });
+    return result.count;
+  }
+
+  /**
    * memberNotifications: Staff query to inspect notifications sent to a specific member.
    */
   @Query(() => [NotificationModel], { name: 'memberNotifications' })

@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/lib/auth-context';
+import { useConfirm } from '@/components/ui/confirm-modal';
 import { Copy, Book, CopyStatus } from '@/lib/types';
 import { fetchGraphQL } from '@/lib/graphql-client';
 import {
@@ -29,14 +30,14 @@ import {
 } from 'lucide-react';
 
 export default function StaffInventoryPage() {
-  const { isStaff, switchDemoUser } = useAuth();
+  const { isStaff } = useAuth();
+  const { confirm, notify, confirmDialog } = useConfirm();
 
   const [copies, setCopies] = useState<Copy[]>([]);
   const [books, setBooks] = useState<Book[]>([]);
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [actionSuccess, setActionSuccess] = useState<string | null>(null);
 
   // Add Copy Modal
   const [isAddCopyOpen, setIsAddCopyOpen] = useState(false);
@@ -95,7 +96,6 @@ export default function StaffInventoryPage() {
     try {
       setIsSubmittingCopy(true);
       setError(null);
-      setActionSuccess(null);
 
       const res = await fetchGraphQL<{ addCopy: Copy }>(ADD_COPY_MUTATION, {
         input: {
@@ -106,8 +106,11 @@ export default function StaffInventoryPage() {
         },
       });
 
-      setActionSuccess(`Added copy with barcode ${res.addCopy.barcode} to inventory!`);
       setIsAddCopyOpen(false);
+      void notify({
+        title: 'Copy added',
+        message: <>Copy <span className="font-mono font-semibold text-black/80">{res.addCopy.barcode}</span> is now in the inventory and available to lend.</>,
+      });
       setNewCopyBarcode('');
       setNewCopyShelf('');
       setNewCopyNotes('');
@@ -126,7 +129,6 @@ export default function StaffInventoryPage() {
     try {
       setIsSubmittingBook(true);
       setError(null);
-      setActionSuccess(null);
 
       const res = await fetchGraphQL<{ createBook: Book }>(CREATE_BOOK_MUTATION, {
         input: {
@@ -140,8 +142,11 @@ export default function StaffInventoryPage() {
         },
       });
 
-      setActionSuccess(`Created book title "${res.createBook.title}"!`);
       setIsAddBookOpen(false);
+      void notify({
+        title: 'Book created',
+        message: <><span className="font-semibold text-black/80">{res.createBook.title}</span> is in the catalog. Add copies so members can borrow it.</>,
+      });
       setBookTitle('');
       setBookIsbn('');
       setBookYear('');
@@ -156,19 +161,48 @@ export default function StaffInventoryPage() {
   };
 
   const handleRetireCopy = async (copyId: string) => {
-    if (!confirm('Are you sure you want to retire this copy from circulation?')) return;
+    const copy = copies.find((c) => c.id === copyId);
+    const reason = await confirm({
+      title: 'Retire this copy?',
+      message: (
+        <>
+          Copy{' '}
+          <span className="font-mono font-semibold text-black/80">{copy?.barcode ?? `#${copyId}`}</span> will be
+          permanently removed from circulation and can no longer be lent.
+        </>
+      ),
+      tone: 'danger',
+      confirmText: 'Retire copy',
+      showReason: true,
+      reasonLabel: 'Why is it being retired?',
+      reasons: [
+        { value: 'Damaged beyond repair', label: 'Damaged beyond repair' },
+        { value: 'Lost and not recovered', label: 'Lost and not recovered' },
+        { value: 'Worn out', label: 'Worn out' },
+        { value: 'Outdated edition (weeded)', label: 'Outdated edition (weeded)' },
+        { value: 'Other', label: 'Other' },
+      ],
+    });
+    if (reason === null) return;
     try {
       setRetiringCopyId(copyId);
       setError(null);
-      setActionSuccess(null);
 
       await fetchGraphQL(RETIRE_COPY_MUTATION, {
         id: parseInt(copyId, 10),
-        reason: 'Retired by staff',
+        reason,
       });
 
-      setActionSuccess(`Copy #${copyId} has been retired.`);
       loadData();
+      void notify({
+        title: 'Copy retired',
+        message: (
+          <>
+            Copy <span className="font-mono font-semibold text-black/80">{copy?.barcode ?? `#${copyId}`}</span> has been removed from
+            circulation. Reason: {reason}
+          </>
+        ),
+      });
     } catch (err: any) {
       setError(err.message || 'Failed to retire copy');
     } finally {
@@ -196,6 +230,7 @@ export default function StaffInventoryPage() {
 
   return (
     <div className="space-y-8">
+      {confirmDialog}
       {/* Banner */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200">
         <div>
@@ -234,12 +269,6 @@ export default function StaffInventoryPage() {
       </div>
 
       {/* Alerts */}
-      {actionSuccess && (
-        <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-center gap-2">
-          <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-          <span>{actionSuccess}</span>
-        </div>
-      )}
 
       {error && (
         <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-center gap-2">

@@ -446,6 +446,50 @@ describe('mapEventToNotification (Mapping Table Unit Tests)', () => {
       });
     });
 
+    it('maps user.membership_approved to MEMBERSHIP_APPROVED, deduped per member', () => {
+      const event = {
+        eventName: DOMAIN_EVENT_NAMES.USER_MEMBERSHIP_APPROVED,
+        userId: 61,
+        email: 'approved@example.com',
+        name: 'Approved Patron',
+        membershipNumber: 'LIB-0061',
+        approvedById: 1,
+      };
+      expect(mapEventToNotification(event)).toEqual({
+        userId: 61,
+        template: NotificationTemplate.MEMBERSHIP_APPROVED,
+        dedupeKey: 'membership-approved:61',
+        validUntil: undefined,
+        payload: {
+          userId: 61,
+          membershipNumber: 'LIB-0061',
+        },
+      });
+    });
+
+    it('maps user.membership_rejected to MEMBERSHIP_REJECTED, deduped per member', () => {
+      const event = {
+        eventName: DOMAIN_EVENT_NAMES.USER_MEMBERSHIP_REJECTED,
+        userId: 62,
+        email: 'rejected@example.com',
+        name: 'Rejected Patron',
+        membershipNumber: 'LIB-0062',
+        rejectedById: 1,
+        reason: 'Card number not found',
+      };
+      expect(mapEventToNotification(event)).toEqual({
+        userId: 62,
+        template: NotificationTemplate.MEMBERSHIP_REJECTED,
+        dedupeKey: 'membership-rejected:62',
+        validUntil: undefined,
+        payload: {
+          userId: 62,
+          membershipNumber: 'LIB-0062',
+          reason: 'Card number not found',
+        },
+      });
+    });
+
     it('returns null for unhandled or unknown domain event names', () => {
       expect(
         mapEventToNotification({ eventName: 'copy.created' as any }),

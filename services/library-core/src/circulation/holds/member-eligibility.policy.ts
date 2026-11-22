@@ -7,6 +7,8 @@ import {
   ActiveLoanCountPort,
 } from './ports/active-loan-count.port';
 import { UNPAID_FINES_PORT, UnpaidFinesPort } from './ports/unpaid-fines.port';
+import { IDENTITY_PUBLIC_API, IdentityPublicApi } from '../../users';
+import { assertMembershipApproved } from './membership-approval';
 import {
   MaxActiveHoldsReachedError,
   MaxActiveLoansReachedError,
@@ -23,10 +25,13 @@ export class MemberEligibilityPolicy {
     private readonly loanCountPort: ActiveLoanCountPort,
     @Inject(UNPAID_FINES_PORT)
     private readonly unpaidFinesPort: UnpaidFinesPort,
+    @Inject(IDENTITY_PUBLIC_API)
+    private readonly identityApi: IdentityPublicApi,
   ) {}
 
   /**
    * Asserts member eligibility to place a hold on a book in strict priority order (used by requestHold):
+   * 0. Membership is APPROVED by an admin (via IdentityPublicApi)
    * 1. Active holds < MAX_ACTIVE_HOLDS (Circulation database)
    * 2. Active loans < MAX_ACTIVE_LOANS (via ActiveLoanCountPort)
    * 3. No unpaid fines (via UnpaidFinesPort)
@@ -40,6 +45,9 @@ export class MemberEligibilityPolicy {
     tx?: Prisma.TransactionClient,
   ): Promise<void> {
     const client = tx ?? this.prisma;
+
+    // 0. Membership approval check
+    await assertMembershipApproved(this.identityApi, userId);
 
     // 1. Active holds check
     const activeHoldsCount = await client.hold.count({
@@ -95,6 +103,7 @@ export class MemberEligibilityPolicy {
 
   /**
    * Asserts member eligibility for checkout at the desk (used by checkoutHold and checkoutWalkIn):
+   * 0. Membership is APPROVED by an admin (via IdentityPublicApi)
    * 1. Active loans < MAX_ACTIVE_LOANS (via ActiveLoanCountPort)
    * 2. No unpaid fines (via UnpaidFinesPort)
    *
@@ -104,6 +113,9 @@ export class MemberEligibilityPolicy {
     userId: number,
     tx?: Prisma.TransactionClient,
   ): Promise<void> {
+    // 0. Membership approval check
+    await assertMembershipApproved(this.identityApi, userId);
+
     // 1. Active loans check (via ActiveLoanCountPort)
     const activeLoansCount = await this.loanCountPort.countActiveLoansForMember(
       userId,

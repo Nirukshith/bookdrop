@@ -27,4 +27,10 @@ export class NotificationModel {
 
   @Field(() => Date, { nullable: true })
   sentAt: Date | null;
+
+  @Field(() => Date, {
+    nullable: true,
+    description: 'When the member saw it in the portal; null means unread',
+  })
+  readAt?: Date | null;
 }

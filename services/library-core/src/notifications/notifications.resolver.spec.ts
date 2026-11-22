@@ -14,6 +14,8 @@ describe('NotificationsResolver', () => {
       findMany: jest.Mock;
       findUnique: jest.Mock;
       update: jest.Mock;
+      count: jest.Mock;
+      updateMany: jest.Mock;
     };
   };
   let identityPublicApiMock: {
@@ -33,6 +35,8 @@ describe('NotificationsResolver', () => {
         findMany: jest.fn(),
         findUnique: jest.fn(),
         update: jest.fn(),
+        count: jest.fn(),
+        updateMany: jest.fn(),
       },
     };
 
@@ -94,6 +98,33 @@ describe('NotificationsResolver', () => {
         orderBy: { createdAt: 'desc' },
         take: 20,
         skip: 0,
+      });
+    });
+  });
+
+  describe('unread notifications', () => {
+    it("counts only the current member's unread, non-cancelled notifications", async () => {
+      prismaMock.notification.count.mockResolvedValue(3);
+
+      await expect(resolver.myUnreadNotificationCount(mockUser)).resolves.toBe(
+        3,
+      );
+      expect(prismaMock.notification.count).toHaveBeenCalledWith({
+        where: {
+          userId: 42,
+          readAt: null,
+          status: { not: NotificationStatus.CANCELLED },
+        },
+      });
+    });
+
+    it("marks only the current member's unread notifications as read", async () => {
+      prismaMock.notification.updateMany.mockResolvedValue({ count: 2 });
+
+      await expect(resolver.markMyNotificationsRead(mockUser)).resolves.toBe(2);
+      expect(prismaMock.notification.updateMany).toHaveBeenCalledWith({
+        where: { userId: 42, readAt: null },
+        data: { readAt: expect.any(Date) },
       });
     });
   });

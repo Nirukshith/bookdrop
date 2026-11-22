@@ -186,6 +186,7 @@ export class ReservationsResolver {
       name: member.name,
       email: member.email,
       role: member.role,
+      membershipStatus: member.membershipStatus,
       createdAt: new Date(),
       updatedAt: new Date(),
     };

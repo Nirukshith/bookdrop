@@ -85,7 +85,7 @@ async function attemptTokenRefresh(): Promise<string | null> {
 export async function fetchGraphQL<T = any>(
   query: string,
   variables: Record<string, any> = {},
-  options: { token?: string; skipAuth?: boolean } = {}
+  options: { token?: string; skipAuth?: boolean; isRetry?: boolean } = {}
 ): Promise<T> {
   const endpoint = getGraphQLEndpoint();
 
@@ -131,11 +131,13 @@ export async function fetchGraphQL<T = any>(
         err.extensions?.originalError?.statusCode === 401
       ));
 
-  if (hasAuthError && !options.skipAuth && typeof window !== 'undefined') {
+  // Refresh + retry at most once: if the retried request is still rejected, surface the
+  // error instead of refreshing again (otherwise a token the backend never accepts loops forever).
+  if (hasAuthError && !options.skipAuth && !options.isRetry && typeof window !== 'undefined') {
     const newToken = await attemptTokenRefresh();
     if (newToken) {
       // Retry once with new token
-      return fetchGraphQL<T>(query, variables, { token: newToken, skipAuth: false });
+      return fetchGraphQL<T>(query, variables, { token: newToken, isRetry: true });
     }
   }
 

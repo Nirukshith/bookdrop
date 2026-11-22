@@ -11,6 +11,8 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { ClockService } from '../../common/clock/clock.service';
 import { CATALOG_PUBLIC_API } from '../../books';
 import { UNPAID_FINES_PORT } from '../holds/ports/unpaid-fines.port';
+import { IDENTITY_PUBLIC_API } from '../../users';
+import { MembershipNotApprovedError } from '../holds/errors';
 import {
   AlreadyHeldError,
   AlreadyQueuedError,
@@ -31,6 +33,7 @@ describe('ReservationsService', () => {
   let eventEmitterMock: any;
   let catalogPublicApiMock: any;
   let unpaidFinesPortMock: any;
+  let identityApiMock: any;
 
   const fixedNow = new Date('2026-11-01T12:00:00.000Z');
 
@@ -73,6 +76,10 @@ describe('ReservationsService', () => {
       checkMemberFines: jest.fn().mockResolvedValue({ blocked: false }),
     };
 
+    identityApiMock = {
+      getMembershipStatus: jest.fn().mockResolvedValue('APPROVED'),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ReservationsService,
@@ -81,6 +88,7 @@ describe('ReservationsService', () => {
         { provide: EventEmitter2, useValue: eventEmitterMock },
         { provide: CATALOG_PUBLIC_API, useValue: catalogPublicApiMock },
         { provide: UNPAID_FINES_PORT, useValue: unpaidFinesPortMock },
+        { provide: IDENTITY_PUBLIC_API, useValue: identityApiMock },
       ],
     }).compile();
 
@@ -92,6 +100,19 @@ describe('ReservationsService', () => {
   });
 
   describe('joinQueue', () => {
+    it.each(['PENDING', 'REJECTED'])(
+      'throws MembershipNotApprovedError for a %s member before touching the queue',
+      async (status) => {
+        identityApiMock.getMembershipStatus.mockResolvedValueOnce(status);
+
+        await expect(service.joinQueue(1, 10)).rejects.toThrow(
+          MembershipNotApprovedError,
+        );
+        expect(identityApiMock.getMembershipStatus).toHaveBeenCalledWith(1);
+        expect(prismaMock.$transaction).not.toHaveBeenCalled();
+      },
+    );
+
     it('throws BookNotFoundError if book does not exist in catalog', async () => {
       catalogPublicApiMock.findBookById.mockResolvedValueOnce(null);
 

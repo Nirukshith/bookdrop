@@ -74,18 +74,18 @@ enum HoldSource {
 }
 
 model Hold {
-  id           Int        @id @default(autoincrement())
+  id           Int           @id @default(autoincrement())
   userId       Int // plain user id, deliberately NOT a foreign key
   bookId       Int // plain book id, deliberately NOT a foreign key
   copyId       Int
-  copy         Copy       @relation(fields: [copyId], references: [id])
+  copy         Copy          @relation(fields: [copyId], references: [id])
   loan         Loan?
   reservation  Reservation?
   missedPickup MissedPickup?
-  status       HoldStatus @default(ACTIVE)
-  source       HoldSource @default(REQUEST)
+  status       HoldStatus    @default(ACTIVE)
+  source       HoldSource    @default(REQUEST)
   expiresAt    DateTime
-  createdAt    DateTime   @default(now())
+  createdAt    DateTime      @default(now())
   resolvedAt   DateTime?
   resolvedNote String? // for example the cancellation reason or who cancelled
 
@@ -120,26 +120,26 @@ enum LoanStatus {
 }
 
 model Loan {
-  id              Int              @id @default(autoincrement())
-  userId          Int // plain user id, deliberately NOT a foreign key
-  bookId          Int // plain book id, deliberately NOT a foreign key
-  copyId          Int
-  copy            Copy             @relation(fields: [copyId], references: [id])
-  holdId          Int?             @unique
-  hold            Hold?            @relation(fields: [holdId], references: [id])
-  status          LoanStatus       @default(ACTIVE)
-  borrowedAt      DateTime
-  dueAt           DateTime
-  returnedAt      DateTime?
-  checkedOutById  Int // plain staff user id, NOT a foreign key
-  returnCondition ReturnCondition?
-  conditionNote   String?
+  id                 Int              @id @default(autoincrement())
+  userId             Int // plain user id, deliberately NOT a foreign key
+  bookId             Int // plain book id, deliberately NOT a foreign key
+  copyId             Int
+  copy               Copy             @relation(fields: [copyId], references: [id])
+  holdId             Int?             @unique
+  hold               Hold?            @relation(fields: [holdId], references: [id])
+  status             LoanStatus       @default(ACTIVE)
+  borrowedAt         DateTime
+  dueAt              DateTime
+  returnedAt         DateTime?
+  checkedOutById     Int // plain staff user id, NOT a foreign key
+  returnCondition    ReturnCondition?
+  conditionNote      String?
   returnedById       Int? // plain staff user id, NOT a foreign key
   lostAt             DateTime?
   priceMinorAtBorrow Int?
   fines              Fine[]
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
 
   @@index([userId, status])
   @@index([status, dueAt])
@@ -147,20 +147,20 @@ model Loan {
 }
 
 model Fine {
-  id           Int           @id @default(autoincrement())
-  userId       Int // plain user id, deliberately NOT a foreign key
-  reason       FineReason
-  amountMinor  Int
-  paidMinor    Int           @default(0)
-  status       FineStatus    @default(UNPAID)
-  loanId       Int?
-  loan         Loan?         @relation(fields: [loanId], references: [id])
-  daysLate     Int?
-  note         String?
-  dedupeKey    String?       @unique
-  createdById  Int? // plain staff user id, null when created by the system
-  createdAt    DateTime      @default(now())
-  settledAt    DateTime?
+  id                  Int            @id @default(autoincrement())
+  userId              Int // plain user id, deliberately NOT a foreign key
+  reason              FineReason
+  amountMinor         Int
+  paidMinor           Int            @default(0)
+  status              FineStatus     @default(UNPAID)
+  loanId              Int?
+  loan                Loan?          @relation(fields: [loanId], references: [id])
+  daysLate            Int?
+  note                String?
+  dedupeKey           String?        @unique
+  createdById         Int? // plain staff user id, null when created by the system
+  createdAt           DateTime       @default(now())
+  settledAt           DateTime?
   waivedById          Int? // plain admin user id
   waivedReason        String?
   uncappedAmountMinor Int?
@@ -203,15 +203,32 @@ enum Role {
   ADMIN
 }
 
+enum MembershipStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
 model User {
-  id            Int            @id @default(autoincrement())
-  name          String
-  email         String         @unique
-  passwordHash  String
-  role          Role           @default(MEMBER)
-  refreshTokens RefreshToken[]
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
+  id                     Int              @id @default(autoincrement())
+  name                   String
+  email                  String           @unique
+  passwordHash           String
+  role                   Role             @default(MEMBER)
+  /// Library card number supplied by the member at self-registration.
+  /// Null for staff and for accounts created before membership approval existed.
+  membershipNumber       String?          @unique
+  /// Self-registered members start PENDING and need admin approval before
+  /// they can place holds, join waitlists or borrow. Defaults to APPROVED so
+  /// seeded, staff and pre-existing accounts keep working.
+  membershipStatus       MembershipStatus @default(APPROVED)
+  membershipReviewedAt   DateTime?
+  membershipReviewedById Int?
+  refreshTokens          RefreshToken[]
+  createdAt              DateTime         @default(now())
+  updatedAt              DateTime         @updatedAt
+
+  @@index([membershipStatus])
 }
 
 model RefreshToken {
@@ -240,8 +257,8 @@ enum ReservationCancelReason {
 
 model Reservation {
   id            Int                      @id @default(autoincrement())
-  userId        Int                      // plain user id, deliberately NOT a foreign key
-  bookId        Int                      // plain book id, deliberately NOT a foreign key
+  userId        Int // plain user id, deliberately NOT a foreign key
+  bookId        Int // plain book id, deliberately NOT a foreign key
   status        ReservationStatus        @default(WAITING)
   createdAt     DateTime                 @default(now())
   promotedAt    DateTime?
@@ -249,22 +266,22 @@ model Reservation {
   hold          Hold?                    @relation(fields: [holdId], references: [id])
   cancelledAt   DateTime?
   cancelReason  ReservationCancelReason?
-  cancelledById Int?                     // plain user id, NOT a foreign key
+  cancelledById Int? // plain user id, NOT a foreign key
 
   @@index([bookId, status, id])
   @@index([userId, status])
 }
 
 model MissedPickup {
-  id             Int      @id @default(autoincrement())
-  userId         Int      // plain user id, deliberately NOT a foreign key
-  holdId         Int      @unique
-  hold           Hold     @relation(fields: [holdId], references: [id])
-  excused        Boolean  @default(false)
-  excusedReason  String?
-  fineId         Int?
-  fine           Fine?    @relation(fields: [fineId], references: [id])
-  createdAt      DateTime @default(now())
+  id            Int      @id @default(autoincrement())
+  userId        Int // plain user id, deliberately NOT a foreign key
+  holdId        Int      @unique
+  hold          Hold     @relation(fields: [holdId], references: [id])
+  excused       Boolean  @default(false)
+  excusedReason String?
+  fineId        Int?
+  fine          Fine?    @relation(fields: [fineId], references: [id])
+  createdAt     DateTime @default(now())
 
   @@index([userId, fineId])
 }
@@ -278,7 +295,7 @@ enum ReminderKind {
 model ReminderMark {
   id        Int          @id @default(autoincrement())
   kind      ReminderKind
-  userId    Int          // plain user id, NOT a foreign key
+  userId    Int // plain user id, NOT a foreign key
   loanId    Int?
   holdId    Int?
   createdAt DateTime     @default(now())
@@ -322,11 +339,13 @@ enum NotificationTemplate {
   FINE_PAID
   FINE_WAIVED
   WELCOME
+  MEMBERSHIP_APPROVED
+  MEMBERSHIP_REJECTED
 }
 
 model Notification {
   id            Int                  @id @default(autoincrement())
-  userId        Int                  // plain user id, deliberately NOT a foreign key
+  userId        Int // plain user id, deliberately NOT a foreign key
   template      NotificationTemplate
   dedupeKey     String               @unique
   status        NotificationStatus   @default(PENDING)
@@ -337,6 +356,8 @@ model Notification {
   validUntil    DateTime?
   lastError     String?
   sentAt        DateTime?
+  /// When the member saw it in the portal (null = unread; drives the notification badge).
+  readAt        DateTime?
   lockedUntil   DateTime?
   lockedBy      String?
   createdAt     DateTime             @default(now())
@@ -344,6 +365,5 @@ model Notification {
 
   @@index([status, nextAttemptAt])
   @@index([userId, createdAt])
+  @@index([userId, readAt])
 }
-
-

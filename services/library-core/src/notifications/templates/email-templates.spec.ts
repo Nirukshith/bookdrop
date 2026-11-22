@@ -251,6 +251,91 @@ describe('Email Templates (Unit Tests)', () => {
       expect(result.subject).toBe('Welcome to Bookdrop!');
       expect(result.html).toContain('Welcome to <strong>Bookdrop</strong>');
       expect(result.text).toContain('Welcome to Bookdrop!');
+      // New members start PENDING, so the welcome must not promise borrowing yet
+      expect(result.text).toContain('membership is approved');
+      expect(result.text).not.toContain('account is active');
+    });
+
+    it('renders MEMBERSHIP_APPROVED with the membership number', () => {
+      const result = renderEmail(NotificationTemplate.MEMBERSHIP_APPROVED, {
+        recipientName: 'Nina',
+        recipientEmail: 'nina@example.com',
+        membershipNumber: 'LIB-0042',
+      });
+
+      expect(result.subject).toBe('Your Bookdrop membership is approved');
+      expect(result.html).toContain('<strong>LIB-0042</strong>');
+      expect(result.html).toContain('<strong>approved</strong>');
+      expect(result.text).toContain('(LIB-0042) has been approved');
+      expect(result.text).toContain('place holds');
+    });
+
+    it('renders MEMBERSHIP_APPROVED without a membership number and escapes HTML', () => {
+      const result = renderEmail(NotificationTemplate.MEMBERSHIP_APPROVED, {
+        recipientName: '<b>Nina</b>',
+        recipientEmail: 'nina@example.com',
+        membershipNumber: '<script>',
+      });
+
+      expect(result.html).not.toContain('<script>');
+      expect(result.html).not.toContain('<b>Nina</b>');
+
+      const noNumber = renderEmail(NotificationTemplate.MEMBERSHIP_APPROVED, {
+        recipientName: 'Nina',
+        recipientEmail: 'nina@example.com',
+      });
+      expect(noNumber.text).toContain(
+        'your Bookdrop membership has been approved',
+      );
+    });
+
+    it('renders MEMBERSHIP_REJECTED with the membership number and next steps', () => {
+      const result = renderEmail(NotificationTemplate.MEMBERSHIP_REJECTED, {
+        recipientName: 'Omar',
+        recipientEmail: 'omar@example.com',
+        membershipNumber: 'LIB-0099',
+      });
+
+      expect(result.subject).toBe(
+        'Update on your Bookdrop membership application',
+      );
+      expect(result.html).toContain('<strong>LIB-0099</strong>');
+      expect(result.text).toContain('for membership number LIB-0099');
+      expect(result.text).toContain("won't be able to place holds");
+      expect(result.text).toContain('circulation desk');
+    });
+
+    it("renders MEMBERSHIP_REJECTED with the admin's reason instead of the generic one", () => {
+      const result = renderEmail(NotificationTemplate.MEMBERSHIP_REJECTED, {
+        recipientName: 'Omar',
+        recipientEmail: 'omar@example.com',
+        membershipNumber: 'LIB-0099',
+        reason: 'Card has expired <b>2024</b>',
+      });
+
+      expect(result.text).toContain('Reason: Card has expired <b>2024</b>');
+      expect(result.text).not.toContain('match it to our library records');
+      expect(result.html).toContain(
+        '<strong>Reason:</strong> Card has expired &lt;b&gt;2024&lt;/b&gt;',
+      );
+    });
+
+    it('renders MEMBERSHIP_REJECTED without a membership number and escapes HTML', () => {
+      const result = renderEmail(NotificationTemplate.MEMBERSHIP_REJECTED, {
+        recipientName: '<b>Omar</b>',
+        recipientEmail: 'omar@example.com',
+        membershipNumber: '<img src=x onerror=alert(1)>',
+      });
+      expect(result.html).not.toContain('<img');
+      expect(result.html).not.toContain('<b>Omar</b>');
+
+      const noNumber = renderEmail(NotificationTemplate.MEMBERSHIP_REJECTED, {
+        recipientName: 'Omar',
+        recipientEmail: 'omar@example.com',
+      });
+      expect(noNumber.text).toContain(
+        'approve your Bookdrop membership application, because',
+      );
     });
   });
 });

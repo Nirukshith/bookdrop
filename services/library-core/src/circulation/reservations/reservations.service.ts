@@ -12,6 +12,8 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { ClockService } from '../../common/clock/clock.service';
 import { CATALOG_PUBLIC_API, CatalogPublicApi } from '../../books';
+import { IDENTITY_PUBLIC_API, IdentityPublicApi } from '../../users';
+import { assertMembershipApproved } from '../holds/membership-approval';
 import {
   UNPAID_FINES_PORT,
   UnpaidFinesPort,
@@ -52,6 +54,8 @@ export class ReservationsService {
     private readonly catalogPublicApi: CatalogPublicApi,
     @Inject(UNPAID_FINES_PORT)
     private readonly unpaidFinesPort: UnpaidFinesPort,
+    @Inject(IDENTITY_PUBLIC_API)
+    private readonly identityApi: IdentityPublicApi,
   ) {}
 
   /**
@@ -61,6 +65,9 @@ export class ReservationsService {
     userId: number,
     bookId: number,
   ): Promise<Reservation & { position: number }> {
+    // 0. Only admin-approved members may join a waitlist
+    await assertMembershipApproved(this.identityApi, userId);
+
     return await withTransactionRetry(async ({ onCommit }) => {
       return this.prisma.$transaction(async (tx) => {
         // 1. Acquire member advisory lock first

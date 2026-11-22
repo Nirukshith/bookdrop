@@ -258,6 +258,37 @@ export function mapEventToNotification(
       return null;
     }
 
+    case DOMAIN_EVENT_NAMES.USER_MEMBERSHIP_APPROVED: {
+      // A membership is approved at most once (APPROVED cannot be re-reviewed),
+      // so one email per member.
+      return {
+        userId: event.userId,
+        template: NotificationTemplate.MEMBERSHIP_APPROVED,
+        dedupeKey: `membership-approved:${event.userId}`,
+        validUntil: undefined,
+        payload: {
+          userId: event.userId,
+          membershipNumber: event.membershipNumber ?? null,
+        },
+      };
+    }
+
+    case DOMAIN_EVENT_NAMES.USER_MEMBERSHIP_REJECTED: {
+      // Only a PENDING application can be rejected, so this happens at most
+      // once per member. A later approval still sends MEMBERSHIP_APPROVED.
+      return {
+        userId: event.userId,
+        template: NotificationTemplate.MEMBERSHIP_REJECTED,
+        dedupeKey: `membership-rejected:${event.userId}`,
+        validUntil: undefined,
+        payload: {
+          userId: event.userId,
+          membershipNumber: event.membershipNumber ?? null,
+          reason: event.reason ?? null,
+        },
+      };
+    }
+
     case DOMAIN_EVENT_NAMES.USER_REGISTERED: {
       return {
         userId: event.userId,

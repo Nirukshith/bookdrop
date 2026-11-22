@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { usePathname } from 'next/navigation';
+import { PortalShell, usePortalShell } from '@/components/portal-sidebar';
 
 export function MainContentWrapper({
   children,
@@ -10,6 +11,11 @@ export function MainContentWrapper({
 }) {
   const pathname = usePathname();
   const isHome = pathname === '/';
+  const inPortalShell = usePortalShell();
+
+  if (inPortalShell) {
+    return <PortalShell>{children}</PortalShell>;
+  }
 
   if (isHome) {
     return <main className="flex-1 w-full flex flex-col">{children}</main>;

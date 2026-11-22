@@ -284,6 +284,15 @@ input LoginInput {
   password: String!
 }
 
+"""
+Approval state of a library membership. Only APPROVED members may place holds, join waitlists or borrow.
+"""
+enum MembershipStatus {
+  APPROVED
+  PENDING
+  REJECTED
+}
+
 type MissedPickupsSummary {
   recent: [RecentMissedPickup!]!
   threshold: Int!
@@ -293,6 +302,7 @@ type MissedPickupsSummary {
 type Mutation {
   addCopies(bookId: Int!, quantity: Int!, shelfLocation: String): [Copy!]!
   addCopy(input: AddCopyInput!): Copy!
+  approveMembership(userId: Int!): User!
   cancelHold(holdId: Int!, reason: String): Hold!
   cancelMyHold(holdId: Int!): Hold!
   cancelReservation(reason: String, reservationId: Int!): Reservation!
@@ -304,9 +314,15 @@ type Mutation {
   login(input: LoginInput!): AuthPayload!
   logout(refreshToken: String!): Boolean!
   markLoanLost(assessedFeeRs: Float, loanId: ID!, note: String!): Loan!
+  markMyNotificationsRead: Int!
   recordFinePayment(amountRs: Float!, fineId: ID!, note: String): Fine!
   refreshTokens(refreshToken: String!): AuthPayload!
   register(input: RegisterInput!): AuthPayload!
+  rejectMembership(
+    """Why the application was rejected; included in the email to the member"""
+    reason: String
+    userId: Int!
+  ): User!
   requestHold(bookId: Int!): Hold!
   retireCopy(id: Int!, reason: String): Copy!
   retryNotification(id: Int!): Notification!
@@ -361,6 +377,9 @@ type MyFine {
 type Notification {
   createdAt: DateTime!
   id: ID!
+
+  """When the member saw it in the portal; null means unread"""
+  readAt: DateTime
   sentAt: DateTime
   status: NotificationStatus!
   template: NotificationTemplate!
@@ -393,6 +412,8 @@ enum NotificationTemplate {
   LOAN_DUE_SOON
   LOAN_OVERDUE
   LOAN_STARTED
+  MEMBERSHIP_APPROVED
+  MEMBERSHIP_REJECTED
   MISSED_PICKUP_FINE
   RESERVATION_READY
   RETURN_RECEIPT
@@ -445,6 +466,14 @@ type Query {
   """
   memberMissedPickups(memberEmail: String!): MissedPickupsSummary!
   memberNotifications(memberEmail: String!, pagination: NotificationPaginationInput): [Notification!]!
+
+  """
+  Member accounts with the given membership status, oldest first (admin only)
+  """
+  membershipApplications(
+    """Which applications to list (defaults to PENDING)"""
+    status: MembershipStatus! = PENDING
+  ): [User!]!
   myFines(status: FineStatus): [MyFine!]!
   myHolds(status: HoldStatus): [Hold!]!
   myLoans(status: LoanStatus): [Loan!]!
@@ -455,6 +484,7 @@ type Query {
   myMissedPickups: MissedPickupsSummary!
   myNotifications(pagination: NotificationPaginationInput): [Notification!]!
   myReservations: [Reservation!]!
+  myUnreadNotificationCount: Int!
   overdueLoans(pagination: LoanPaginationInput): [Loan!]!
   pickupDeskHolds(copyBarcode: String, memberEmail: String): [PickupDeskHold!]!
   queueForBook(bookId: Int!): [Reservation!]!
@@ -474,6 +504,11 @@ type RecentMissedPickup {
 
 input RegisterInput {
   email: String!
+
+  """
+  Library card number. The account stays PENDING until an admin verifies it.
+  """
+  membershipNumber: String!
   name: String!
   password: String!
 }
@@ -545,6 +580,11 @@ type User {
   createdAt: DateTime!
   email: String!
   id: ID!
+
+  """Library card number supplied at registration"""
+  membershipNumber: String
+  membershipReviewedAt: DateTime
+  membershipStatus: MembershipStatus!
   name: String!
   role: Role!
   updatedAt: DateTime!

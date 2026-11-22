@@ -23,6 +23,7 @@ export interface EmailTemplateContext {
   excused?: boolean;
   excusedReason?: string;
   timezone?: string;
+  membershipNumber?: string | null;
 }
 
 export interface RenderedEmail {
@@ -32,7 +33,7 @@ export interface RenderedEmail {
 }
 
 /**
- * Pure template renderer implementing all 15 Bookdrop notification templates:
+ * Pure template renderer implementing all 17 Bookdrop notification templates:
  * - HTML-escapes all user-controlled text (titles, patron names, reasons)
  * - Sanitizes subject lines by stripping newlines
  * - Formats dates and times in the library's IANA timezone
@@ -285,11 +286,52 @@ export function renderEmail(
         subject,
         html: `
           <p>Hello ${nameSafe},</p>
-          <p>Welcome to <strong>Bookdrop</strong>!</p>
-          <p>Your library account is active. You can now browse our catalog, place holds on physical copies, and join waiting queues.</p>
+          <p>Welcome to <strong>Bookdrop</strong>! We&#39;ve received your membership application.</p>
+          <p>A librarian will verify your membership number against our records. In the meantime you can sign in and browse the catalog. We&#39;ll email you as soon as your membership is approved so you can start placing holds and borrowing books.</p>
+        `.trim(),
+        text: `Hello ${ctx.recipientName},\n\nWelcome to Bookdrop! We've received your membership application.\nA librarian will verify your membership number. You can browse the catalog in the meantime, and we'll email you as soon as your membership is approved so you can start placing holds and borrowing books.`,
+      };
+    }
+
+    case NotificationTemplate.MEMBERSHIP_APPROVED: {
+      const subject = sanitizeSubject('Your Bookdrop membership is approved');
+      const numberSafe = ctx.membershipNumber
+        ? escapeHtml(ctx.membershipNumber)
+        : null;
+      return {
+        subject,
+        html: `
+          <p>Hello ${nameSafe},</p>
+          <p>Good news: your Bookdrop membership${numberSafe ? ` (<strong>${numberSafe}</strong>)` : ''} has been <strong>approved</strong>.</p>
+          <p>You can now place holds on available copies, join waitlists for books that are out, and borrow at the circulation desk.</p>
           <p>Happy reading!</p>
         `.trim(),
-        text: `Hello ${ctx.recipientName},\n\nWelcome to Bookdrop!\nYour library account is active. You can now browse our catalog and borrow books.\n\nHappy reading!`,
+        text: `Hello ${ctx.recipientName},\n\nGood news: your Bookdrop membership${ctx.membershipNumber ? ` (${ctx.membershipNumber})` : ''} has been approved.\nYou can now place holds, join waitlists and borrow books at the circulation desk.\n\nHappy reading!`,
+      };
+    }
+
+    case NotificationTemplate.MEMBERSHIP_REJECTED: {
+      const subject = sanitizeSubject(
+        'Update on your Bookdrop membership application',
+      );
+      const numberSafe = ctx.membershipNumber
+        ? escapeHtml(ctx.membershipNumber)
+        : null;
+      const reasonSafe = ctx.reason ? escapeHtml(ctx.reason) : null;
+      return {
+        subject,
+        html: `
+          <p>Hello ${nameSafe},</p>
+          <p>We weren&#39;t able to approve your Bookdrop membership application${numberSafe ? ` for membership number <strong>${numberSafe}</strong>` : ''}${reasonSafe ? '.' : ', because we couldn&#39;t match it to our library records.'}</p>${
+            reasonSafe
+              ? `
+          <p><strong>Reason:</strong> ${reasonSafe}</p>`
+              : ''
+          }
+          <p>You can still sign in and browse the catalog, but you won&#39;t be able to place holds, join waitlists or borrow books.</p>
+          <p>If you think this is a mistake, please visit the circulation desk with your library card and we&#39;ll sort it out.</p>
+        `.trim(),
+        text: `Hello ${ctx.recipientName},\n\nWe weren't able to approve your Bookdrop membership application${ctx.membershipNumber ? ` for membership number ${ctx.membershipNumber}` : ''}${ctx.reason ? `.\nReason: ${ctx.reason}` : ", because we couldn't match it to our library records."}\nYou can still sign in and browse the catalog, but you won't be able to place holds, join waitlists or borrow books.\n\nIf you think this is a mistake, please visit the circulation desk with your library card and we'll sort it out.`,
       };
     }
 

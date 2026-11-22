@@ -4,9 +4,17 @@ import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth } from '@/lib/auth-context';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { BookOpen, UserPlus, AlertCircle } from 'lucide-react';
+import { AuthField, AuthLayout } from '@/components/auth/auth-layout';
+import { Notice, btnPrimary } from '@/components/portal/portal-ui';
+import { ArrowRight, IdCard, Loader2, Mail, User } from 'lucide-react';
+
+const MEMBERSHIP_NUMBER_PATTERN = /^[A-Za-z0-9-]{4,32}$/;
+
+const STEPS = [
+  { title: 'Register', text: 'Create your account with the number on your library card.' },
+  { title: 'We verify it', text: 'A librarian checks your membership number against our records.' },
+  { title: 'Start borrowing', text: 'Once approved, place holds, join waitlists and borrow. We’ll email you.' },
+];
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -15,12 +23,13 @@ export default function RegisterPage() {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [membershipNumber, setMembershipNumber] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name || !email || !password) {
+    if (!name || !email || !password || !membershipNumber) {
       setError('Please fill in all required fields.');
       return;
     }
@@ -28,106 +37,117 @@ export default function RegisterPage() {
       setError('Password must be at least 8 characters.');
       return;
     }
+    if (!MEMBERSHIP_NUMBER_PATTERN.test(membershipNumber.trim())) {
+      setError('Membership number must be 4-32 letters, digits or hyphens, as printed on your library card.');
+      return;
+    }
 
     try {
       setIsLoading(true);
       setError(null);
-      await register(email, password, name);
+      await register(email, password, name, membershipNumber.trim());
       router.push('/dashboard');
     } catch (err: any) {
-      setError(err.message || 'Registration failed. The email might already be registered.');
+      setError(err.message || 'Registration failed. The email or membership number might already be registered.');
     } finally {
       setIsLoading(false);
     }
   };
 
   return (
-    <div className="max-w-md mx-auto my-12">
-      <div className="text-center mb-8">
-        <div className="w-12 h-12 rounded-2xl bg-indigo-600 flex items-center justify-center text-white mx-auto shadow-lg shadow-indigo-200 mb-3">
-          <BookOpen className="w-6 h-6" />
-        </div>
-        <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
-          Create Patron Account
-        </h1>
-        <p className="text-xs text-slate-500 mt-1">
-          Join Bookdrop to borrow physical copies, track loans, and manage holds.
-        </p>
+    <AuthLayout
+      eyebrow="Become a member"
+      title={<>Your next read is waiting</>}
+      description="Join Bookdrop with your library card. It's free, and you can browse the whole collection straight away."
+      aside={
+        <ol className="space-y-3">
+          {STEPS.map((step, i) => (
+            <li key={step.title} className="flex gap-3">
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-black font-heading text-sm text-white tabular-nums">
+                {i + 1}
+              </span>
+              <div className="pt-0.5">
+                <p className="text-sm font-bold">{step.title}</p>
+                <p className="text-sm text-black/65 leading-snug">{step.text}</p>
+              </div>
+            </li>
+          ))}
+        </ol>
+      }
+      formTitle="Create your account"
+      formDescription="You'll need the membership number printed on your library card."
+      footer={
+        <>
+          Already a member?{' '}
+          <Link href="/login" className="font-semibold text-black underline decoration-brandYellowWarm decoration-2 underline-offset-4 hover:decoration-black">
+            Sign in
+          </Link>
+        </>
+      }
+    >
+      <div className="space-y-5">
+        {error && (
+          <Notice tone="error" onDismiss={() => setError(null)}>
+            {error}
+          </Notice>
+        )}
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <AuthField
+            label="Full name"
+            icon={User}
+            required
+            autoComplete="name"
+            value={name}
+            onChange={setName}
+            placeholder="Jane Doe"
+          />
+          <AuthField
+            label="Email address"
+            type="email"
+            icon={Mail}
+            required
+            autoComplete="email"
+            value={email}
+            onChange={setEmail}
+            placeholder="you@example.com"
+          />
+          <AuthField
+            label="Library membership number"
+            icon={IdCard}
+            required
+            autoComplete="off"
+            spellCheck={false}
+            maxLength={32}
+            value={membershipNumber}
+            onChange={(v) => setMembershipNumber(v.toUpperCase())}
+            placeholder="e.g. LIB-004217"
+            inputClassName="font-mono tracking-wide"
+            hint="Printed on your library card. We verify it before you can borrow."
+          />
+          <AuthField
+            label="Password"
+            type="password"
+            required
+            minLength={8}
+            autoComplete="new-password"
+            value={password}
+            onChange={setPassword}
+            placeholder="At least 8 characters"
+          />
+
+          <button type="submit" disabled={isLoading} className={`${btnPrimary} mt-2 w-full py-3 text-[15px]`}>
+            {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+            {isLoading ? 'Creating account…' : 'Create account'}
+            {!isLoading && <ArrowRight className="h-4 w-4" />}
+          </button>
+
+          <p className="text-center text-xs leading-relaxed text-black/50">
+            New accounts need admin approval before borrowing. You&apos;ll get an email as soon as
+            yours is approved.
+          </p>
+        </form>
       </div>
-
-      <Card className="shadow-lg border-slate-200">
-        <CardHeader className="p-6 pb-4">
-          <CardTitle className="text-base">Patron Registration</CardTitle>
-          <CardDescription>Enter your profile details below to get started.</CardDescription>
-        </CardHeader>
-
-        <CardContent className="p-6 pt-0 space-y-5">
-          {error && (
-            <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
-              <span>{error}</span>
-            </div>
-          )}
-
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Full Name</label>
-              <input
-                type="text"
-                required
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Jane Doe"
-                className="w-full px-3.5 py-2 text-sm rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Email Address
-              </label>
-              <input
-                type="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="jane@example.com"
-                className="w-full px-3.5 py-2 text-sm rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Password</label>
-              <input
-                type="password"
-                required
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="At least 8 characters"
-                className="w-full px-3.5 py-2 text-sm rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-              />
-            </div>
-
-            <Button
-              type="submit"
-              variant="primary"
-              isLoading={isLoading}
-              className="w-full justify-center text-sm py-2.5 mt-2"
-            >
-              <UserPlus className="w-4 h-4 mr-1.5" />
-              Create Account
-            </Button>
-          </form>
-
-          <div className="text-center pt-2 text-xs text-slate-500">
-            Already have an account?{' '}
-            <Link href="/login" className="font-semibold text-indigo-600 hover:text-indigo-700">
-              Sign in
-            </Link>
-          </div>
-        </CardContent>
-      </Card>
-    </div>
+    </AuthLayout>
   );
 }
-
