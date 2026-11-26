@@ -14,6 +14,7 @@ import {
 } from '@/lib/graphql-queries';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { PortalHero } from '@/components/portal/portal-ui';
 import { Button } from '@/components/ui/button';
 import { formatDate, formatDateTime } from '@/lib/utils';
 import {
@@ -179,48 +180,40 @@ export default function StaffDeskPage() {
   };
 
   return (
-    <div className="space-y-8">
+    <div className="font-body text-brandDark space-y-8 pb-8">
       {confirmDialog}
-      {/* Top Banner */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">
-              Circulation Desk
-            </h1>
-            <Badge variant="warning" className="gap-1">
-              <ShieldCheck className="w-3.5 h-3.5" />
-              Staff Desk
-            </Badge>
-          </div>
-          <p className="text-xs text-slate-500 mt-1">
-            Fulfill reserved holds, verify member identity, and perform walk-in checkouts.
-          </p>
-        </div>
-
-        {/* Quick Staff Login if not logged in as staff */}
-        {!isStaff && (
-          <Link href="/login">
-            <Button
-              variant="outline"
-              size="sm"
-              className="text-xs text-amber-700 bg-amber-50 hover:bg-amber-100 border-amber-200"
-            >
-              <LogIn className="w-3.5 h-3.5 mr-1 text-amber-600" />
-              Sign in with a staff account
-            </Button>
-          </Link>
-        )}
-      </div>
+      {/* Page header */}
+      <PortalHero
+        eyebrow="Staff Desk"
+        title="Circulation Desk"
+        description="Fulfill reserved holds, verify member identity, and perform walk-in checkouts."
+        actions={
+          <>
+          {/* Quick Staff Login if not logged in as staff */}
+          {!isStaff && (
+            <Link href="/login">
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-xs text-amber-700 bg-amber-50 hover:bg-amber-100 border-amber-200"
+              >
+                <LogIn className="w-3.5 h-3.5 mr-1 text-amber-600" />
+                Sign in with a staff account
+              </Button>
+            </Link>
+          )}
+          </>
+        }
+      />
 
       {/* Mode Switcher Tabs */}
-      <div className="flex bg-slate-100 p-1 rounded-xl max-w-md">
+      <div className="flex gap-1 bg-white border border-black/[0.08] p-1 rounded-full max-w-md">
         <button
           type="button"
           onClick={() => setDeskMode('pickup')}
-          className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-2 ${deskMode === 'pickup'
-              ? 'bg-white text-indigo-700 shadow-sm'
-              : 'text-slate-600 hover:text-slate-900'
+          className={`flex-1 py-2.5 text-sm font-semibold rounded-full transition-colors flex items-center justify-center gap-2 ${deskMode === 'pickup'
+              ? 'bg-black text-white'
+              : 'text-black/65 hover:text-black hover:bg-black/5'
             }`}
         >
           <PackageCheck className="w-4 h-4" />
@@ -230,9 +223,9 @@ export default function StaffDeskPage() {
         <button
           type="button"
           onClick={() => setDeskMode('checkout')}
-          className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-2 ${deskMode === 'checkout'
-              ? 'bg-white text-indigo-700 shadow-sm'
-              : 'text-slate-600 hover:text-slate-900'
+          className={`flex-1 py-2.5 text-sm font-semibold rounded-full transition-colors flex items-center justify-center gap-2 ${deskMode === 'checkout'
+              ? 'bg-black text-white'
+              : 'text-black/65 hover:text-black hover:bg-black/5'
             }`}
         >
           <QrCode className="w-4 h-4" />
@@ -248,24 +241,24 @@ export default function StaffDeskPage() {
             <CardContent className="p-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                 <div className="relative">
-                  <QrCode className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <QrCode className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-black/40" />
                   <input
                     type="text"
                     value={searchBarcode}
                     onChange={(e) => setSearchBarcode(e.target.value)}
                     placeholder="Filter by copy barcode..."
-                    className="w-full pl-9 pr-3 py-2 text-xs rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    className="w-full pl-9 pr-3 py-2 text-xs rounded-lg border border-black/15 focus:outline-none focus:ring-2 focus:ring-black"
                   />
                 </div>
 
                 <div className="relative">
-                  <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-black/40" />
                   <input
                     type="text"
                     value={searchEmail}
                     onChange={(e) => setSearchEmail(e.target.value)}
                     placeholder="Filter by member email..."
-                    className="w-full pl-9 pr-3 py-2 text-xs rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    className="w-full pl-9 pr-3 py-2 text-xs rounded-lg border border-black/15 focus:outline-none focus:ring-2 focus:ring-black"
                   />
                 </div>
 
@@ -308,22 +301,22 @@ export default function StaffDeskPage() {
 
           {/* Holds Table / Cards */}
           {isLoadingHolds ? (
-            <div className="py-12 text-center text-xs text-slate-500">
-              <RefreshCw className="w-6 h-6 animate-spin text-indigo-600 mx-auto mb-2" />
+            <div className="py-12 text-center text-xs text-black/55">
+              <RefreshCw className="w-6 h-6 animate-spin text-brandForest mx-auto mb-2" />
               Scanning ready holds...
             </div>
           ) : holds.length === 0 ? (
-            <div className="text-center py-12 bg-white rounded-xl border border-slate-200 p-6">
-              <PackageCheck className="w-10 h-10 text-slate-300 mx-auto mb-2" />
-              <h3 className="text-sm font-semibold text-slate-700">No pending hold pickups</h3>
-              <p className="text-xs text-slate-500 mt-1">
+            <div className="text-center py-12 bg-white rounded-xl border border-black/[0.08] p-6">
+              <PackageCheck className="w-10 h-10 text-black/25 mx-auto mb-2" />
+              <h3 className="text-sm font-semibold text-black/75">No pending hold pickups</h3>
+              <p className="text-xs text-black/55 mt-1">
                 There are no reserved copies currently waiting on the shelf for collection.
               </p>
             </div>
           ) : (
-            <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+            <div className="overflow-x-auto rounded-xl border border-black/[0.08] bg-white">
               <table className="w-full text-xs text-left">
-                <thead className="bg-slate-50 text-slate-500 uppercase font-semibold border-b border-slate-200">
+                <thead className="bg-black/[0.03] text-black/55 uppercase font-semibold border-b border-black/[0.08]">
                   <tr>
                     <th className="px-4 py-3">Book Title</th>
                     <th className="px-4 py-3">Assigned Barcode</th>
@@ -332,21 +325,21 @@ export default function StaffDeskPage() {
                     <th className="px-4 py-3 text-right">Desk Action</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100">
+                <tbody className="divide-y divide-black/[0.06]">
                   {holds.map((hold) => (
-                    <tr key={hold.id} className="hover:bg-slate-50">
+                    <tr key={hold.id} className="hover:bg-black/[0.03]">
                       <td className="px-4 py-3">
-                        <div className="font-bold text-slate-900">{hold.bookTitle}</div>
-                        <div className="text-[10px] text-slate-400">Book #{hold.bookId}</div>
+                        <div className="font-bold text-brandDark">{hold.bookTitle}</div>
+                        <div className="text-[10px] text-black/40">Book #{hold.bookId}</div>
                       </td>
                       <td className="px-4 py-3">
-                        <span className="font-mono bg-slate-100 px-2 py-0.5 rounded text-indigo-700 font-semibold">
+                        <span className="font-mono bg-black/[0.05] px-2 py-0.5 rounded text-brandForest font-semibold">
                           {hold.copyBarcode}
                         </span>
                       </td>
                       <td className="px-4 py-3">
-                        <div className="font-semibold text-slate-800">{hold.memberName}</div>
-                        <div className="text-[10px] text-slate-400">Patron #{hold.userId}</div>
+                        <div className="font-semibold text-black/85">{hold.memberName}</div>
+                        <div className="text-[10px] text-black/40">Patron #{hold.userId}</div>
                       </td>
                       <td className="px-4 py-3">
                         <span className="font-medium text-amber-700">
@@ -359,7 +352,7 @@ export default function StaffDeskPage() {
                           size="sm"
                           isLoading={fulfillingHoldId === hold.id}
                           onClick={() => handleConfirmPickup(hold)}
-                          className="text-xs gap-1.5"
+                          className="text-xs gap-1.5 whitespace-nowrap"
                         >
                           <PackageCheck className="w-3.5 h-3.5" />
                           Confirm & Hand Over
@@ -380,7 +373,7 @@ export default function StaffDeskPage() {
           <Card>
             <CardHeader className="p-6 pb-4">
               <CardTitle className="text-base flex items-center gap-2">
-                <QrCode className="w-5 h-5 text-indigo-600" />
+                <QrCode className="w-5 h-5 text-brandForest" />
                 Scan & Checkout Copy
               </CardTitle>
               <CardDescription>
@@ -399,7 +392,7 @@ export default function StaffDeskPage() {
               <form onSubmit={handleWalkInCheckout} className="space-y-4">
                 <div>
                   <div className="flex items-center justify-between mb-1">
-                    <label className="text-xs font-semibold text-slate-700">
+                    <label className="text-xs font-semibold text-black/75">
                       Patron Member Email
                     </label>
                   </div>
@@ -409,12 +402,12 @@ export default function StaffDeskPage() {
                     value={checkoutEmail}
                     onChange={(e) => setCheckoutEmail(e.target.value)}
                     placeholder="patron@example.com"
-                    className="w-full px-3.5 py-2 text-sm rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    className="w-full px-3.5 py-2 text-sm rounded-lg border border-black/15 focus:outline-none focus:ring-2 focus:ring-black"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  <label className="block text-xs font-semibold text-black/75 mb-1">
                     Physical Copy Barcode
                   </label>
                   <input
@@ -423,9 +416,9 @@ export default function StaffDeskPage() {
                     value={checkoutBarcode}
                     onChange={(e) => setCheckoutBarcode(e.target.value)}
                     placeholder="e.g. BC-1001 or scan barcode"
-                    className="w-full font-mono px-3.5 py-2 text-sm rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    className="w-full font-mono px-3.5 py-2 text-sm rounded-lg border border-black/15 focus:outline-none focus:ring-2 focus:ring-black"
                   />
-                  <p className="text-[11px] text-slate-400 mt-1">
+                  <p className="text-[11px] text-black/40 mt-1">
                     The copy must currently have AVAILABLE status in inventory.
                   </p>
                 </div>

@@ -145,14 +145,14 @@ export function MembershipApprovals({
       {confirmDialog}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h2 className="text-sm font-bold text-slate-800">Membership Approvals</h2>
-          <p className="text-xs text-slate-500">
+          <h2 className="text-sm font-bold text-black/85">Membership Approvals</h2>
+          <p className="text-xs text-black/55">
             Verify each membership number against library records before approving. Only approved
             members can place holds, join waitlists or borrow.
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <div className="flex bg-slate-100 p-1 rounded-lg text-xs font-medium" role="tablist">
+          <div className="flex bg-black/[0.05] p-1 rounded-lg text-xs font-medium" role="tablist">
             {FILTERS.map((f) => (
               <button
                 key={f.status}
@@ -161,8 +161,8 @@ export function MembershipApprovals({
                 onClick={() => setStatus(f.status)}
                 className={`px-3 py-1.5 rounded-md transition-colors ${
                   status === f.status
-                    ? 'bg-white text-slate-900 shadow-sm'
-                    : 'text-slate-500 hover:text-slate-800'
+                    ? 'bg-white text-brandDark shadow-sm'
+                    : 'text-black/55 hover:text-black/85'
                 }`}
               >
                 {f.label}
@@ -183,9 +183,9 @@ export function MembershipApprovals({
         </div>
       )}
 
-      <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+      <div className="overflow-x-auto rounded-xl border border-black/[0.08] bg-white">
         <table className="w-full text-left text-xs">
-          <thead className="bg-slate-50 text-slate-500 uppercase tracking-wide text-[10px]">
+          <thead className="bg-black/[0.03] text-black/55 uppercase tracking-wide text-[10px]">
             <tr>
               <th className="px-4 py-3 font-semibold">Member</th>
               <th className="px-4 py-3 font-semibold">Membership No.</th>
@@ -194,10 +194,10 @@ export function MembershipApprovals({
               <th className="px-4 py-3 font-semibold text-right">Actions</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100">
+          <tbody className="divide-y divide-black/[0.06]">
             {!isLoading && members.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-4 py-10 text-center text-slate-500">
+                <td colSpan={5} className="px-4 py-10 text-center text-black/55">
                   {status === 'PENDING'
                     ? 'No applications waiting for review.'
                     : `No ${status.toLowerCase()} members.`}
@@ -205,15 +205,15 @@ export function MembershipApprovals({
               </tr>
             )}
             {members.map((m) => (
-              <tr key={m.id} className="hover:bg-slate-50/60">
+              <tr key={m.id} className="hover:bg-black/[0.03]">
                 <td className="px-4 py-3">
-                  <div className="font-semibold text-slate-800">{m.name}</div>
-                  <div className="text-slate-500">{m.email}</div>
+                  <div className="font-semibold text-black/85">{m.name}</div>
+                  <div className="text-black/55">{m.email}</div>
                 </td>
-                <td className="px-4 py-3 font-mono font-semibold tracking-wide text-slate-800">
+                <td className="px-4 py-3 font-mono font-semibold tracking-wide text-black/85">
                   {m.membershipNumber || '—'}
                 </td>
-                <td className="px-4 py-3 text-slate-600">{formatDateTime(m.createdAt)}</td>
+                <td className="px-4 py-3 text-black/65">{formatDateTime(m.createdAt)}</td>
                 <td className="px-4 py-3">
                   {m.membershipStatus && (
                     <Badge variant={STATUS_BADGE[m.membershipStatus]}>{m.membershipStatus}</Badge>

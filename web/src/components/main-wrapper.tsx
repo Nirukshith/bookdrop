@@ -10,7 +10,7 @@ export function MainContentWrapper({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
-  const isHome = pathname === '/';
+  const isHome = pathname === '/' || pathname === '/books';
   const inPortalShell = usePortalShell();
 
   if (inPortalShell) {

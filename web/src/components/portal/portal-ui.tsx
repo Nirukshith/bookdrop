@@ -6,15 +6,15 @@ import { FlatBookCover } from '@/components/landing/book-3d';
 
 /*
  * Shared building blocks for the member portal (catalog, dashboard, settings),
- * in the landing page's look: warm paper, cream/yellow panels, Airone headings,
+ * in the landing page's look: warm paper, cream/yellow panels, Integral CF headings,
  * Futura body text and pill buttons.
  */
 
 /* ── Buttons (class strings so they work on <button> and <Link>) ─────── */
 const btnBase =
   'inline-flex items-center justify-center gap-2 rounded-full px-5 py-2.5 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed';
-/** Brand yellow: the main action on a white surface. */
-export const btnPrimary = `${btnBase} bg-brandYellow text-black hover:bg-brandYellowWarm`;
+/** Dark green: the main action. */
+export const btnPrimary = `${btnBase} bg-brandForest text-white hover:bg-brandForestDark`;
 /** Black: the main action on a yellow surface, or the final step in a dialog. */
 export const btnDark = `${btnBase} bg-black text-white hover:bg-black/85`;
 /** Outlined: secondary actions. */
@@ -36,7 +36,7 @@ export function Eyebrow({ children, dot = true }: { children: React.ReactNode; d
   );
 }
 
-/** Cream/yellow header panel with an Airone title. */
+/** Cream/yellow header panel with an Integral CF title. */
 export function PortalHero({
   eyebrow,
   title,

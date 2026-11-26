@@ -20,16 +20,16 @@ export interface CoverPalette {
   spine: string;
 }
 
-/** Brand-aligned cover palettes (pink / teal / orange / yellow + ink & paper). */
+/** Brand-aligned cover palettes (camel / teal / green + ink & paper). */
 export const COVER_PALETTES: CoverPalette[] = [
-  { bg: '#E82B8A', fg: '#FFF6E0', accent: '#FCD44D', spine: '#B81E6C' },
-  { bg: '#1E2A78', fg: '#F3EEDF', accent: '#E82B8A', spine: '#141C55' },
-  { bg: '#00A3AD', fg: '#0D0D0D', accent: '#FCD44D', spine: '#007C84' },
-  { bg: '#111111', fg: '#F3EEDF', accent: '#FF9129', spine: '#000000' },
+  { bg: '#C19A6B', fg: '#111111', accent: '#1F4D2E', spine: '#9C7650' },
+  { bg: '#1E2A78', fg: '#F3EEDF', accent: '#C19A6B', spine: '#141C55' },
+  { bg: '#00A3AD', fg: '#0D0D0D', accent: '#CDEFB8', spine: '#007C84' },
+  { bg: '#111111', fg: '#F3EEDF', accent: '#C19A6B', spine: '#000000' },
   { bg: '#F3EEDF', fg: '#111111', accent: '#C8102E', spine: '#D9D1BA' },
-  { bg: '#FF9129', fg: '#111111', accent: '#1E2A78', spine: '#D9711A' },
-  { bg: '#1F6F4A', fg: '#F3EEDF', accent: '#FCD44D', spine: '#165237' },
-  { bg: '#FCD44D', fg: '#111111', accent: '#E82B8A', spine: '#E0B52A' },
+  { bg: '#8B6239', fg: '#F3EEDF', accent: '#CDEFB8', spine: '#6E4C2B' },
+  { bg: '#1F6F4A', fg: '#F3EEDF', accent: '#CDEFB8', spine: '#165237' },
+  { bg: '#CDEFB8', fg: '#111111', accent: '#8B6239', spine: '#A9DE8E' },
 ];
 
 export const COVER_VARIANTS = 5;

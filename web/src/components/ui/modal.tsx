@@ -47,25 +47,25 @@ export function Modal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
       <div
         className="fixed inset-0"
         onClick={onClose}
         aria-hidden="true"
       />
       <div
-        className={`relative z-10 w-full ${maxWidthStyles[maxWidth]} bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden animate-in zoom-in-95 duration-150`}
+        className={`relative z-10 w-full ${maxWidthStyles[maxWidth]} bg-white rounded-2xl shadow-2xl border border-black/[0.08] overflow-hidden animate-in zoom-in-95 duration-150`}
       >
-        <div className="flex items-center justify-between p-5 border-b border-slate-100">
+        <div className="flex items-center justify-between p-5 border-b border-black/[0.06]">
           <div>
-            <h3 className="text-lg font-bold text-slate-900">{title}</h3>
+            <h3 className="text-lg font-bold text-brandDark">{title}</h3>
             {description && (
-              <p className="text-sm text-slate-500 mt-0.5">{description}</p>
+              <p className="text-sm text-black/55 mt-0.5">{description}</p>
             )}
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+            className="p-1.5 text-black/40 hover:text-black/65 hover:bg-black/[0.05] rounded-lg transition-colors"
           >
             <X className="w-5 h-5" />
           </button>

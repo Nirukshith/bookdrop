@@ -9,12 +9,17 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        brandYellow: '#FCD44D',
-        brandYellowLight: '#FBE88C',
-        brandYellowWarm: '#F8C42E',
-        brandCream: '#FFF2AD',
-        brandOrange: '#FF9129',
-        brandPink: '#E82B8A',
+        // Greens (primary surfaces, buttons, highlights)
+        brandGreen: '#CDEFB8',
+        brandGreenDeep: '#A9DE8E',
+        brandGreenLight: '#DDF5CC',
+        brandMint: '#EEF9E4',
+        brandForest: '#1F4D2E', // dark green: Register button, page-transition paint
+        brandForestDark: '#163A22',
+        // Camel (accent, replaces the old pink)
+        brandCamel: '#C19A6B',
+        brandCamelDark: '#8B6239', // camel that carries white text
+        brandCamelLight: '#F1E4D3',
         brandTeal: '#00A3AD',
         brandTealDark: '#008790',
         brandDark: '#0D0D0D',
@@ -26,7 +31,7 @@ const config: Config = {
         sans: ['var(--font-body)'],
         body: ['var(--font-body)'],
         handwriting: ['"Caveat"', 'cursive'],
-        heading: ['var(--font-airone)', 'var(--font-body)'],
+        heading: ['var(--font-integral)', 'var(--font-body)'],
       },
     },
   },

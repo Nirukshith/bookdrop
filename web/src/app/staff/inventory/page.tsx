@@ -14,6 +14,7 @@ import {
 } from '@/lib/graphql-queries';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { PortalHero } from '@/components/portal/portal-ui';
 import { Button } from '@/components/ui/button';
 import { Modal } from '@/components/ui/modal';
 import { formatDate } from '@/lib/utils';
@@ -229,44 +230,39 @@ export default function StaffInventoryPage() {
   };
 
   return (
-    <div className="space-y-8">
+    <div className="font-body text-brandDark space-y-8 pb-8">
       {confirmDialog}
-      {/* Banner */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200">
-        <div>
+      {/* Page header */}
+      <PortalHero
+        eyebrow="Staff Inventory"
+        title="Inventory & Copies"
+        description="Manage physical copies, barcode tags, shelf locations, and copy lifecycles."
+        actions={
+          <>
           <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">
-              Inventory & Copies
-            </h1>
-            <Badge variant="warning">Staff Inventory</Badge>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setIsAddBookOpen(true)}
+              className="text-xs gap-1.5"
+            >
+              <BookOpen className="w-3.5 h-3.5" />
+              Add New Title
+            </Button>
+
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => setIsAddCopyOpen(true)}
+              className="text-xs gap-1.5"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              Add Copy Barcode
+            </Button>
           </div>
-          <p className="text-xs text-slate-500 mt-1">
-            Manage physical copies, barcode tags, shelf locations, and copy lifecycles.
-          </p>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setIsAddBookOpen(true)}
-            className="text-xs gap-1.5"
-          >
-            <BookOpen className="w-3.5 h-3.5" />
-            Add New Title
-          </Button>
-
-          <Button
-            variant="primary"
-            size="sm"
-            onClick={() => setIsAddCopyOpen(true)}
-            className="text-xs gap-1.5"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            Add Copy Barcode
-          </Button>
-        </div>
-      </div>
+          </>
+        }
+      />
 
       {/* Alerts */}
 
@@ -280,15 +276,15 @@ export default function StaffInventoryPage() {
       {/* Status Filter Bar */}
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div className="flex items-center gap-2 text-xs">
-          <Filter className="w-3.5 h-3.5 text-slate-400" />
-          <span className="font-semibold text-slate-600">Filter Status:</span>
+          <Filter className="w-3.5 h-3.5 text-black/40" />
+          <span className="font-semibold text-black/65">Filter Status:</span>
           {['ALL', 'AVAILABLE', 'BORROWED', 'ON_HOLD', 'DAMAGED', 'LOST'].map((st) => (
             <button
               key={st}
               onClick={() => setStatusFilter(st)}
               className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${statusFilter === st
-                  ? 'bg-indigo-600 text-white font-semibold'
-                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  ? 'bg-brandForest text-white font-semibold'
+                  : 'bg-black/[0.05] text-black/65 hover:bg-black/10'
                 }`}
             >
               {st}
@@ -310,22 +306,22 @@ export default function StaffInventoryPage() {
 
       {/* Inventory Table */}
       {isLoading ? (
-        <div className="py-16 text-center text-xs text-slate-500">
-          <RefreshCw className="w-6 h-6 animate-spin text-indigo-600 mx-auto mb-2" />
+        <div className="py-16 text-center text-xs text-black/55">
+          <RefreshCw className="w-6 h-6 animate-spin text-brandForest mx-auto mb-2" />
           Loading inventory copies...
         </div>
       ) : copies.length === 0 ? (
-        <div className="text-center py-12 bg-white rounded-xl border border-slate-200 p-6">
-          <Boxes className="w-10 h-10 text-slate-300 mx-auto mb-2" />
-          <h3 className="text-sm font-semibold text-slate-700">No copies found</h3>
-          <p className="text-xs text-slate-500 mt-1">
+        <div className="text-center py-12 bg-white rounded-xl border border-black/[0.08] p-6">
+          <Boxes className="w-10 h-10 text-black/25 mx-auto mb-2" />
+          <h3 className="text-sm font-semibold text-black/75">No copies found</h3>
+          <p className="text-xs text-black/55 mt-1">
             No copies match the selected filter. Click &quot;Add Copy Barcode&quot; above to register a new copy.
           </p>
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+        <div className="overflow-x-auto rounded-xl border border-black/[0.08] bg-white shadow-sm">
           <table className="w-full text-xs text-left">
-            <thead className="bg-slate-50 text-slate-500 uppercase font-semibold border-b border-slate-200">
+            <thead className="bg-black/[0.03] text-black/55 uppercase font-semibold border-b border-black/[0.08]">
               <tr>
                 <th className="px-4 py-3">Copy Barcode</th>
                 <th className="px-4 py-3">Book Title</th>
@@ -336,25 +332,25 @@ export default function StaffInventoryPage() {
                 <th className="px-4 py-3 text-right">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
+            <tbody className="divide-y divide-black/[0.06]">
               {copies.map((copy) => {
                 const book = books.find((b) => parseInt(b.id, 10) === copy.bookId);
                 return (
-                  <tr key={copy.id} className="hover:bg-slate-50">
+                  <tr key={copy.id} className="hover:bg-black/[0.03]">
                     <td className="px-4 py-3">
-                      <span className="font-mono font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded">
+                      <span className="font-mono font-bold text-brandForest bg-brandMint px-2 py-0.5 rounded">
                         {copy.barcode}
                       </span>
                     </td>
-                    <td className="px-4 py-3 font-semibold text-slate-800">
+                    <td className="px-4 py-3 font-semibold text-black/85">
                       {book ? book.title : `Book #${copy.bookId}`}
                     </td>
-                    <td className="px-4 py-3 text-slate-600">{copy.shelfLocation || '—'}</td>
+                    <td className="px-4 py-3 text-black/65">{copy.shelfLocation || '—'}</td>
                     <td className="px-4 py-3">{getCopyStatusBadge(copy.status, copy.retiredAt)}</td>
-                    <td className="px-4 py-3 text-slate-500 max-w-xs truncate">
+                    <td className="px-4 py-3 text-black/55 max-w-xs truncate">
                       {copy.notes || '—'}
                     </td>
-                    <td className="px-4 py-3 text-slate-400">{formatDate(copy.createdAt)}</td>
+                    <td className="px-4 py-3 text-black/40">{formatDate(copy.createdAt)}</td>
                     <td className="px-4 py-3 text-right">
                       {!copy.retiredAt && copy.status !== 'BORROWED' && (
                         <Button
@@ -386,11 +382,11 @@ export default function StaffInventoryPage() {
       >
         <form onSubmit={handleAddCopy} className="space-y-4">
           <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">Select Book</label>
+            <label className="block text-xs font-semibold text-black/75 mb-1">Select Book</label>
             <select
               value={newCopyBookId}
               onChange={(e) => setNewCopyBookId(e.target.value)}
-              className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+              className="w-full px-3 py-2 text-xs rounded-lg border border-black/15 focus:outline-none focus:ring-2 focus:ring-black bg-white"
             >
               {books.map((b) => (
                 <option key={b.id} value={b.id}>
@@ -401,7 +397,7 @@ export default function StaffInventoryPage() {
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">
+            <label className="block text-xs font-semibold text-black/75 mb-1">
               Barcode (Leave empty to auto-generate)
             </label>
             <input
@@ -409,12 +405,12 @@ export default function StaffInventoryPage() {
               value={newCopyBarcode}
               onChange={(e) => setNewCopyBarcode(e.target.value)}
               placeholder="e.g. BC-1009"
-              className="w-full font-mono px-3 py-2 text-xs rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="w-full font-mono px-3 py-2 text-xs rounded-lg border border-black/15 focus:outline-none focus:ring-2 focus:ring-black"
             />
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">
+            <label className="block text-xs font-semibold text-black/75 mb-1">
               Shelf Location
             </label>
             <input
@@ -422,18 +418,18 @@ export default function StaffInventoryPage() {
               value={newCopyShelf}
               onChange={(e) => setNewCopyShelf(e.target.value)}
               placeholder="e.g. Row 4, Shelf B"
-              className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="w-full px-3 py-2 text-xs rounded-lg border border-black/15 focus:outline-none focus:ring-2 focus:ring-black"
             />
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">Notes</label>
+            <label className="block text-xs font-semibold text-black/75 mb-1">Notes</label>
             <textarea
               rows={2}
               value={newCopyNotes}
               onChange={(e) => setNewCopyNotes(e.target.value)}
               placeholder="Condition, donation source, or cataloging note..."
-              className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="w-full px-3 py-2 text-xs rounded-lg border border-black/15 focus:outline-none focus:ring-2 focus:ring-black"
             />
           </div>
 
@@ -462,31 +458,31 @@ export default function StaffInventoryPage() {
       >
         <form onSubmit={handleAddBook} className="space-y-4">
           <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">Title</label>
+            <label className="block text-xs font-semibold text-black/75 mb-1">Title</label>
             <input
               type="text"
               required
               value={bookTitle}
               onChange={(e) => setBookTitle(e.target.value)}
               placeholder="The Pragmatic Programmer"
-              className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="w-full px-3 py-2 text-xs rounded-lg border border-black/15 focus:outline-none focus:ring-2 focus:ring-black"
             />
           </div>
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">ISBN</label>
+              <label className="block text-xs font-semibold text-black/75 mb-1">ISBN</label>
               <input
                 type="text"
                 required
                 value={bookIsbn}
                 onChange={(e) => setBookIsbn(e.target.value)}
                 placeholder="978-0201616224"
-                className="w-full font-mono px-3 py-2 text-xs rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="w-full font-mono px-3 py-2 text-xs rounded-lg border border-black/15 focus:outline-none focus:ring-2 focus:ring-black"
               />
             </div>
             <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
+              <label className="block text-xs font-semibold text-black/75 mb-1">
                 Published Year
               </label>
               <input
@@ -494,13 +490,13 @@ export default function StaffInventoryPage() {
                 value={bookYear}
                 onChange={(e) => setBookYear(e.target.value)}
                 placeholder="2023"
-                className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="w-full px-3 py-2 text-xs rounded-lg border border-black/15 focus:outline-none focus:ring-2 focus:ring-black"
               />
             </div>
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">
+            <label className="block text-xs font-semibold text-black/75 mb-1">
               Replacement Price (Rupees)
             </label>
             <input
@@ -509,18 +505,18 @@ export default function StaffInventoryPage() {
               value={bookPrice}
               onChange={(e) => setBookPrice(e.target.value)}
               placeholder="599.00"
-              className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="w-full px-3 py-2 text-xs rounded-lg border border-black/15 focus:outline-none focus:ring-2 focus:ring-black"
             />
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">Summary</label>
+            <label className="block text-xs font-semibold text-black/75 mb-1">Summary</label>
             <textarea
               rows={3}
               value={bookDesc}
               onChange={(e) => setBookDesc(e.target.value)}
               placeholder="Brief overview or blurb..."
-              className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="w-full px-3 py-2 text-xs rounded-lg border border-black/15 focus:outline-none focus:ring-2 focus:ring-black"
             />
           </div>
 

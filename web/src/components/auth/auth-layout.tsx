@@ -8,7 +8,7 @@ import { Eyebrow } from '@/components/portal/portal-ui';
 /*
  * Shared layout for /login and /register in the landing page's look:
  * warm paper backdrop, a cream/yellow brand panel with fanned book covers,
- * Airone headings, Futura body text and pill buttons.
+ * Integral CF headings, Futura body text and pill buttons.
  */
 
 /*
@@ -100,7 +100,7 @@ export function AuthLayout({
 }
 
 const inputCls =
-  'w-full rounded-xl border border-black/[0.12] bg-white px-4 py-3 text-[15px] text-brandDark placeholder:text-black/35 transition-colors hover:border-black/25 focus:border-black focus:outline-none focus:ring-2 focus:ring-brandYellow';
+  'w-full rounded-xl border border-black/[0.12] bg-white px-4 py-3 text-[15px] text-brandDark placeholder:text-black/35 transition-colors hover:border-black/25 focus:border-black focus:outline-none focus:ring-2 focus:ring-brandGreen';
 
 export function AuthField({
   label,

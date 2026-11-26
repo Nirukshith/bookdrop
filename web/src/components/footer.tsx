@@ -12,7 +12,7 @@ export function Footer() {
   const { isStaff, isAdmin } = useAuth();
   const inPortalShell = usePortalShell();
   // The landing page has its own footer; login/register are focused, footer-free pages.
-  if (pathname === '/' || pathname === '/login' || pathname === '/register' || inPortalShell) {
+  if (pathname === '/' || pathname === '/books' || pathname === '/login' || pathname === '/register' || inPortalShell) {
     return null;
   }
 

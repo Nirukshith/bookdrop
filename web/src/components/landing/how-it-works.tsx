@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
-import Link from 'next/link';
+import { TransitionLink } from '@/components/page-transition';
 import { ArrowRight } from 'lucide-react';
 
 type Step = {
@@ -74,9 +74,9 @@ export default function HowItWorks() {
       <div className="hiw-shell relative overflow-hidden">
         {/* Soft blob shapes behind everything */}
         <svg className="absolute inset-0 w-full h-full pointer-events-none" viewBox="0 0 1440 1000" preserveAspectRatio="none" aria-hidden>
-          <path d="M0 330 C200 270 380 300 520 420 C640 520 720 470 820 380 C940 270 1060 250 1180 330 C1290 400 1360 430 1440 410 L1440 1000 L0 1000 Z" fill="#FBEAFB" />
-          <path d="M150 1000 C70 820 110 640 260 590 C380 550 450 640 420 760 C395 860 430 940 470 1000 Z" fill="#F4CFF5" />
-          <path d="M1440 860 C1330 820 1250 880 1230 1000 L1440 1000 Z" fill="#F4CFF5" />
+          <path d="M0 330 C200 270 380 300 520 420 C640 520 720 470 820 380 C940 270 1060 250 1180 330 C1290 400 1360 430 1440 410 L1440 1000 L0 1000 Z" fill="#F7EEE3" />
+          <path d="M150 1000 C70 820 110 640 260 590 C380 550 450 640 420 760 C395 860 430 940 470 1000 Z" fill="#EAD7BF" />
+          <path d="M1440 860 C1330 820 1250 880 1230 1000 L1440 1000 Z" fill="#EAD7BF" />
         </svg>
 
         {/* ── Heading row ── */}
@@ -88,12 +88,12 @@ export default function HowItWorks() {
           </div>
 
           <div className="flex lg:flex-col items-center gap-6 lg:gap-8 lg:pr-4">
-            <Link href="/register" className="hiw-split group">
+            <TransitionLink href="/register" className="hiw-split group">
               <span className="hiw-split__label">Become a member</span>
               <span className="hiw-split__arrow">
                 <ArrowRight className="w-5 h-5 transition-transform group-hover:translate-x-1" />
               </span>
-            </Link>
+            </TransitionLink>
           </div>
         </div>
 

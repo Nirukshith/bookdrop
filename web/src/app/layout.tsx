@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import localFont from 'next/font/local';
 import { Jost } from 'next/font/google';
+import { PageTransitionProvider } from '@/components/page-transition';
 import './globals.css';
 import { AuthProvider } from '@/lib/auth-context';
 import { Navbar } from '@/components/navbar';
@@ -18,7 +19,7 @@ const geistMono = localFont({
   weight: '100 900',
 });
 
-// Typefaces: Airone for headings (`font-heading`), Futura for all other text
+// Typefaces: Integral CF Bold for headings (`font-heading`), Futura for all other text
 // (`font-body` / `font-sans`, defined as --font-body in globals.css).
 // Futura is commercial and isn't bundled; where the OS lacks it, Jost (an
 // open-source Futura-style face) is the fallback, loaded here as --font-jost.
@@ -28,17 +29,25 @@ const jost = Jost({
   display: 'swap',
 });
 
-// Airone by Indieground (https://indieground.net/product/airone-font/).
-// DEMO build: free for PERSONAL USE ONLY; a commercial license is required otherwise.
-// The demo has only A–Z, a–z, 0–9 and `! . ?`, so headings fall back to the body
-// font per character for any other punctuation. adjustFontFallback is off so that
-// fallback is the body font rather than a metrics-adjusted Arial.
-const airone = localFont({
-  src: './fonts/AironeFont-Demo.ttf',
-  weight: '400',
-  variable: '--font-airone',
+// Integral CF by Lettersoup (https://www.fontspring.com/fonts/lettersoup/integral-cf).
+// FONTSPRING DEMO build: for personal/evaluation use only; a commercial license is
+// required otherwise. adjustFontFallback is off so characters outside the demo's
+// real glyphs fall back to the body font rather than a metrics-adjusted Arial.
+const integral = localFont({
+  src: './fonts/IntegralCF-Bold-Demo.otf',
+  weight: '700',
+  variable: '--font-integral',
   display: 'swap',
   adjustFontFallback: false,
+  // The demo only has real glyphs for space , . 0-3 5-9 : ; ? A-Z a-z; every other
+  // character (& - ' ! / 4 …) is a "DEMO" watermark. Limiting the face to the real
+  // glyphs makes the browser fall back to the body font for the rest.
+  declarations: [
+    {
+      prop: 'unicode-range',
+      value: 'U+0020, U+002C, U+002E, U+0030-0033, U+0035-003B, U+003F, U+0041-005A, U+0061-007A',
+    },
+  ],
 });
 
 export const metadata: Metadata = {
@@ -54,15 +63,17 @@ export default function RootLayout({
   return (
     <html lang="en" className="scroll-smooth">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} ${jost.variable} ${airone.variable} antialiased min-h-screen flex flex-col bg-slate-50 text-slate-900 font-sans`}
+        className={`${geistSans.variable} ${geistMono.variable} ${jost.variable} ${integral.variable} antialiased min-h-screen flex flex-col bg-slate-50 text-slate-900 font-sans`}
       >
-        <AuthProvider>
-          <Navbar />
-          <MainContentWrapper>
-            {children}
-          </MainContentWrapper>
-          <Footer />
-        </AuthProvider>
+        <PageTransitionProvider>
+          <AuthProvider>
+            <Navbar />
+            <MainContentWrapper>
+              {children}
+            </MainContentWrapper>
+            <Footer />
+          </AuthProvider>
+        </PageTransitionProvider>
       </body>
     </html>
   );

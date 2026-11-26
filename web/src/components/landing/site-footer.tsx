@@ -2,6 +2,7 @@
 
 import React from 'react';
 import Link from 'next/link';
+import { TransitionLink } from '@/components/page-transition';
 import { ArrowRight, ArrowUp } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
 
@@ -14,7 +15,7 @@ export default function SiteFooter() {
   const { isAuthenticated, isStaff, isAdmin } = useAuth();
 
   const explore: FooterLink[] = [
-    { label: 'Browse the catalog', href: '/catalog' },
+    { label: 'Browse the catalog', href: '/books' },
     { label: 'How it works', href: '#how-it-works' },
   ];
 
@@ -42,12 +43,12 @@ export default function SiteFooter() {
   const scrollToTop = () => window.scrollTo({ top: 0, behavior: 'smooth' });
 
   return (
-    <footer className="bg-brandYellow px-3 sm:px-5 pt-28 sm:pt-36 pb-3 sm:pb-5">
+    <footer className="bg-brandGreen px-3 sm:px-5 pt-28 sm:pt-36 pb-3 sm:pb-5">
       <div className="relative overflow-hidden rounded-[2rem] sm:rounded-[2.75rem] bg-brandDark text-white">
         {/* Soft colour blobs */}
         <svg className="absolute inset-0 w-full h-full pointer-events-none" viewBox="0 0 1440 900" preserveAspectRatio="none" aria-hidden>
-          <path d="M1440 0 C1250 40 1150 170 1220 300 C1290 430 1440 420 1440 420 Z" fill="#FCD44D" opacity="0.07" />
-          <path d="M0 520 C140 480 260 560 240 700 C225 800 120 860 0 860 Z" fill="#E82B8A" opacity="0.08" />
+          <path d="M1440 0 C1250 40 1150 170 1220 300 C1290 430 1440 420 1440 420 Z" fill="#CDEFB8" opacity="0.07" />
+          <path d="M0 520 C140 480 260 560 240 700 C225 800 120 860 0 860 Z" fill="#C19A6B" opacity="0.12" />
         </svg>
 
         <div className="relative z-10 px-6 sm:px-10 lg:px-16 pt-14 sm:pt-20">
@@ -66,19 +67,21 @@ export default function SiteFooter() {
                 Reserve what you want to read, pick it up at the desk, and bring it back when you&apos;re done. No fees, no fuss.
               </p>
               <div className="flex flex-wrap items-center gap-3">
-                <Link
-                  href={isAuthenticated ? '/dashboard' : '/register'}
-                  className="btn-pill group inline-flex items-center gap-2.5 rounded-full bg-white px-6 py-3.5 text-sm font-black text-brandDark hover:bg-white/85 transition-colors"
-                >
-                  {isAuthenticated ? 'Go to my dashboard' : 'Become a member'}
-                  <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-1" />
-                </Link>
-                <Link
-                  href="/catalog"
+                {!isAuthenticated && (
+                  <TransitionLink
+                    href="/register"
+                    className="btn-pill group inline-flex items-center gap-2.5 rounded-full bg-white px-6 py-3.5 text-sm font-black text-brandDark hover:bg-white/85 transition-colors"
+                  >
+                    Become a member
+                    <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-1" />
+                    </TransitionLink>
+                )}
+                <TransitionLink
+                  href="/books"
                   className="btn-pill inline-flex items-center gap-2 rounded-full border border-white/25 px-6 py-3.5 text-sm font-extrabold text-white hover:bg-white/10 transition-colors"
                 >
                   Browse the catalog
-                </Link>
+                </TransitionLink>
               </div>
             </div>
 
@@ -93,7 +96,7 @@ export default function SiteFooter() {
                   <ul className="mt-5 space-y-3">
                     {PERKS.map((perk) => (
                       <li key={perk} className="flex items-start gap-2.5 text-sm font-semibold text-white/75">
-                        <span className="mt-[7px] w-1.5 h-1.5 flex-shrink-0 rounded-full bg-brandPink" />
+                        <span className="mt-[7px] w-1.5 h-1.5 flex-shrink-0 rounded-full bg-brandCamel" />
                         {perk}
                       </li>
                     ))}
@@ -134,17 +137,21 @@ function FooterColumn({ title, links }: { title: string; links: FooterLink[] }) 
     <div>
       <h3 className="text-[11px] font-black uppercase tracking-[0.22em] text-white/60">{title}</h3>
       <ul className="mt-5 space-y-3">
-        {links.map((link) => (
-          <li key={link.href}>
-            <Link
-              href={link.href}
-              className="group relative inline-block text-sm font-semibold text-white/75 hover:text-white transition-colors"
-            >
-              {link.label}
-              <span className="absolute left-0 -bottom-0.5 h-px w-0 bg-white transition-all duration-300 group-hover:w-full" />
-            </Link>
-          </li>
-        ))}
+        {links.map((link) => {
+          // Public pages get the paint-stroke transition; portal pages navigate normally.
+          const LinkTag = link.href === '/books' ? TransitionLink : Link;
+          return (
+            <li key={link.href}>
+              <LinkTag
+                href={link.href}
+                className="group relative inline-block text-sm font-semibold text-white/75 hover:text-white transition-colors"
+              >
+                {link.label}
+                <span className="absolute left-0 -bottom-0.5 h-px w-0 bg-white transition-all duration-300 group-hover:w-full" />
+              </LinkTag>
+            </li>
+          );
+        })}
       </ul>
     </div>
   );

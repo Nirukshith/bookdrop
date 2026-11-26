@@ -438,7 +438,7 @@ function PatronDashboard() {
                   <p className="mt-1 inline-flex items-center gap-1.5 text-xs text-black/50 font-mono">
                     <QrCode className="w-3.5 h-3.5" />{hold.copyBarcode || 'Copy pending'}
                   </p>
-                  <div className="mt-4 rounded-xl bg-[#FFF7D1] border border-brandYellow/60 px-3 py-2.5">
+                  <div className="mt-4 rounded-xl bg-[#F3FAEC] border border-brandGreen/60 px-3 py-2.5">
                     <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-black/55">Collect by</p>
                     <p className="font-semibold mt-0.5">{formatDateTime(hold.expiresAt)}</p>
                   </div>

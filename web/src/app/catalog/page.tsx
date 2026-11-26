@@ -469,7 +469,7 @@ export default function CatalogPage() {
                     </p>
                   )}
                   <h2 className="mt-1.5 text-lg font-bold leading-snug line-clamp-2">
-                    <button type="button" onClick={() => setSelectedBook(book)} className="text-left hover:underline underline-offset-4 decoration-2 decoration-brandYellowWarm">
+                    <button type="button" onClick={() => setSelectedBook(book)} className="text-left hover:underline underline-offset-4 decoration-2 decoration-brandGreenDeep">
                       {book.title}
                     </button>
                   </h2>
@@ -509,7 +509,7 @@ export default function CatalogPage() {
                       <button
                         onClick={() => handleRequestHold(book)}
                         disabled={isActionLoading}
-                        className="w-full inline-flex items-center justify-center gap-2 rounded-full bg-brandYellow px-4 py-2.5 text-sm font-semibold text-black hover:bg-brandYellowWarm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 disabled:opacity-50 transition-colors"
+                        className="w-full inline-flex items-center justify-center gap-2 rounded-full bg-brandForest px-4 py-2.5 text-sm font-semibold text-white hover:bg-brandForestDark focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 disabled:opacity-50 transition-colors"
                       >
                         <BookmarkPlus className="w-4 h-4" />Request hold
                       </button>

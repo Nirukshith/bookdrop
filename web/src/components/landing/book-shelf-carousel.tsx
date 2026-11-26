@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import Link from 'next/link';
+import { TransitionLink } from '@/components/page-transition';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, ArrowRight } from 'lucide-react';
 import { fetchGraphQL } from '@/lib/graphql-client';
@@ -290,17 +290,17 @@ export default function BookShelfCarousel() {
 
   return (
     <section id="shelf" className="shelf-section relative text-[#111]" aria-label="Featured books">
-      {/* Soft wave hand-off from the yellow hero (same cream as the section) */}
+      {/* Soft wave hand-off from the green hero (same cream as the section) */}
       <svg className="absolute left-0 right-0 top-0 w-full h-16 sm:h-24 -translate-y-[98%] pointer-events-none" viewBox="0 0 1440 100" preserveAspectRatio="none" aria-hidden>
-        <path d="M0 60 C240 10 420 95 720 55 C1000 18 1220 85 1440 40 L1440 100 L0 100 Z" fill="#FFF2AD" />
+        <path d="M0 60 C240 10 420 95 720 55 C1000 18 1220 85 1440 40 L1440 100 L0 100 Z" fill="#EEF9E4" />
       </svg>
 
       <div className="relative min-h-[100svh] lg:min-h-[880px] flex flex-col overflow-hidden">
-        {/* Wave hand-off into the yellow How-it-works section. First child so the
+        {/* Wave hand-off into the green How-it-works section. First child so the
             books on the stage paint over it. */}
         <svg className="absolute left-0 right-0 bottom-0 w-full h-28 sm:h-40 pointer-events-none" viewBox="0 0 1440 160" preserveAspectRatio="none" aria-hidden>
-          <path d="M0 110 C220 60 420 140 700 96 C980 52 1200 120 1440 70 L1440 160 L0 160 Z" fill="#F8C42E" opacity="0.55" />
-          <path d="M0 130 C260 92 460 160 760 122 C1040 88 1240 140 1440 108 L1440 160 L0 160 Z" fill="#FCD44D" />
+          <path d="M0 110 C220 60 420 140 700 96 C980 52 1200 120 1440 70 L1440 160 L0 160 Z" fill="#A9DE8E" opacity="0.55" />
+          <path d="M0 130 C260 92 460 160 760 122 C1040 88 1240 140 1440 108 L1440 160 L0 160 Z" fill="#CDEFB8" />
         </svg>
         {/* ── Top bar: details (left) · counter (right) ── */}
         <div className="relative z-[1100] px-4 sm:px-6 lg:px-4 pt-3 grid grid-cols-1 lg:grid-cols-[minmax(0,500px)_1fr_minmax(0,500px)] gap-5 items-start pointer-events-none">
@@ -382,14 +382,14 @@ export default function BookShelfCarousel() {
             <span className="lg:hidden font-heading text-2xl tabular-nums">
               {String(active + 1).padStart(2, '0')}<span className="text-black/35"> / {String(count).padStart(2, '0')}</span>
             </span>
-            <Link
+            <TransitionLink
               // Holds need an approved membership, so visitors register first.
               href={isAuthenticated ? `/catalog?search=${encodeURIComponent(current.title)}` : '/register'}
               className="btn-pill inline-flex items-center gap-2 px-6 py-3 rounded-full bg-black text-white font-extrabold text-sm"
             >
               {current.available > 0 ? 'Reserve this book' : 'Join the waitlist'}
               <ArrowRight className="w-4 h-4" />
-            </Link>
+            </TransitionLink>
           </div>
         </div>
 
@@ -417,7 +417,7 @@ function CreditRow({ label, values, highlight }: { label: string; values: string
       <dd className="text-right leading-[1.35]">
         {values.map((v) => (
           <div key={v} className="flex items-center justify-end gap-2">
-            {highlight && <span className={`w-1.5 h-1.5 rounded-full ${highlight === 'in' ? 'bg-emerald-600' : 'bg-brandPink'}`} />}
+            {highlight && <span className={`w-1.5 h-1.5 rounded-full ${highlight === 'in' ? 'bg-emerald-600' : 'bg-brandCamel'}`} />}
             {v}
           </div>
         ))}

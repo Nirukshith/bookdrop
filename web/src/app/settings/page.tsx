@@ -54,7 +54,7 @@ export default function SettingsPage() {
         <Panel title="Profile" icon={UserCircle2} description="Managed by a library administrator." className="md:col-span-2">
           <div className="flex flex-col sm:flex-row sm:items-center gap-6">
             <div className="flex items-center gap-4 sm:w-64 shrink-0">
-              <div className="w-14 h-14 rounded-full bg-brandYellow text-black flex items-center justify-center font-heading text-2xl">
+              <div className="w-14 h-14 rounded-full bg-brandGreen text-black flex items-center justify-center font-heading text-2xl">
                 {user.name.charAt(0).toUpperCase()}
               </div>
               <div className="min-w-0">
@@ -80,7 +80,7 @@ export default function SettingsPage() {
             <ul className="space-y-2.5 text-sm">
               {ROLE_ACCESS[role].map((line) => (
                 <li key={line} className="flex items-start gap-2.5">
-                  <span className="mt-0.5 w-4 h-4 shrink-0 rounded-full bg-brandYellow flex items-center justify-center">
+                  <span className="mt-0.5 w-4 h-4 shrink-0 rounded-full bg-brandGreen flex items-center justify-center">
                     <Check className="w-2.5 h-2.5" strokeWidth={3.5} />
                   </span>
                   {line}

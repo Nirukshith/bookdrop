@@ -15,6 +15,7 @@ import {
 } from '@/lib/graphql-queries';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { PortalHero } from '@/components/portal/portal-ui';
 import { Button } from '@/components/ui/button';
 import { Modal } from '@/components/ui/modal';
 import { MembershipApprovals } from '@/components/admin/membership-approvals';
@@ -278,46 +279,38 @@ export default function StaffAdminPage() {
   };
 
   return (
-    <div className="space-y-8">
+    <div className="font-body text-brandDark space-y-8 pb-8">
       {confirmDialog}
-      {/* Banner */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">
-              Administration & System Health
-            </h1>
-            <Badge variant="danger" className="gap-1">
-              <Shield className="w-3.5 h-3.5" />
-              Admin
-            </Badge>
-          </div>
-          <p className="text-xs text-slate-500 mt-1">
-            Approve new memberships, monitor distributed job leases, trigger background workers, process payments, and retry notifications.
-          </p>
-        </div>
-
-        {!isAdmin && (
-          <Link href="/login">
-            <Button
-              variant="outline"
-              size="sm"
-              className="text-xs text-rose-700 bg-rose-50 hover:bg-rose-100 border-rose-200"
-            >
-              <LogIn className="w-3.5 h-3.5 mr-1 text-rose-600" />
-              Sign in with an admin account
-            </Button>
-          </Link>
-        )}
-      </div>
+      {/* Page header */}
+      <PortalHero
+        eyebrow="Admin"
+        title="Administration & System Health"
+        description="Approve new memberships, monitor distributed job leases, trigger background workers, process payments, and retry notifications."
+        actions={
+          <>
+          {!isAdmin && (
+            <Link href="/login">
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-xs text-rose-700 bg-rose-50 hover:bg-rose-100 border-rose-200"
+              >
+                <LogIn className="w-3.5 h-3.5 mr-1 text-rose-600" />
+                Sign in with an admin account
+              </Button>
+            </Link>
+          )}
+          </>
+        }
+      />
 
       {/* Tabs */}
-      <div className="flex border-b border-slate-200 space-x-6 text-sm font-medium">
+      <div className="flex border-b border-black/[0.08] space-x-6 text-sm font-medium">
         <button
           onClick={() => setActiveTab('members')}
           className={`pb-3 border-b-2 transition-colors flex items-center gap-2 ${activeTab === 'members'
-              ? 'border-indigo-600 text-indigo-600 font-semibold'
-              : 'border-transparent text-slate-500 hover:text-slate-800'
+              ? 'border-brandForest text-brandForest font-semibold'
+              : 'border-transparent text-black/55 hover:text-black/85'
             }`}
         >
           <UserCheck className="w-4 h-4" />
@@ -332,8 +325,8 @@ export default function StaffAdminPage() {
         <button
           onClick={() => setActiveTab('jobs')}
           className={`pb-3 border-b-2 transition-colors flex items-center gap-2 ${activeTab === 'jobs'
-              ? 'border-indigo-600 text-indigo-600 font-semibold'
-              : 'border-transparent text-slate-500 hover:text-slate-800'
+              ? 'border-brandForest text-brandForest font-semibold'
+              : 'border-transparent text-black/55 hover:text-black/85'
             }`}
         >
           <Cpu className="w-4 h-4" />
@@ -343,8 +336,8 @@ export default function StaffAdminPage() {
         <button
           onClick={() => setActiveTab('fines')}
           className={`pb-3 border-b-2 transition-colors flex items-center gap-2 ${activeTab === 'fines'
-              ? 'border-indigo-600 text-indigo-600 font-semibold'
-              : 'border-transparent text-slate-500 hover:text-slate-800'
+              ? 'border-brandForest text-brandForest font-semibold'
+              : 'border-transparent text-black/55 hover:text-black/85'
             }`}
         >
           <DollarSign className="w-4 h-4" />
@@ -354,8 +347,8 @@ export default function StaffAdminPage() {
         <button
           onClick={() => setActiveTab('notifications')}
           className={`pb-3 border-b-2 transition-colors flex items-center gap-2 ${activeTab === 'notifications'
-              ? 'border-indigo-600 text-indigo-600 font-semibold'
-              : 'border-transparent text-slate-500 hover:text-slate-800'
+              ? 'border-brandForest text-brandForest font-semibold'
+              : 'border-transparent text-black/55 hover:text-black/85'
             }`}
         >
           <Mail className="w-4 h-4" />
@@ -373,8 +366,8 @@ export default function StaffAdminPage() {
         <div className="space-y-6">
           <div className="flex items-center justify-between">
             <div>
-              <h2 className="text-sm font-bold text-slate-800">Distributed Job Leases</h2>
-              <p className="text-xs text-slate-500">
+              <h2 className="text-sm font-bold text-black/85">Distributed Job Leases</h2>
+              <p className="text-xs text-black/55">
                 Jobs acquire pessimistic database leases to ensure single-worker execution across instances.
               </p>
             </div>
@@ -399,8 +392,8 @@ export default function StaffAdminPage() {
           )}
 
           {isLoadingJobs ? (
-            <div className="py-12 text-center text-xs text-slate-500">
-              <RefreshCw className="w-6 h-6 animate-spin text-indigo-600 mx-auto mb-2" />
+            <div className="py-12 text-center text-xs text-black/55">
+              <RefreshCw className="w-6 h-6 animate-spin text-brandForest mx-auto mb-2" />
               Inspecting job lease records...
             </div>
           ) : (
@@ -410,8 +403,8 @@ export default function StaffAdminPage() {
                   <div>
                     <div className="flex items-start justify-between gap-3">
                       <div>
-                        <h3 className="font-bold text-slate-900 text-sm font-mono">{job.name}</h3>
-                        <p className="text-xs text-slate-400 mt-0.5">
+                        <h3 className="font-bold text-brandDark text-sm font-mono">{job.name}</h3>
+                        <p className="text-xs text-black/40 mt-0.5">
                           {job.isLeased ? (
                             <span className="text-amber-600 font-medium flex items-center gap-1">
                               <Lock className="w-3 h-3" />
@@ -431,13 +424,13 @@ export default function StaffAdminPage() {
                       </Badge>
                     </div>
 
-                    <div className="mt-4 p-3 bg-slate-50 rounded-lg text-xs space-y-1 font-mono">
+                    <div className="mt-4 p-3 bg-black/[0.03] rounded-lg text-xs space-y-1 font-mono">
                       <div className="flex justify-between text-[11px]">
-                        <span className="text-slate-400">Last Finished:</span>
-                        <span className="text-slate-700">{formatDateTime(job.lastFinishedAt)}</span>
+                        <span className="text-black/40">Last Finished:</span>
+                        <span className="text-black/75">{formatDateTime(job.lastFinishedAt)}</span>
                       </div>
                       {job.lastStats && (
-                        <div className="text-[11px] text-slate-600 truncate pt-1">
+                        <div className="text-[11px] text-black/65 truncate pt-1">
                           Stats: {job.lastStats}
                         </div>
                       )}
@@ -449,8 +442,8 @@ export default function StaffAdminPage() {
                     </div>
                   </div>
 
-                  <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between">
-                    <span className="text-[11px] text-slate-400">Rate-limited execution</span>
+                  <div className="mt-4 pt-3 border-t border-black/[0.06] flex items-center justify-between">
+                    <span className="text-[11px] text-black/40">Rate-limited execution</span>
                     <Button
                       variant="primary"
                       size="sm"
@@ -476,13 +469,13 @@ export default function StaffAdminPage() {
             <CardContent className="p-4">
               <div className="flex flex-col sm:flex-row gap-3 items-center">
                 <div className="relative flex-1 w-full">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-black/40" />
                   <input
                     type="email"
                     value={fineMemberEmail}
                     onChange={(e) => setFineMemberEmail(e.target.value)}
                     placeholder="Enter member email to inspect fines..."
-                    className="w-full pl-9 pr-3 py-2 text-xs rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    className="w-full pl-9 pr-3 py-2 text-xs rounded-lg border border-black/15 focus:outline-none focus:ring-2 focus:ring-black"
                   />
                 </div>
                 <Button
@@ -508,22 +501,22 @@ export default function StaffAdminPage() {
 
           {/* Fines Table */}
           {isLoadingFines ? (
-            <div className="py-12 text-center text-xs text-slate-500">
-              <RefreshCw className="w-6 h-6 animate-spin text-indigo-600 mx-auto mb-2" />
+            <div className="py-12 text-center text-xs text-black/55">
+              <RefreshCw className="w-6 h-6 animate-spin text-brandForest mx-auto mb-2" />
               Searching fines database...
             </div>
           ) : memberFinesList.length === 0 ? (
-            <div className="text-center py-12 bg-white rounded-xl border border-slate-200 p-6">
+            <div className="text-center py-12 bg-white rounded-xl border border-black/[0.08] p-6">
               <CheckCircle2 className="w-10 h-10 text-emerald-500 mx-auto mb-2" />
-              <h3 className="text-sm font-semibold text-slate-700">No fines found</h3>
-              <p className="text-xs text-slate-500 mt-1">
+              <h3 className="text-sm font-semibold text-black/75">No fines found</h3>
+              <p className="text-xs text-black/55 mt-1">
                 This patron has no assessed circulation fines.
               </p>
             </div>
           ) : (
-            <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+            <div className="overflow-x-auto rounded-xl border border-black/[0.08] bg-white">
               <table className="w-full text-xs text-left">
-                <thead className="bg-slate-50 text-slate-500 uppercase font-semibold border-b border-slate-200">
+                <thead className="bg-black/[0.03] text-black/55 uppercase font-semibold border-b border-black/[0.08]">
                   <tr>
                     <th className="px-4 py-3">Fine ID / Reason</th>
                     <th className="px-4 py-3">Total Amount</th>
@@ -533,14 +526,14 @@ export default function StaffAdminPage() {
                     <th className="px-4 py-3 text-right">Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100">
+                <tbody className="divide-y divide-black/[0.06]">
                   {memberFinesList.map((f) => (
-                    <tr key={f.id} className="hover:bg-slate-50">
+                    <tr key={f.id} className="hover:bg-black/[0.03]">
                       <td className="px-4 py-3">
-                        <div className="font-bold text-slate-900">Fine #{f.id}</div>
-                        <div className="text-[10px] text-slate-400 font-semibold">{f.reason}</div>
+                        <div className="font-bold text-brandDark">Fine #{f.id}</div>
+                        <div className="text-[10px] text-black/40 font-semibold">{f.reason}</div>
                       </td>
-                      <td className="px-4 py-3 font-medium text-slate-700">
+                      <td className="px-4 py-3 font-medium text-black/75">
                         {formatCurrency(f.amountRs)}
                       </td>
                       <td className="px-4 py-3 font-medium text-emerald-600">
@@ -604,7 +597,7 @@ export default function StaffAdminPage() {
             >
               <form onSubmit={handleRecordPayment} className="space-y-4">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  <label className="block text-xs font-semibold text-black/75 mb-1">
                     Amount Received (₹)
                   </label>
                   <input
@@ -615,12 +608,12 @@ export default function StaffAdminPage() {
                     required
                     value={paymentAmount}
                     onChange={(e) => setPaymentAmount(e.target.value)}
-                    className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    className="w-full px-3 py-2 text-xs rounded-lg border border-black/15 focus:outline-none focus:ring-2 focus:ring-black"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  <label className="block text-xs font-semibold text-black/75 mb-1">
                     Receipt Note
                   </label>
                   <input
@@ -628,7 +621,7 @@ export default function StaffAdminPage() {
                     value={paymentNote}
                     onChange={(e) => setPaymentNote(e.target.value)}
                     placeholder="Cash / UPI / Desk transaction reference..."
-                    className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    className="w-full px-3 py-2 text-xs rounded-lg border border-black/15 focus:outline-none focus:ring-2 focus:ring-black"
                   />
                 </div>
 
@@ -658,7 +651,7 @@ export default function StaffAdminPage() {
           <Card>
             <CardHeader className="p-6 pb-4">
               <CardTitle className="text-base flex items-center gap-2">
-                <RotateCw className="w-5 h-5 text-indigo-600" />
+                <RotateCw className="w-5 h-5 text-brandForest" />
                 Retry Failed Notification Delivery
               </CardTitle>
               <CardDescription>
@@ -676,7 +669,7 @@ export default function StaffAdminPage() {
 
               <form onSubmit={handleRetryNotification} className="space-y-4">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  <label className="block text-xs font-semibold text-black/75 mb-1">
                     Notification ID
                   </label>
                   <input
@@ -685,9 +678,9 @@ export default function StaffAdminPage() {
                     value={retryId}
                     onChange={(e) => setRetryId(e.target.value)}
                     placeholder="e.g. 1024"
-                    className="w-full font-mono px-3.5 py-2 text-sm rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    className="w-full font-mono px-3.5 py-2 text-sm rounded-lg border border-black/15 focus:outline-none focus:ring-2 focus:ring-black"
                   />
-                  <p className="text-[11px] text-slate-400 mt-1">
+                  <p className="text-[11px] text-black/40 mt-1">
                     Enter the integer ID of the failed outbox notification record.
                   </p>
                 </div>

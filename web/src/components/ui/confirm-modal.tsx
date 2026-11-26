@@ -63,32 +63,32 @@ const TONES: Record<
   },
   success: {
     icon: CheckCircle2,
-    iconWrap: 'bg-emerald-50 text-emerald-600 border-emerald-100',
-    confirm: 'bg-emerald-600 text-white hover:bg-emerald-700',
-    ring: 'focus-visible:ring-emerald-600',
+    iconWrap: 'bg-brandMint text-brandForest border-brandGreenDeep/50',
+    confirm: 'bg-brandForest text-white hover:bg-brandForestDark',
+    ring: 'focus-visible:ring-brandForest',
   },
   warning: {
     icon: AlertOctagon,
     iconWrap: 'bg-amber-50 text-amber-600 border-amber-100',
-    confirm: 'bg-black text-white hover:bg-black/85',
-    ring: 'focus-visible:ring-black',
+    confirm: 'bg-brandForest text-white hover:bg-brandForestDark',
+    ring: 'focus-visible:ring-brandForest',
   },
   info: {
     icon: Info,
     iconWrap: 'bg-[#F4EFDF] text-black/70 border-black/[0.06]',
-    confirm: 'bg-black text-white hover:bg-black/85',
-    ring: 'focus-visible:ring-black',
+    confirm: 'bg-brandForest text-white hover:bg-brandForestDark',
+    ring: 'focus-visible:ring-brandForest',
   },
   question: {
     icon: HelpCircle,
-    iconWrap: 'bg-brandYellow/40 text-black border-brandYellowWarm/40',
-    confirm: 'bg-brandYellow text-black hover:bg-brandYellowWarm',
+    iconWrap: 'bg-brandGreen/40 text-black border-brandGreenDeep/40',
+    confirm: 'bg-brandForest text-white hover:bg-brandForestDark',
     ring: 'focus-visible:ring-black',
   },
 };
 
 const fieldCls =
-  'w-full rounded-xl border border-black/[0.12] bg-white px-3.5 py-2.5 text-sm text-brandDark placeholder:text-black/35 transition-colors hover:border-black/25 focus:border-black focus:outline-none focus:ring-2 focus:ring-brandYellow';
+  'w-full rounded-xl border border-black/[0.12] bg-white px-3.5 py-2.5 text-sm text-brandDark placeholder:text-black/35 transition-colors hover:border-black/25 focus:border-black focus:outline-none focus:ring-2 focus:ring-brandGreen';
 
 export function ConfirmModal({
   open,

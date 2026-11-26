@@ -2,6 +2,8 @@
 
 import React, { useState } from 'react';
 import Link from 'next/link';
+import { TransitionLink } from '@/components/page-transition';
+import { BrandMark } from '@/components/brand-mark';
 import { usePathname } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
 import { Role } from '@/lib/types';
@@ -11,7 +13,6 @@ import { usePortalShell } from '@/components/portal-sidebar';
 import { btnDark, btnOutline } from '@/components/portal/portal-ui';
 import { useConfirmLogout } from '@/components/auth/confirm-logout';
 import {
-  BookOpen,
   User as UserIcon,
   LogOut,
   LogIn,
@@ -32,8 +33,24 @@ export function Navbar() {
   const inPortalShell = usePortalShell();
 
   // Signed-in app pages use the sidebar shell instead of the top navbar.
-  if (pathname === '/' || inPortalShell) {
+  if (pathname === '/' || pathname === '/books' || inPortalShell) {
     return null;
+  }
+
+  // Sign-in and register pages: just the brand, no nav, account pill or sign-out.
+  if (pathname === '/login' || pathname === '/register') {
+    return (
+      <header className="sticky top-0 z-40 w-full border-b border-black/[0.07] bg-[#FBF8EF]/90 backdrop-blur font-body">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex h-16 items-center">
+            <TransitionLink href="/" className="flex items-center gap-2.5 group">
+              <BrandMark className="w-9 h-9 text-black shrink-0 group-hover:scale-105 transition-transform" />
+              <span className="font-extrabold text-lg text-black tracking-tight uppercase">Bookdrop</span>
+            </TransitionLink>
+          </div>
+        </div>
+      </header>
+    );
   }
 
   const navLinkClass = (path: string) => {
@@ -59,9 +76,7 @@ export function Navbar() {
           {/* Logo & Main Nav */}
           <div className="flex items-center gap-8">
             <Link href="/" className="flex items-center gap-2.5 group">
-              <div className="w-9 h-9 rounded-lg bg-black flex items-center justify-center text-white shadow-sm group-hover:scale-105 transition-transform">
-                <BookOpen className="w-5 h-5" />
-              </div>
+              <BrandMark className="w-9 h-9 text-black shrink-0 group-hover:scale-105 transition-transform" />
               <span className="font-extrabold text-lg text-black tracking-tight uppercase">Bookdrop</span>
             </Link>
 
@@ -186,13 +201,13 @@ export function Navbar() {
               </div>
             ) : (
               <div className="flex items-center gap-2">
-                <Link href="/login" className={`${btnOutline} whitespace-nowrap px-4 py-2`}>
+                <TransitionLink href="/login" className={`${btnOutline} whitespace-nowrap px-4 py-2`}>
                   <LogIn className="w-4 h-4" />
                   Sign In
-                </Link>
-                <Link href="/register" className={`${btnDark} whitespace-nowrap px-4 py-2`}>
+                </TransitionLink>
+                <TransitionLink href="/register" className={`${btnDark} whitespace-nowrap px-4 py-2`}>
                   Register
-                </Link>
+                </TransitionLink>
               </div>
             )}
           </div>

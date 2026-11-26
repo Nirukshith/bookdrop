@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import Link from 'next/link';
+import { TransitionLink } from '@/components/page-transition';
 import { useAuth } from '@/lib/auth-context';
 import { AuthField, AuthLayout } from '@/components/auth/auth-layout';
 import { Notice, btnPrimary } from '@/components/portal/portal-ui';
@@ -88,9 +88,9 @@ export default function LoginPage() {
       footer={
         <>
           New to Bookdrop?{' '}
-          <Link href="/register" className="font-semibold text-black underline decoration-brandYellowWarm decoration-2 underline-offset-4 hover:decoration-black">
+          <TransitionLink href="/register" className="font-semibold text-black underline decoration-brandGreenDeep decoration-2 underline-offset-4 hover:decoration-black">
             Become a member
-          </Link>
+          </TransitionLink>
         </>
       }
     >

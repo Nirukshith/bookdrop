@@ -2,6 +2,7 @@
 
 import React, { Suspense, useEffect, useState } from 'react';
 import Link from 'next/link';
+import { BrandMark } from '@/components/brand-mark';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
 import { useConfirmLogout } from '@/components/auth/confirm-logout';
@@ -26,7 +27,7 @@ import {
 } from 'lucide-react';
 
 /** Routes that never get the portal shell, even when signed in. */
-const NO_SHELL_ROUTES = ['/', '/login', '/register'];
+const NO_SHELL_ROUTES = ['/', '/books', '/login', '/register'];
 
 /**
  * True when the current page should render inside the sidebar shell (any
@@ -45,8 +46,8 @@ type NavSection = { title?: string; items: NavItem[] };
 const MEMBER_NAV: NavSection[] = [
   {
     items: [
-      { href: '/catalog', label: 'Catalog', icon: BookOpen },
       { href: '/dashboard', label: 'Dashboard', icon: Clock },
+      { href: '/catalog', label: 'Catalog', icon: BookOpen },
     ],
   },
   {
@@ -64,8 +65,8 @@ const MEMBER_NAV: NavSection[] = [
 const STAFF_NAV: NavSection[] = [
   {
     items: [
-      { href: '/catalog', label: 'Catalog', icon: BookOpen },
       { href: '/dashboard', label: 'Dashboard', icon: Clock },
+      { href: '/catalog', label: 'Catalog', icon: BookOpen },
     ],
   },
   {
@@ -140,9 +141,7 @@ function SidebarContent({
         onClick={onNavigate}
         className="flex items-center gap-2.5 px-5 h-16 shrink-0 border-b border-black/[0.07]"
       >
-        <div className="w-9 h-9 rounded-lg bg-black flex items-center justify-center text-white shadow-sm">
-          <BookOpen className="w-[18px] h-[18px]" />
-        </div>
+        <BrandMark className="w-9 h-9 text-black shrink-0" />
         <div className="flex flex-col leading-tight">
           <span className="font-extrabold uppercase tracking-tight">Bookdrop</span>
           <span className="text-[10px] font-semibold uppercase tracking-[0.2em] text-black/50">{isStaff ? 'Staff Portal' : 'Member Portal'}</span>
@@ -215,7 +214,7 @@ function SidebarContent({
 
         {user && (
           <div className="flex items-center gap-2.5 px-3 pt-3 mt-2 border-t border-black/[0.06]">
-            <div className="w-8 h-8 shrink-0 rounded-full bg-brandYellow text-black flex items-center justify-center font-bold text-xs">
+            <div className="w-8 h-8 shrink-0 rounded-full bg-brandGreen text-black flex items-center justify-center font-bold text-xs">
               {user.name.charAt(0).toUpperCase()}
             </div>
             <div className="min-w-0 flex-1">

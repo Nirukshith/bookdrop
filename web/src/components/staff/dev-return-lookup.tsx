@@ -40,7 +40,7 @@ interface DevLoan {
 }
 
 const inputCls =
-  'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-amber-400';
+  'w-full rounded-lg border border-black/15 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-amber-400';
 
 export function DevReturnLookup({ onUseBarcode }: { onUseBarcode: (barcode: string) => void }) {
   const [memberId, setMemberId] = useState('');
@@ -90,11 +90,11 @@ export function DevReturnLookup({ onUseBarcode }: { onUseBarcode: (barcode: stri
       </div>
 
       <form onSubmit={find} className="flex flex-col gap-2 sm:flex-row sm:items-end">
-        <label className="flex-1 text-xs font-semibold text-slate-700">
+        <label className="flex-1 text-xs font-semibold text-black/75">
           Member ID
           <input value={memberId} onChange={(e) => setMemberId(e.target.value)} inputMode="numeric" placeholder="e.g. 10200" className={`${inputCls} mt-1`} />
         </label>
-        <label className="flex-1 text-xs font-semibold text-slate-700">
+        <label className="flex-1 text-xs font-semibold text-black/75">
           Book ID
           <input value={bookId} onChange={(e) => setBookId(e.target.value)} inputMode="numeric" placeholder="e.g. 8486" className={`${inputCls} mt-1`} />
         </label>
@@ -111,7 +111,7 @@ export function DevReturnLookup({ onUseBarcode }: { onUseBarcode: (barcode: stri
       {error && <p className="text-xs font-semibold text-rose-700">{error}</p>}
 
       {loans && loans.length === 0 && (
-        <p className="text-xs font-semibold text-slate-700">
+        <p className="text-xs font-semibold text-black/75">
           No active loan for member #{memberId} and book #{bookId}.
         </p>
       )}
@@ -121,8 +121,8 @@ export function DevReturnLookup({ onUseBarcode }: { onUseBarcode: (barcode: stri
           {loans.map((l) => (
             <li key={l.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-white px-4 py-3 text-xs">
               <div>
-                <p className="font-semibold text-slate-900">{l.bookTitle}</p>
-                <p className="text-slate-500">
+                <p className="font-semibold text-brandDark">{l.bookTitle}</p>
+                <p className="text-black/55">
                   Loan #{l.id} · copy <span className="font-mono">{l.copyBarcode ?? '—'}</span> · due {formatDate(l.dueAt)}
                   {l.isOverdue && <span className="font-semibold text-rose-600"> · {l.daysLate}d overdue</span>}
                 </p>

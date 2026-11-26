@@ -10,6 +10,7 @@ import { fetchGraphQL } from '@/lib/graphql-client';
 import { RETURN_LOAN_MUTATION } from '@/lib/graphql-queries';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { PortalHero } from '@/components/portal/portal-ui';
 import { Button } from '@/components/ui/button';
 import { formatCurrency, formatDateTime } from '@/lib/utils';
 import {
@@ -127,35 +128,30 @@ export default function StaffReturnsPage() {
   };
 
   return (
-    <div className="space-y-8 max-w-2xl mx-auto">
+    <div className="font-body text-brandDark space-y-8 pb-8 max-w-3xl mx-auto">
       {confirmDialog}
-      {/* Banner */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">
-              Returns & Inspection Desk
-            </h1>
-            <Badge variant="warning">Staff Returns</Badge>
-          </div>
-          <p className="text-xs text-slate-500 mt-1">
-            Check in returned copies, inspect item condition, and evaluate overdue/damage fees.
-          </p>
-        </div>
-
-        {!isStaff && (
-          <Link href="/login">
-            <Button
-              variant="outline"
-              size="sm"
-              className="text-xs text-amber-700 bg-amber-50 hover:bg-amber-100 border-amber-200"
-            >
-              <LogIn className="w-3.5 h-3.5 mr-1 text-amber-600" />
-              Sign in with a staff account
-            </Button>
-          </Link>
-        )}
-      </div>
+      {/* Page header */}
+      <PortalHero
+        eyebrow="Staff Returns"
+        title="Returns & Inspection Desk"
+        description="Check in returned copies, inspect item condition, and evaluate overdue/damage fees."
+        actions={
+          <>
+          {!isStaff && (
+            <Link href="/login">
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-xs text-amber-700 bg-amber-50 hover:bg-amber-100 border-amber-200"
+              >
+                <LogIn className="w-3.5 h-3.5 mr-1 text-amber-600" />
+                Sign in with a staff account
+              </Button>
+            </Link>
+          )}
+          </>
+        }
+      />
 
       {/* Dev only: look up the loan by member ID + book ID */}
       <DevReturnLookup onUseBarcode={fillFromDevLookup} />
@@ -164,7 +160,7 @@ export default function StaffReturnsPage() {
       <Card>
         <CardHeader className="p-6 pb-4">
           <CardTitle className="text-base flex items-center gap-2">
-            <RotateCcw className="w-5 h-5 text-indigo-600" />
+            <RotateCcw className="w-5 h-5 text-brandForest" />
             Process Item Check-in
           </CardTitle>
           <CardDescription>
@@ -182,11 +178,11 @@ export default function StaffReturnsPage() {
 
           <form onSubmit={handleReturnSubmit} className="space-y-5">
             <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
+              <label className="block text-xs font-semibold text-black/75 mb-1">
                 Copy Barcode
               </label>
               <div className="relative">
-                <QrCode className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <QrCode className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-black/40" />
                 <input
                   ref={barcodeRef}
                   type="text"
@@ -194,14 +190,14 @@ export default function StaffReturnsPage() {
                   value={barcode}
                   onChange={(e) => setBarcode(e.target.value)}
                   placeholder="e.g. BC-1001 or scan"
-                  className="w-full font-mono pl-10 pr-3.5 py-2 text-sm rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className="w-full font-mono pl-10 pr-3.5 py-2 text-sm rounded-lg border border-black/15 focus:outline-none focus:ring-2 focus:ring-black"
                 />
               </div>
             </div>
 
             {/* Condition Selection */}
             <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-2">
+              <label className="block text-xs font-semibold text-black/75 mb-2">
                 Physical Condition Inspection
               </label>
               <div className="grid grid-cols-2 gap-3">
@@ -210,7 +206,7 @@ export default function StaffReturnsPage() {
                   onClick={() => setCondition('GOOD')}
                   className={`p-3 rounded-xl border text-left transition-all ${condition === 'GOOD'
                       ? 'border-emerald-500 bg-emerald-50 text-emerald-900 ring-2 ring-emerald-500'
-                      : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                      : 'border-black/[0.08] bg-white text-black/75 hover:bg-black/[0.03]'
                     }`}
                 >
                   <div className="flex items-center justify-between mb-1">
@@ -219,7 +215,7 @@ export default function StaffReturnsPage() {
                       <CheckCircle2 className="w-4 h-4 text-emerald-600" />
                     )}
                   </div>
-                  <p className="text-[11px] text-slate-500">
+                  <p className="text-[11px] text-black/55">
                     Normal wear and tear. Restores copy directly to available shelf.
                   </p>
                 </button>
@@ -229,7 +225,7 @@ export default function StaffReturnsPage() {
                   onClick={() => setCondition('DAMAGED')}
                   className={`p-3 rounded-xl border text-left transition-all ${condition === 'DAMAGED'
                       ? 'border-rose-500 bg-rose-50 text-rose-900 ring-2 ring-rose-500'
-                      : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                      : 'border-black/[0.08] bg-white text-black/75 hover:bg-black/[0.03]'
                     }`}
                 >
                   <div className="flex items-center justify-between mb-1">
@@ -238,7 +234,7 @@ export default function StaffReturnsPage() {
                       <AlertTriangle className="w-4 h-4 text-rose-600" />
                     )}
                   </div>
-                  <p className="text-[11px] text-slate-500">
+                  <p className="text-[11px] text-black/55">
                     Water damage, missing pages, or broken binding. Assess fine.
                   </p>
                 </button>
@@ -258,7 +254,7 @@ export default function StaffReturnsPage() {
                     Assessed Damage Fee (Rupees)
                   </label>
                   <div className="relative">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-bold text-black/40">
                       ₹
                     </span>
                     <input
